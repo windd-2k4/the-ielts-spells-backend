@@ -25,7 +25,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Tag(name = "Admin - Classes")
 @SecurityRequirement(name = "bearerAuth")
-@PreAuthorize("hasAuthority('admin')")
+@PreAuthorize("hasAnyAuthority('admin', 'manager')")
 public class ClassAdminController {
     private final ClassApplicationService service;
 

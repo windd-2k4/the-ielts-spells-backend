@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public enum AppRole {
     ADMIN("admin"),
+    MANAGER("manager"),
     CMS_EDITOR("cms_editor"),
     ADMISSIONS("admissions"),
     TEACHER("teacher"),

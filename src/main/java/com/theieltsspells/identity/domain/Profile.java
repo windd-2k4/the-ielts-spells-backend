@@ -7,7 +7,6 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.DynamicInsert;
 import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.annotations.UuidGenerator;
 import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
@@ -23,8 +22,6 @@ import java.util.*;
 public class Profile {
 
     @Id
-    @GeneratedValue
-    @UuidGenerator
     @Column(name = "id")
     private UUID id;
 

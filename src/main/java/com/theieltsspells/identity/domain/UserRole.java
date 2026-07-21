@@ -1,6 +1,7 @@
 package com.theieltsspells.identity.domain;
 
 import com.theieltsspells.shared.persistence.enums.*;
+import com.theieltsspells.identity.infrastructure.persistence.AppRoleConverter;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -28,8 +29,8 @@ public class UserRole {
     private UUID userId;
 
     @Id
-    @Enumerated(EnumType.STRING)
-    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
+    @Convert(converter = AppRoleConverter.class)
+    @org.hibernate.annotations.ColumnTransformer(write = "?::app_role")
     @Column(name = "role", nullable = false)
     private AppRole role;
 

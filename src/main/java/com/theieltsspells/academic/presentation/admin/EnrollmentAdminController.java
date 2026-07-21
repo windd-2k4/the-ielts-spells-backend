@@ -22,7 +22,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Tag(name = "Admin - Enrollments")
 @SecurityRequirement(name = "bearerAuth")
-@PreAuthorize("hasAuthority('admin')")
+@PreAuthorize("hasAnyAuthority('admin', 'manager', 'admissions')")
 public class EnrollmentAdminController {
     private final EnrollmentApplicationService service;
 
