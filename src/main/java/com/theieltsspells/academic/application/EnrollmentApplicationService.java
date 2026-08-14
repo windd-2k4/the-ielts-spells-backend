@@ -2,7 +2,7 @@ package com.theieltsspells.academic.application;
 
 import com.theieltsspells.academic.application.dto.*;
 import com.theieltsspells.academic.domain.Enrollment;
-import com.theieltsspells.academic.infrastructure.persistence.ClassRepository;
+import com.theieltsspells.academic.infrastructure.persistence.CourseRepository;
 import com.theieltsspells.academic.infrastructure.persistence.EnrollmentRepository;
 import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.application.ConflictException;
@@ -30,20 +30,30 @@ public class EnrollmentApplicationService {
             EnrollmentStatus.WITHDRAWN, EnumSet.noneOf(EnrollmentStatus.class));
 
     private final EnrollmentRepository enrollments;
-    private final ClassRepository classes;
+    private final CourseRepository courses;
 
     @Transactional
     public EnrollmentResponse enroll(EnrollStudentRequest request) {
-        var targetClass = classes.findById(request.classId())
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy lớp học: " + request.classId()));
-        if (enrollments.existsByClassIdAndStudentId(request.classId(), request.studentId()))
-            throw new ConflictException("Học viên đã được ghi danh vào lớp này");
-        var occupied = enrollments.countByClassIdAndStatusIn(request.classId(), CAPACITY_STATUSES);
-        if (occupied >= targetClass.getCapacity()) throw new BusinessRuleException("Lớp học đã đủ số lượng học viên");
+        var targetCourse = courses.findById(request.courseId())
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy khóa học: " + request.courseId()));
+        if (!Boolean.TRUE.equals(targetCourse.getIsActive())
+                || targetCourse.getStatus() == com.theieltsspells.shared.persistence.enums.ClassStatus.COMPLETED
+                || targetCourse.getStatus() == com.theieltsspells.shared.persistence.enums.ClassStatus.CANCELLED) {
+            throw new BusinessRuleException("Khóa học không còn nhận ghi danh");
+        }
+        if (enrollments.existsByCourseIdAndStudentId(request.courseId(), request.studentId())) {
+            throw new ConflictException("Học viên đã được ghi danh vào khóa học này");
+        }
+        var occupied = enrollments.countByCourseIdAndStatusIn(request.courseId(), CAPACITY_STATUSES);
+        if (occupied >= targetCourse.getCapacity()) {
+            throw new BusinessRuleException("Khóa học đã đủ số lượng học viên");
+        }
 
         var value = new Enrollment();
-        value.setClassId(request.classId()); value.setStudentId(request.studentId());
-        value.setStatus(EnrollmentStatus.PENDING); value.setNotes(request.notes());
+        value.setCourseId(request.courseId());
+        value.setStudentId(request.studentId());
+        value.setStatus(EnrollmentStatus.PENDING);
+        value.setNotes(request.notes());
         return AcademicMapper.toResponse(enrollments.save(value));
     }
 
@@ -53,8 +63,8 @@ public class EnrollmentApplicationService {
         return enrollments.findAll(pageable).map(AcademicMapper::toResponse);
     }
 
-    public Page<EnrollmentResponse> listByClass(UUID classId, Pageable pageable) {
-        return enrollments.findByClassId(classId, pageable).map(AcademicMapper::toResponse);
+    public Page<EnrollmentResponse> listByCourse(UUID courseId, Pageable pageable) {
+        return enrollments.findByCourseId(courseId, pageable).map(AcademicMapper::toResponse);
     }
 
     public Page<EnrollmentResponse> listByStudent(UUID studentId, Pageable pageable) {
@@ -66,14 +76,31 @@ public class EnrollmentApplicationService {
         var value = find(id);
         if (value.getStatus() != request.status()) {
             var allowed = TRANSITIONS.getOrDefault(value.getStatus(), Set.of());
-            if (!allowed.contains(request.status()))
+            if (!allowed.contains(request.status())) {
                 throw new BusinessRuleException("Không thể chuyển trạng thái ghi danh từ " + value.getStatus() + " sang " + request.status());
+            }
             if (request.status() == EnrollmentStatus.ACTIVE && value.getStartedOn() == null) value.setStartedOn(LocalDate.now());
-            if (request.status() == EnrollmentStatus.COMPLETED || request.status() == EnrollmentStatus.WITHDRAWN)
+            if (request.status() == EnrollmentStatus.COMPLETED || request.status() == EnrollmentStatus.WITHDRAWN) {
                 value.setEndedOn(LocalDate.now());
+            }
             value.setStatus(request.status());
         }
         value.setNotes(request.notes());
+        return AcademicMapper.toResponse(enrollments.save(value));
+    }
+
+    @Transactional
+    public EnrollmentResponse updateExamPlan(UUID id, UpdateEnrollmentExamPlanRequest request) {
+        var value = find(id);
+        if (request.actualExamDate() != null && "NOT_REGISTERED".equals(request.examRegistrationStatus())) {
+            throw new BusinessRuleException("Không thể nhập ngày thi thực tế khi học viên chưa đăng ký thi");
+        }
+        value.setPlannedExamMonth(request.plannedExamMonth() == null
+                ? null : request.plannedExamMonth().withDayOfMonth(1));
+        value.setActualExamDate(request.actualExamDate());
+        value.setExamRegistrationStatus(request.examRegistrationStatus());
+        value.setTargetNote(request.targetNote() == null || request.targetNote().isBlank()
+                ? null : request.targetNote().trim());
         return AcademicMapper.toResponse(enrollments.save(value));
     }
 

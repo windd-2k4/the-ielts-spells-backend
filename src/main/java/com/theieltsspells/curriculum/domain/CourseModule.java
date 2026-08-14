@@ -1,7 +1,6 @@
 package com.theieltsspells.curriculum.domain;
 
 import com.theieltsspells.shared.persistence.enums.*;
-import com.theieltsspells.academic.domain.Course;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -29,8 +28,8 @@ public class CourseModule {
     @Column(name = "id")
     private UUID id;
 
-    @Column(name = "course_id", nullable = false)
-    private UUID courseId;
+    @Column(name = "program_id", nullable = false)
+    private UUID programId;
 
     @Column(name = "title", nullable = false)
     private String title;
@@ -55,7 +54,4 @@ public class CourseModule {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "course_id", insertable = false, updatable = false)
-    private Course courseRef;
 }

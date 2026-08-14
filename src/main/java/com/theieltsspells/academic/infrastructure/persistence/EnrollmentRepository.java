@@ -5,6 +5,7 @@ import com.theieltsspells.shared.persistence.enums.EnrollmentStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.EntityGraph;
 
 import java.util.List;
 import java.util.Optional;
@@ -12,15 +13,19 @@ import java.util.UUID;
 
 public interface EnrollmentRepository extends JpaRepository<Enrollment, UUID> {
 
-    Optional<Enrollment> findByClassIdAndStudentId(UUID classId, UUID studentId);
+    Optional<Enrollment> findByCourseIdAndStudentId(UUID courseId, UUID studentId);
 
-    Page<Enrollment> findByClassId(UUID classId, Pageable pageable);
+    Page<Enrollment> findByCourseId(UUID courseId, Pageable pageable);
 
-    List<Enrollment> findByClassIdAndStatus(UUID classId, EnrollmentStatus status);
+    List<Enrollment> findByCourseIdAndStatus(UUID courseId, EnrollmentStatus status);
+
+    @EntityGraph(attributePaths = {"studentRef", "studentRef.userRef"})
+    List<Enrollment> findByCourseId(UUID courseId);
 
     Page<Enrollment> findByStudentId(UUID studentId, Pageable pageable);
 
-    boolean existsByClassIdAndStudentId(UUID classId, UUID studentId);
+    boolean existsByCourseIdAndStudentId(UUID courseId, UUID studentId);
 
-    long countByClassIdAndStatusIn(UUID classId, List<EnrollmentStatus> statuses);
+    long countByCourseIdAndStatusIn(UUID courseId, List<EnrollmentStatus> statuses);
+
 }

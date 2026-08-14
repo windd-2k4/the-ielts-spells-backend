@@ -1,7 +1,7 @@
 package com.theieltsspells.curriculum.domain;
 
 import com.theieltsspells.shared.persistence.enums.*;
-import com.theieltsspells.academic.domain.Class;
+import com.theieltsspells.academic.domain.Course;
 import com.theieltsspells.academic.domain.ClassSession;
 import com.theieltsspells.identity.domain.Profile;
 import jakarta.persistence.*;
@@ -18,7 +18,7 @@ import java.time.*;
 import java.util.*;
 
 @Entity
-@Table(name = "class_activities")
+@Table(name = "course_activities")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -31,8 +31,8 @@ public class ClassActivity {
     @Column(name = "id")
     private UUID id;
 
-    @Column(name = "class_id", nullable = false)
-    private UUID classId;
+    @Column(name = "course_id", nullable = false)
+    private UUID courseId;
 
     @Column(name = "session_id")
     private UUID sessionId;
@@ -74,8 +74,8 @@ public class ClassActivity {
     private OffsetDateTime updatedAt;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "class_id", insertable = false, updatable = false)
-    private Class classRef;
+    @JoinColumn(name = "course_id", insertable = false, updatable = false)
+    private Course courseRef;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "session_id", insertable = false, updatable = false)

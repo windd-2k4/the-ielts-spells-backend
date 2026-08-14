@@ -8,7 +8,6 @@ import java.util.UUID;
 public record ReservationResponse(
         UUID id, UUID enrollmentId, String status, String reason,
         Short sessionsConsumed, Short sessionsRemaining, BigDecimal creditAmount,
-        LocalDate expiresOn, UUID targetClassId, OffsetDateTime requestedAt,
+        LocalDate expiresOn, UUID targetCourseId, OffsetDateTime requestedAt,
         OffsetDateTime approvedAt, String notes
 ) {}
-

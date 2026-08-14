@@ -5,7 +5,7 @@ import jakarta.validation.constraints.Size;
 import java.util.UUID;
 
 public record EnrollStudentRequest(
-        @NotNull UUID classId,
+        @NotNull UUID courseId,
         @NotNull UUID studentId,
         @Size(max = 2000) String notes
 ) {}

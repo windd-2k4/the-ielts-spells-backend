@@ -7,6 +7,7 @@ import com.theieltsspells.shared.web.PageResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -37,6 +38,19 @@ public class StaffInvitationController {
     @PreAuthorize("hasAuthority('admin')")
     public StaffResponse getStaff(@PathVariable UUID id) {
         return service.getStaff(id);
+    }
+
+    @GetMapping("/api/v1/admin/teacher-options")
+    @PreAuthorize("hasAnyAuthority('admin', 'manager')")
+    public List<TeacherOptionResponse> listTeacherOptions() {
+        return service.listStaff(PageRequest.of(0, 500)).stream()
+                .filter(staff -> staff.authUserId() != null)
+                .filter(staff -> staff.status() == com.theieltsspells.identity.domain.StaffStatus.ACTIVE)
+                .filter(staff -> staff.role() == com.theieltsspells.shared.persistence.enums.AppRole.TEACHER
+                        || staff.role() == com.theieltsspells.shared.persistence.enums.AppRole.TEACHING_ASSISTANT)
+                .map(staff -> new TeacherOptionResponse(
+                        staff.authUserId(), staff.fullName(), staff.email(), staff.role()))
+                .toList();
     }
 
     @PatchMapping("/api/v1/admin/staff/{id}")

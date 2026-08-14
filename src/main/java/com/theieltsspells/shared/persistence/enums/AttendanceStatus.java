@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 @Getter
 @RequiredArgsConstructor
 public enum AttendanceStatus {
+    PENDING("pending"),
     PRESENT("present"),
     LATE("late"),
     LEFT_EARLY("left_early"),

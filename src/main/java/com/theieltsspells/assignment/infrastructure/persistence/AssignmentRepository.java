@@ -12,9 +12,9 @@ import java.util.UUID;
 
 public interface AssignmentRepository extends JpaRepository<Assignment, UUID> {
 
-    Page<Assignment> findByClassId(UUID classId, Pageable pageable);
+    Page<Assignment> findByCourseId(UUID courseId, Pageable pageable);
 
-    List<Assignment> findByClassIdAndStatusOrderByDueAtAsc(UUID classId, AssignmentStatus status);
+    List<Assignment> findByCourseIdAndStatusOrderByDueAtAsc(UUID courseId, AssignmentStatus status);
 
     List<Assignment> findByDueAtBetweenOrderByDueAtAsc(OffsetDateTime from, OffsetDateTime to);
 }

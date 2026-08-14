@@ -39,10 +39,10 @@ public class EnrollmentAdminController {
     @GetMapping
     @Operation(summary = "Danh sách ghi danh theo lớp hoặc học viên")
     public PageResponse<EnrollmentResponse> list(
-            @RequestParam(required = false) UUID classId,
+            @RequestParam(required = false) UUID courseId,
             @RequestParam(required = false) UUID studentId,
             @PageableDefault(size = 20, sort = "enrolledAt") Pageable pageable) {
-        var page = classId != null ? service.listByClass(classId, pageable)
+        var page = courseId != null ? service.listByCourse(courseId, pageable)
                 : studentId != null ? service.listByStudent(studentId, pageable)
                 : service.list(pageable);
         return PageResponse.from(page);
@@ -53,5 +53,12 @@ public class EnrollmentAdminController {
     public EnrollmentResponse update(@PathVariable UUID id,
                                      @Valid @RequestBody UpdateEnrollmentRequest request) {
         return service.update(id, request);
+    }
+
+    @PatchMapping("/{id}/exam-plan")
+    @Operation(summary = "Cập nhật kế hoạch thi IELTS của học viên trong khóa")
+    public EnrollmentResponse updateExamPlan(@PathVariable UUID id,
+                                             @Valid @RequestBody UpdateEnrollmentExamPlanRequest request) {
+        return service.updateExamPlan(id, request);
     }
 }

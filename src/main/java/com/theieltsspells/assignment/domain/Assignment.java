@@ -1,7 +1,7 @@
 package com.theieltsspells.assignment.domain;
 
 import com.theieltsspells.shared.persistence.enums.*;
-import com.theieltsspells.academic.domain.Class;
+import com.theieltsspells.academic.domain.Course;
 import com.theieltsspells.identity.domain.Profile;
 import jakarta.persistence.*;
 import lombok.Getter;
@@ -30,8 +30,8 @@ public class Assignment {
     @Column(name = "id")
     private UUID id;
 
-    @Column(name = "class_id", nullable = false)
-    private UUID classId;
+    @Column(name = "course_id", nullable = false)
+    private UUID courseId;
 
     @Column(name = "created_by", nullable = false)
     private UUID createdBy;
@@ -69,8 +69,8 @@ public class Assignment {
     private OffsetDateTime updatedAt;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "class_id", insertable = false, updatable = false)
-    private Class classRef;
+    @JoinColumn(name = "course_id", insertable = false, updatable = false)
+    private Course courseRef;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by", insertable = false, updatable = false)

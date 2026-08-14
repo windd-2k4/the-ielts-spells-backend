@@ -72,6 +72,9 @@ public class AttendanceRecord {
     @Column(name = "adjustment_reason")
     private String adjustmentReason;
 
+    @Column(name = "updated_by")
+    private UUID updatedBy;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 

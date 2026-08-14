@@ -38,8 +38,16 @@ public class Course {
     @Column(name = "description")
     private String description;
 
+    @Column(name = "program_id")
+    private UUID programId;
+
     @Column(name = "level")
     private String level;
+
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
+    @Column(name = "skill_pair", nullable = false)
+    private SkillPair skillPair;
 
     @Column(name = "target_band")
     private BigDecimal targetBand;
@@ -49,6 +57,23 @@ public class Course {
 
     @Column(name = "tuition_amount")
     private BigDecimal tuitionAmount;
+
+    @Column(name = "capacity", nullable = false)
+    private Short capacity;
+
+    @Column(name = "starts_on", nullable = false)
+    private LocalDate startsOn;
+
+    @Column(name = "ends_on")
+    private LocalDate endsOn;
+
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
+    @Column(name = "status", nullable = false)
+    private ClassStatus status;
+
+    @Column(name = "default_zoom_url")
+    private String defaultZoomUrl;
 
     @Column(name = "is_public", nullable = false)
     private Boolean isPublic;

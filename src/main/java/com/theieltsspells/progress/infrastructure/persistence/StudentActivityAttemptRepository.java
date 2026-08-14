@@ -25,4 +25,6 @@ public interface StudentActivityAttemptRepository extends JpaRepository<StudentA
             UUID studentId, ActivityAttemptStatus status, Pageable pageable);
 
     Page<StudentActivityAttempt> findByReviewStatus(ReviewStatus reviewStatus, Pageable pageable);
+
+    List<StudentActivityAttempt> findByClassActivityIdInOrderByAttemptNoDesc(List<UUID> classActivityIds);
 }

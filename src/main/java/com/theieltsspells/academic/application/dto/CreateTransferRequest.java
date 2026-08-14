@@ -6,10 +6,9 @@ import java.math.BigDecimal;
 import java.util.UUID;
 
 public record CreateTransferRequest(
-        @NotNull UUID targetClassId,
+        @NotNull UUID targetCourseId,
         @NotBlank String reason,
         BigDecimal feeAdjustment,
         UUID reservationId,
         String notes
 ) {}
-

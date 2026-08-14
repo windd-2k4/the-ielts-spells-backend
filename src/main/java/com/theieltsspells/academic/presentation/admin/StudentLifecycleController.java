@@ -28,6 +28,9 @@ public class StudentLifecycleController {
     @PatchMapping("/reservations/{id}/approve")
     @PreAuthorize("hasAnyAuthority('admin', 'manager')")
     public ReservationResponse approveReservation(@PathVariable UUID id) { return service.approveReservation(id); }
+    @PatchMapping("/reservations/{id}/reject")
+    @PreAuthorize("hasAnyAuthority('admin', 'manager')")
+    public ReservationResponse rejectReservation(@PathVariable UUID id, @RequestParam(required = false) String reason) { return service.rejectReservation(id, reason); }
 
     @PostMapping("/{enrollmentId}/transfers")
     public TransferResponse requestTransfer(@PathVariable UUID enrollmentId, @Valid @RequestBody CreateTransferRequest request) { return service.requestTransfer(enrollmentId, request); }
@@ -36,4 +39,7 @@ public class StudentLifecycleController {
     @PatchMapping("/transfers/{id}/approve")
     @PreAuthorize("hasAnyAuthority('admin', 'manager')")
     public TransferResponse approveTransfer(@PathVariable UUID id) { return service.approveTransfer(id); }
+    @PatchMapping("/transfers/{id}/reject")
+    @PreAuthorize("hasAnyAuthority('admin', 'manager')")
+    public TransferResponse rejectTransfer(@PathVariable UUID id, @RequestParam(required = false) String reason) { return service.rejectTransfer(id, reason); }
 }

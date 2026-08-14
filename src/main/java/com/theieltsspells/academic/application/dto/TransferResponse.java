@@ -5,8 +5,7 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record TransferResponse(
-        UUID id, UUID sourceEnrollmentId, UUID targetClassId, UUID targetEnrollmentId,
+        UUID id, UUID sourceEnrollmentId, UUID targetCourseId, UUID targetEnrollmentId,
         UUID reservationId, String status, String reason, BigDecimal feeAdjustment,
         OffsetDateTime requestedAt, OffsetDateTime approvedAt, String notes
 ) {}
-

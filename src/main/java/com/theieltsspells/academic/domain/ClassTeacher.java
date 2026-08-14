@@ -16,7 +16,7 @@ import java.time.*;
 import java.util.*;
 
 @Entity
-@Table(name = "class_teachers")
+@Table(name = "course_teachers")
 @IdClass(ClassTeacherId.class)
 @Getter
 @Setter
@@ -25,8 +25,8 @@ import java.util.*;
 public class ClassTeacher {
 
     @Id
-    @Column(name = "class_id", nullable = false)
-    private UUID classId;
+    @Column(name = "course_id", nullable = false)
+    private UUID courseId;
 
     @Id
     @Column(name = "teacher_id", nullable = false)
@@ -41,8 +41,8 @@ public class ClassTeacher {
     private OffsetDateTime assignedAt;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "class_id", insertable = false, updatable = false)
-    private Class classRef;
+    @JoinColumn(name = "course_id", insertable = false, updatable = false)
+    private Course courseRef;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "teacher_id", insertable = false, updatable = false)

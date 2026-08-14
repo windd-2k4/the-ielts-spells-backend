@@ -16,6 +16,9 @@ import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
 import java.util.UUID;
+import java.time.LocalDate;
+import java.util.List;
+import com.theieltsspells.shared.persistence.enums.ClassStatus;
 
 @RestController
 @RequestMapping("/api/v1/admin/courses")
@@ -41,8 +44,15 @@ public class CourseAdminController {
     @Operation(summary = "Danh sách khóa học")
     public PageResponse<CourseResponse> list(
             @RequestParam(required = false) Boolean active,
+            @RequestParam(required = false) ClassStatus status,
             @PageableDefault(size = 20, sort = "createdAt") Pageable pageable) {
-        return PageResponse.from(service.list(active, pageable));
+        return PageResponse.from(status == null ? service.list(active, pageable) : service.listByStatus(status, pageable));
+    }
+
+    @GetMapping("/upcoming")
+    @Operation(summary = "Các khóa học sắp khai giảng")
+    public List<CourseResponse> upcoming(@RequestParam LocalDate from, @RequestParam LocalDate to) {
+        return service.upcoming(from, to);
     }
 
     @PutMapping("/{id}")

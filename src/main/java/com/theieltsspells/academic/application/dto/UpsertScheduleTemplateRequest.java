@@ -1,0 +1,16 @@
+package com.theieltsspells.academic.application.dto;
+
+import com.theieltsspells.shared.persistence.enums.SkillPair;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotNull;
+
+import java.util.List;
+
+public record UpsertScheduleTemplateRequest(
+        @NotBlank String name,
+        @NotNull SkillPair skillPair,
+        String description,
+        @Valid @NotEmpty List<ScheduleTemplateEntryRequest> entries
+) {}

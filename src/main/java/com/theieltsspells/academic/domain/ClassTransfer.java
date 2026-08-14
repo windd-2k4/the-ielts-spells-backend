@@ -12,12 +12,12 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @Entity
-@Table(name = "class_transfers")
+@Table(name = "course_transfers")
 @Getter @Setter @NoArgsConstructor @DynamicInsert
 public class ClassTransfer {
     @Id @GeneratedValue @UuidGenerator private UUID id;
     @Column(name = "source_enrollment_id", nullable = false) private UUID sourceEnrollmentId;
-    @Column(name = "target_class_id", nullable = false) private UUID targetClassId;
+    @Column(name = "target_course_id", nullable = false) private UUID targetCourseId;
     @Column(name = "target_enrollment_id") private UUID targetEnrollmentId;
     @Column(name = "reservation_id") private UUID reservationId;
     @Column(nullable = false) private String status;
@@ -29,4 +29,3 @@ public class ClassTransfer {
     private String notes;
     @Column(name = "updated_at", nullable = false) private OffsetDateTime updatedAt;
 }
-

@@ -16,7 +16,7 @@ import java.time.*;
 import java.util.*;
 
 @Entity
-@Table(name = "class_sessions")
+@Table(name = "course_sessions")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -29,8 +29,8 @@ public class ClassSession {
     @Column(name = "id")
     private UUID id;
 
-    @Column(name = "class_id", nullable = false)
-    private UUID classId;
+    @Column(name = "course_id", nullable = false)
+    private UUID courseId;
 
     @Column(name = "session_no", nullable = false)
     private Short sessionNo;
@@ -58,6 +58,15 @@ public class ClassSession {
     @Column(name = "notes")
     private String notes;
 
+    @Column(name = "phase_name")
+    private String phaseName;
+
+    @Column(name = "content")
+    private String content;
+
+    @Column(name = "teacher_id")
+    private UUID teacherId;
+
     @Column(name = "created_by")
     private UUID createdBy;
 
@@ -65,10 +74,16 @@ public class ClassSession {
     private OffsetDateTime createdAt;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "class_id", insertable = false, updatable = false)
-    private Class classRef;
+    @JoinColumn(name = "course_id", insertable = false, updatable = false)
+    private Course courseRef;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by", insertable = false, updatable = false)
     private Profile createdByRef;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "teacher_id", insertable = false, updatable = false)
+    private Profile teacherRef;
+
+
 }

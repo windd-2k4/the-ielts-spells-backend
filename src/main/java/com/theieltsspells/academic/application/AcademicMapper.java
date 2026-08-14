@@ -8,19 +8,16 @@ final class AcademicMapper {
     private AcademicMapper() {}
 
     static CourseResponse toResponse(Course value) {
-        return new CourseResponse(value.getId(), value.getCode(), value.getName(), value.getDescription(),
-                value.getLevel(), value.getTargetBand(), value.getTotalSessions(), value.getTuitionAmount(),
+        return new CourseResponse(value.getId(), value.getProgramId(), value.getCode(), value.getName(), value.getDescription(),
+                value.getLevel(), value.getSkillPair(), value.getTargetBand(), value.getTotalSessions(), value.getTuitionAmount(),
+                value.getCapacity(), value.getStartsOn(), value.getEndsOn(), value.getStatus(), value.getDefaultZoomUrl(),
                 value.getIsPublic(), value.getIsActive(), value.getCreatedBy(), value.getCreatedAt(), value.getUpdatedAt());
     }
 
-    static ClassResponse toResponse(com.theieltsspells.academic.domain.Class value) {
-        return new ClassResponse(value.getId(), value.getCourseId(), value.getCode(), value.getName(),
-                value.getCapacity(), value.getStartsOn(), value.getEndsOn(), value.getStatus(),
-                value.getDefaultZoomUrl(), value.getCreatedBy(), value.getCreatedAt(), value.getUpdatedAt());
-    }
-
     static EnrollmentResponse toResponse(Enrollment value) {
-        return new EnrollmentResponse(value.getId(), value.getClassId(), value.getStudentId(), value.getStatus(),
-                value.getEnrolledAt(), value.getStartedOn(), value.getEndedOn(), value.getNotes());
+        return new EnrollmentResponse(value.getId(), value.getCourseId(), value.getStudentId(), value.getStatus(),
+                value.getEnrolledAt(), value.getStartedOn(), value.getEndedOn(), value.getNotes(),
+                value.getPlannedExamMonth(), value.getActualExamDate(),
+                value.getExamRegistrationStatus(), value.getTargetNote());
     }
 }

@@ -1,7 +1,6 @@
 package com.theieltsspells.identity.application;
 
-import com.theieltsspells.identity.domain.Profile;
-import com.theieltsspells.identity.domain.StudentProfile;
+import com.theieltsspells.identity.infrastructure.persistence.StudentDirectoryProjection;
 import com.theieltsspells.identity.infrastructure.persistence.StudentProfileRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.PageImpl;
@@ -17,29 +16,30 @@ import static org.mockito.Mockito.when;
 
 class StudentQueryServiceTest {
     @Test
-    void normalizesQueryAndMapsProfileData() {
+    void normalizesQueryAndMapsDirectoryData() {
         var repository = mock(StudentProfileRepository.class);
         var pageable = PageRequest.of(0, 8);
-        var profile = new Profile();
         var id = UUID.randomUUID();
-        profile.setId(id);
-        profile.setFullName("Nguyễn Minh Anh");
-        profile.setEmail("minhanh@example.com");
-        profile.setPhone("0346 953 600");
-        var student = new StudentProfile();
-        student.setUserId(id);
-        student.setStudentCode("JUNE2-022");
-        student.setUserRef(profile);
-        when(repository.searchActiveStudents("0346 953", "0346953", pageable))
+        var student = mock(StudentDirectoryProjection.class);
+        when(student.getId()).thenReturn(id);
+        when(student.getFullName()).thenReturn("Nguyễn Minh Anh");
+        when(student.getEmail()).thenReturn("minhanh@example.com");
+        when(student.getPhone()).thenReturn("0346 953 600");
+        when(student.getStudentCode()).thenReturn("JUNE2-022");
+        when(student.getActive()).thenReturn(true);
+        when(student.getLifecycleStatus()).thenReturn("ACTIVE");
+        when(student.getEnrollmentCount()).thenReturn(1L);
+        when(repository.searchDirectory("0346 953", "0346953", null, null, pageable))
                 .thenReturn(new PageImpl<>(List.of(student), pageable, 1));
 
-        var result = new StudentQueryService(repository).search(" 0346 953 ", pageable);
+        var result = new StudentQueryService(repository).search(" 0346 953 ", null, null, pageable);
 
         assertThat(result.getContent()).singleElement().satisfies(item -> {
             assertThat(item.id()).isEqualTo(id);
             assertThat(item.fullName()).isEqualTo("Nguyễn Minh Anh");
             assertThat(item.studentCode()).isEqualTo("JUNE2-022");
+            assertThat(item.lifecycleStatus().name()).isEqualTo("ACTIVE");
         });
-        verify(repository).searchActiveStudents("0346 953", "0346953", pageable);
+        verify(repository).searchDirectory("0346 953", "0346953", null, null, pageable);
     }
 }

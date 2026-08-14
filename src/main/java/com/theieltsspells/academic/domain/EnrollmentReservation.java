@@ -24,11 +24,10 @@ public class EnrollmentReservation {
     @Column(name = "sessions_remaining", nullable = false) private Short sessionsRemaining;
     @Column(name = "credit_amount", nullable = false) private BigDecimal creditAmount;
     @Column(name = "expires_on") private LocalDate expiresOn;
-    @Column(name = "target_class_id") private UUID targetClassId;
+    @Column(name = "target_course_id") private UUID targetCourseId;
     @Column(name = "requested_at", nullable = false) private OffsetDateTime requestedAt;
     @Column(name = "approved_at") private OffsetDateTime approvedAt;
     @Column(name = "approved_by") private UUID approvedBy;
     private String notes;
     @Column(name = "updated_at", nullable = false) private OffsetDateTime updatedAt;
 }
-

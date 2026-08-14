@@ -29,8 +29,8 @@ public class Enrollment {
     @Column(name = "id")
     private UUID id;
 
-    @Column(name = "class_id", nullable = false)
-    private UUID classId;
+    @Column(name = "course_id", nullable = false)
+    private UUID courseId;
 
     @Column(name = "student_id", nullable = false)
     private UUID studentId;
@@ -52,9 +52,21 @@ public class Enrollment {
     @Column(name = "notes")
     private String notes;
 
+    @Column(name = "planned_exam_month")
+    private LocalDate plannedExamMonth;
+
+    @Column(name = "actual_exam_date")
+    private LocalDate actualExamDate;
+
+    @Column(name = "exam_registration_status", nullable = false)
+    private String examRegistrationStatus;
+
+    @Column(name = "target_note")
+    private String targetNote;
+
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "class_id", insertable = false, updatable = false)
-    private Class classRef;
+    @JoinColumn(name = "course_id", insertable = false, updatable = false)
+    private Course courseRef;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "student_id", insertable = false, updatable = false)

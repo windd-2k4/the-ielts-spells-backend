@@ -5,6 +5,8 @@ import java.time.*;
 import java.util.UUID;
 
 public record EnrollmentResponse(
-        UUID id, UUID classId, UUID studentId, EnrollmentStatus status,
-        OffsetDateTime enrolledAt, LocalDate startedOn, LocalDate endedOn, String notes
+        UUID id, UUID courseId, UUID studentId, EnrollmentStatus status,
+        OffsetDateTime enrolledAt, LocalDate startedOn, LocalDate endedOn, String notes,
+        LocalDate plannedExamMonth, LocalDate actualExamDate,
+        String examRegistrationStatus, String targetNote
 ) {}
