@@ -22,5 +22,5 @@ public record UpsertClassSessionRequest(
         String phaseName,
         String content,
         UUID teacherId,
-        @Valid @Size(max = 10) List<CourseSessionItemRequest> items
+        @Valid @Size(max = 30) List<CourseSessionItemRequest> items
 ) {}

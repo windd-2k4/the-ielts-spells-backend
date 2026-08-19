@@ -4,5 +4,6 @@ target/
 *.iml
 .env
 logs/
+data/uploads/
 *.log
 .DS_Store

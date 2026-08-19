@@ -8,11 +8,15 @@ import java.util.UUID;
 
 public record CourseSessionItemRequest(
         @NotBlank
-        @Pattern(regexp = "ASSIGNMENT|TEST")
+        @Pattern(regexp = "MATERIAL|ASSIGNMENT|TEST")
         String itemType,
         @NotBlank String title,
         String description,
         UUID sourceAssignmentId,
         UUID sourceTestId,
-        OffsetDateTime deadlineAt
+        UUID sourceResourceId,
+        UUID sourceExerciseTemplateId,
+        OffsetDateTime deadlineAt,
+        Boolean required,
+        @Pattern(regexp = "STUDENT|TEACHER") String visibility
 ) {}

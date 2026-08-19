@@ -40,8 +40,20 @@ public class CourseSessionItem {
     @Column(name = "source_test_id")
     private UUID sourceTestId;
 
-    @Column(name = "deadline_at", nullable = false)
+    @Column(name = "source_resource_id")
+    private UUID sourceResourceId;
+
+    @Column(name = "source_exercise_template_id")
+    private UUID sourceExerciseTemplateId;
+
+    @Column(name = "deadline_at")
     private OffsetDateTime deadlineAt;
+
+    @Column(name = "is_required", nullable = false)
+    private Boolean isRequired;
+
+    @Column(name = "visibility", nullable = false)
+    private String visibility;
 
     @Column(name = "display_order", nullable = false)
     private Short displayOrder;

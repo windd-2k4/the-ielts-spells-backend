@@ -83,6 +83,8 @@ public class ClassSessionApplicationService {
                 test.setItemType("TEST");
                 test.setTitle(entry.contents().getFirst());
                 test.setDeadlineAt(value.getEndsAt().plusDays(2));
+                test.setIsRequired(true);
+                test.setVisibility("STUDENT");
                 test.setDisplayOrder((short) 0);
                 sessionItems.save(test);
             }
@@ -143,7 +145,8 @@ public class ClassSessionApplicationService {
         if (!request.endsAt().isAfter(request.startsAt())) {
             throw new BusinessRuleException("Giờ kết thúc phải sau giờ bắt đầu");
         }
-        if (request.items() != null && request.items().size() > 10) {
+        if (request.items() != null && request.items().stream()
+                .filter(item -> !"MATERIAL".equals(item.itemType())).count() > 10) {
             throw new BusinessRuleException("Một session chỉ được có tối đa 10 bài tập hoặc bài test");
         }
         if (request.items() != null) {
@@ -153,6 +156,18 @@ public class ClassSessionApplicationService {
                 }
                 if ("TEST".equals(item.itemType()) && item.sourceAssignmentId() != null) {
                     throw new BusinessRuleException("Bài test không thể liên kết với kho bài tập");
+                }
+                if ("TEST".equals(item.itemType())
+                        && (item.sourceResourceId() != null || item.sourceExerciseTemplateId() != null)) {
+                    throw new BusinessRuleException("Bài test chỉ được liên kết với kho đề test");
+                }
+                if ("MATERIAL".equals(item.itemType())
+                        && (item.sourceAssignmentId() != null || item.sourceTestId() != null
+                        || item.sourceExerciseTemplateId() != null)) {
+                    throw new BusinessRuleException("Tài liệu buổi học chỉ được liên kết với kho tài liệu");
+                }
+                if ("ASSIGNMENT".equals(item.itemType()) && item.sourceResourceId() != null) {
+                    throw new BusinessRuleException("Bài tập không thể liên kết với kho tài liệu");
                 }
             });
         }
@@ -184,7 +199,12 @@ public class ClassSessionApplicationService {
             value.setDescription(blank(input.description()));
             value.setSourceAssignmentId(input.sourceAssignmentId());
             value.setSourceTestId(input.sourceTestId());
-            value.setDeadlineAt(input.deadlineAt() == null ? session.getEndsAt().plusDays(2) : input.deadlineAt());
+            value.setSourceResourceId(input.sourceResourceId());
+            value.setSourceExerciseTemplateId(input.sourceExerciseTemplateId());
+            value.setDeadlineAt("MATERIAL".equals(input.itemType()) ? input.deadlineAt()
+                    : input.deadlineAt() == null ? session.getEndsAt().plusDays(2) : input.deadlineAt());
+            value.setIsRequired(input.required() == null ? !"MATERIAL".equals(input.itemType()) : input.required());
+            value.setVisibility(input.visibility() == null ? "STUDENT" : input.visibility());
             value.setDisplayOrder((short) index);
             sessionItems.save(value);
         }
@@ -195,7 +215,9 @@ public class ClassSessionApplicationService {
         session.setStartsAt(startsAt);
         session.setEndsAt(endsAt);
         sessionItems.findBySessionIdOrderByDisplayOrderAscCreatedAtAsc(session.getId()).forEach(item -> {
-            item.setDeadlineAt(item.getDeadlineAt().plus(difference));
+            if (item.getDeadlineAt() != null) {
+                item.setDeadlineAt(item.getDeadlineAt().plus(difference));
+            }
             sessionItems.save(item);
         });
     }
@@ -237,7 +259,9 @@ public class ClassSessionApplicationService {
         var items = sessionItems.findBySessionIdOrderByDisplayOrderAscCreatedAtAsc(value.getId()).stream()
                 .map(item -> new CourseSessionItemResponse(item.getId(), item.getItemType(), item.getTitle(),
                         item.getDescription(), item.getSourceAssignmentId(), item.getSourceTestId(),
-                        item.getDeadlineAt(), item.getDisplayOrder()))
+                        item.getSourceResourceId(), item.getSourceExerciseTemplateId(),
+                        item.getDeadlineAt(), item.getDisplayOrder(), Boolean.TRUE.equals(item.getIsRequired()),
+                        item.getVisibility()))
                 .toList();
         String teacherName = value.getTeacherRef() == null ? null : value.getTeacherRef().getFullName();
         return new ClassSessionResponse(value.getId(), value.getCourseId(), value.getSessionNo(), value.getTitle(),

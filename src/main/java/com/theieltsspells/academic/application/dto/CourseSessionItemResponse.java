@@ -10,6 +10,10 @@ public record CourseSessionItemResponse(
         String description,
         UUID sourceAssignmentId,
         UUID sourceTestId,
+        UUID sourceResourceId,
+        UUID sourceExerciseTemplateId,
         OffsetDateTime deadlineAt,
-        Short displayOrder
+        Short displayOrder,
+        boolean required,
+        String visibility
 ) {}
