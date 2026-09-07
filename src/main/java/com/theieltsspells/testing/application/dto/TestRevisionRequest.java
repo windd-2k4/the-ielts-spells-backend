@@ -1,10 +1,9 @@
 package com.theieltsspells.testing.application.dto;
 
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 
-public record TestStatusRequest(
-        @NotBlank String status,
+public record TestRevisionRequest(
         @NotNull @Positive Integer draftRevision
-) {}
+) {
+}

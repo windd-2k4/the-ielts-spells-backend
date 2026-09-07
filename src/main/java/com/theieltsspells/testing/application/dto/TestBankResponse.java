@@ -7,9 +7,10 @@ import java.util.Map;
 import java.util.UUID;
 
 public record TestBankResponse(
-        UUID id, String code, String title, String description, String purpose,
-        SkillType skill, String testType, String difficulty, int sectionsCount,
+        UUID id, String code, String title, String description,
+        SkillType skill, String testType, int sectionsCount,
         int totalQuestions, int durationMinutes, String version, String status,
         List<String> tags, int referencedCoursesCount, String createdBy,
-        OffsetDateTime createdAt, OffsetDateTime updatedAt, Map<String, Object> builderContent
+        OffsetDateTime createdAt, OffsetDateTime updatedAt, Map<String, Object> builderContent,
+        int draftRevision, TestVersionResponse publishedVersion
 ) {}
