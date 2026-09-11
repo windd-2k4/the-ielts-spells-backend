@@ -28,5 +28,12 @@ public class StaffDirectoryService {
             throw new BusinessRuleException("Chỉ có thể phân công giáo viên đang hoạt động");
         }
     }
-}
 
+    public void requireActiveStudentSupport(UUID authUserId) {
+        var staff = staffProfiles.findByAuthUserId(authUserId)
+                .orElseThrow(() -> new BusinessRuleException("Nhân sự hỗ trợ không có hồ sơ hoạt động"));
+        if (staff.getStatus() != StaffStatus.ACTIVE || staff.getPrimaryRole() != AppRole.STUDENT_SUPPORT) {
+            throw new BusinessRuleException("Chỉ có thể phân công nhân sự Student Support đang hoạt động");
+        }
+    }
+}

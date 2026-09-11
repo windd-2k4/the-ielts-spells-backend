@@ -1,6 +1,8 @@
 package com.theieltsspells.progress.application.dto;
 
-import com.theieltsspells.shared.persistence.enums.*;
+import com.theieltsspells.shared.persistence.enums.ActivityAttemptStatus;
+import com.theieltsspells.shared.persistence.enums.ResultSource;
+import com.theieltsspells.shared.persistence.enums.ReviewStatus;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.UUID;

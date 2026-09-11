@@ -1,8 +1,7 @@
 package com.theieltsspells.identity.application;
 
-import com.theieltsspells.learninglibrary.infrastructure.storage.FileStorageProperties;
-import com.theieltsspells.learninglibrary.infrastructure.storage.FileStorageService;
 import com.theieltsspells.shared.application.BusinessRuleException;
+import com.theieltsspells.shared.storage.FileStorage;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
@@ -24,8 +23,7 @@ public class StaffAvatarApplicationService {
             "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(png|jpg|webp|gif)$");
     private static final String AVATAR_DIRECTORY = "staff/avatars/";
 
-    private final FileStorageService storage;
-    private final FileStorageProperties storageProperties;
+    private final FileStorage storage;
 
     public String upload(MultipartFile file) {
         validateImage(file);
@@ -38,8 +36,7 @@ public class StaffAvatarApplicationService {
         if (filename == null || !FILENAME.matcher(filename).matches()) {
             throw new BusinessRuleException("Ảnh đại diện không hợp lệ");
         }
-        InputStream stream = storage.open(storageProperties.getProvider(), storageProperties.getSupabaseBucket(),
-                AVATAR_DIRECTORY + filename);
+        InputStream stream = storage.openDefault(AVATAR_DIRECTORY + filename);
         return new AvatarContent(stream, mediaType(filename));
     }
 

@@ -1,0 +1,10 @@
+.git
+.github
+.idea
+.agents
+.env
+target
+data/uploads
+logs
+*.log
+*.iml

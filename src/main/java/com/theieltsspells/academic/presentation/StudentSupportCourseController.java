@@ -3,8 +3,6 @@ package com.theieltsspells.academic.presentation;
 import com.theieltsspells.academic.application.CourseStudentSupportApplicationService;
 import com.theieltsspells.academic.application.dto.CourseResponse;
 import com.theieltsspells.academic.application.dto.StudentSupportStudentResponse;
-import com.theieltsspells.progress.application.ClassProgressQueryService;
-import com.theieltsspells.progress.application.dto.ClassActivityProgressResponse;
 import com.theieltsspells.shared.web.PageResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -31,7 +29,6 @@ import java.util.UUID;
 public class StudentSupportCourseController {
 
     private final CourseStudentSupportApplicationService courseSupport;
-    private final ClassProgressQueryService progress;
 
     @GetMapping("/courses")
     @PreAuthorize("@permissionPolicy.isStudentSupport(authentication)")
@@ -48,9 +45,4 @@ public class StudentSupportCourseController {
         return PageResponse.from(courseSupport.students(courseId, pageable));
     }
 
-    @GetMapping("/courses/{courseId}/progress")
-    @PreAuthorize("@permissionPolicy.isStudentSupportAssignedToCourse(authentication, #courseId)")
-    public List<ClassActivityProgressResponse> progress(@PathVariable UUID courseId) {
-        return progress.courseProgress(courseId);
-    }
 }

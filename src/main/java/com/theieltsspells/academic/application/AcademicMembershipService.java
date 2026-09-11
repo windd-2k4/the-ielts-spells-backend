@@ -3,6 +3,7 @@ package com.theieltsspells.academic.application;
 import com.theieltsspells.academic.domain.ClassSession;
 import com.theieltsspells.shared.persistence.enums.EnrollmentStatus;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
+import com.theieltsspells.shared.security.CourseMembershipLookup;
 import com.theieltsspells.academic.infrastructure.persistence.ClassSessionRepository;
 import com.theieltsspells.academic.infrastructure.persistence.ClassTeacherRepository;
 import com.theieltsspells.academic.infrastructure.persistence.CourseStudentSupportRepository;
@@ -18,7 +19,7 @@ import java.util.Comparator;
 
 @Service
 @RequiredArgsConstructor
-public class AcademicMembershipService {
+public class AcademicMembershipService implements CourseMembershipLookup {
     private final ClassSessionRepository sessions;
     private final EnrollmentRepository enrollments;
     private final ClassTeacherRepository teachers;
@@ -46,14 +47,17 @@ public class AcademicMembershipService {
     }
 
     /** Delivery access requires a currently active enrollment, not only a historical record. */
+    @Override
     public boolean hasActiveEnrollment(UUID courseId, UUID studentId) {
         return enrollments.existsByCourseIdAndStudentIdAndStatus(courseId, studentId, EnrollmentStatus.ACTIVE);
     }
 
+    @Override
     public boolean isTeacherAssigned(UUID courseId, UUID teacherId) {
         return teachers.existsByCourseIdAndTeacherId(courseId, teacherId);
     }
 
+    @Override
     public boolean isStudentSupportAssigned(UUID courseId, UUID studentSupportId) {
         return studentSupports.existsByCourseIdAndStudentSupportId(courseId, studentSupportId);
     }

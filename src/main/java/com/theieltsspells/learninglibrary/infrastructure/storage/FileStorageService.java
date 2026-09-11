@@ -2,6 +2,7 @@ package com.theieltsspells.learninglibrary.infrastructure.storage;
 
 import com.theieltsspells.learninglibrary.domain.LearningResourceFile;
 import com.theieltsspells.shared.application.BusinessRuleException;
+import com.theieltsspells.shared.storage.FileStorage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
@@ -19,7 +20,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.Locale;
 
 @Service
-public class FileStorageService {
+public class FileStorageService implements FileStorage {
     private final FileStorageProperties properties;
     private final RestClient httpClient;
 
@@ -34,6 +35,7 @@ public class FileStorageService {
     @Value("${app.supabase.service-role-key:}")
     private String supabaseServiceRoleKey;
 
+    @Override
     public StoredFile store(String objectPath, MultipartFile file) {
         validate(file);
         var provider = properties.getProvider().trim().toUpperCase(Locale.ROOT);
@@ -46,6 +48,11 @@ public class FileStorageService {
 
     public InputStream open(LearningResourceFile file) {
         return open(file.getStorageProvider(), file.getBucketName(), file.getObjectPath());
+    }
+
+    @Override
+    public InputStream openDefault(String objectPath) {
+        return open(properties.getProvider(), properties.getSupabaseBucket(), objectPath);
     }
 
     public InputStream open(String storageProvider, String bucketName, String objectPath) {
@@ -165,5 +172,4 @@ public class FileStorageService {
                 ? "application/octet-stream" : file.getContentType();
     }
 
-    public record StoredFile(String provider, String bucketName, String objectPath) {}
 }

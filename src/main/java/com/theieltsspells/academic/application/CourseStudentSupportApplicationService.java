@@ -8,11 +8,9 @@ import com.theieltsspells.academic.domain.CourseStudentSupport;
 import com.theieltsspells.academic.infrastructure.persistence.CourseRepository;
 import com.theieltsspells.academic.infrastructure.persistence.CourseStudentSupportRepository;
 import com.theieltsspells.academic.infrastructure.persistence.EnrollmentRepository;
-import com.theieltsspells.identity.domain.StaffStatus;
-import com.theieltsspells.identity.infrastructure.persistence.StaffProfileRepository;
+import com.theieltsspells.identity.application.StaffDirectoryService;
 import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
-import com.theieltsspells.shared.persistence.enums.AppRole;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -36,7 +34,7 @@ public class CourseStudentSupportApplicationService {
 
     private final CourseRepository courses;
     private final CourseStudentSupportRepository assignments;
-    private final StaffProfileRepository staffProfiles;
+    private final StaffDirectoryService staffDirectory;
     private final EnrollmentRepository enrollments;
 
     public List<CourseStudentSupportAssignmentResponse> listForCourse(UUID courseId) {
@@ -57,7 +55,7 @@ public class CourseStudentSupportApplicationService {
         if (requestedIds.size() != request.studentSupportIds().size()) {
             throw new BusinessRuleException("Không được phân công một nhân sự hỗ trợ nhiều lần trong cùng khóa");
         }
-        requestedIds.forEach(this::requireActiveStudentSupport);
+        requestedIds.forEach(staffDirectory::requireActiveStudentSupport);
 
         List<CourseStudentSupport> existing = assignments.findByCourseIdOrderByAssignedAtAsc(courseId);
         Map<UUID, CourseStudentSupport> existingBySupportId = existing.stream()
@@ -128,11 +126,4 @@ public class CourseStudentSupportApplicationService {
         }
     }
 
-    private void requireActiveStudentSupport(UUID authUserId) {
-        var staff = staffProfiles.findByAuthUserId(authUserId)
-                .orElseThrow(() -> new BusinessRuleException("Nhân sự hỗ trợ không có hồ sơ hoạt động: " + authUserId));
-        if (staff.getStatus() != StaffStatus.ACTIVE || staff.getPrimaryRole() != AppRole.STUDENT_SUPPORT) {
-            throw new BusinessRuleException("Chỉ có thể phân công nhân sự Student Support đang hoạt động");
-        }
-    }
 }

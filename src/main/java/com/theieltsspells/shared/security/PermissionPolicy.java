@@ -1,6 +1,5 @@
 package com.theieltsspells.shared.security;
 
-import com.theieltsspells.academic.application.AcademicMembershipService;
 import com.theieltsspells.shared.persistence.enums.AppRole;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
@@ -29,7 +28,7 @@ public class PermissionPolicy {
 
     private static final Map<AppRole, Set<ApplicationPermission>> GRANTS = grants();
 
-    private final AcademicMembershipService memberships;
+    private final CourseMembershipLookup memberships;
 
     public boolean has(Authentication authentication, String permissionKey) {
         return ApplicationPermission.fromKey(permissionKey)

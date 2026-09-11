@@ -1,6 +1,5 @@
 package com.theieltsspells.shared.security;
 
-import com.theieltsspells.academic.application.AcademicMembershipService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,7 +20,7 @@ import static org.mockito.Mockito.when;
 class PermissionPolicyTests {
 
     @Mock
-    private AcademicMembershipService memberships;
+    private CourseMembershipLookup memberships;
 
     private PermissionPolicy policy;
 
