@@ -8,4 +8,5 @@ import java.util.*;
 public interface StaffProfileRepository extends JpaRepository<StaffProfile, UUID> {
     boolean existsByEmailIgnoreCase(String email);
     Optional<StaffProfile> findByEmailIgnoreCase(String email);
+    Optional<StaffProfile> findByAuthUserId(UUID authUserId);
 }

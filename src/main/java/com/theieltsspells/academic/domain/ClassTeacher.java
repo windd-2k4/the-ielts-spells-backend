@@ -40,6 +40,9 @@ public class ClassTeacher {
     @Column(name = "assigned_at", nullable = false)
     private OffsetDateTime assignedAt;
 
+    @Column(name = "is_primary", nullable = false)
+    private Boolean isPrimary;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "course_id", insertable = false, updatable = false)
     private Course courseRef;

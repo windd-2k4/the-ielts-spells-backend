@@ -1,4 +1,7 @@
 spring:
+  http:
+    client:
+      factory: simple
   servlet:
     multipart:
       max-file-size: ${FILE_STORAGE_MAX_FILE_SIZE:50MB}

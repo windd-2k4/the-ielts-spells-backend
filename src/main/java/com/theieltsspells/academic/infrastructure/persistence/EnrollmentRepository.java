@@ -15,6 +15,7 @@ public interface EnrollmentRepository extends JpaRepository<Enrollment, UUID> {
 
     Optional<Enrollment> findByCourseIdAndStudentId(UUID courseId, UUID studentId);
 
+    @EntityGraph(attributePaths = {"studentRef", "studentRef.userRef"})
     Page<Enrollment> findByCourseId(UUID courseId, Pageable pageable);
 
     List<Enrollment> findByCourseIdAndStatus(UUID courseId, EnrollmentStatus status);
@@ -25,6 +26,8 @@ public interface EnrollmentRepository extends JpaRepository<Enrollment, UUID> {
     Page<Enrollment> findByStudentId(UUID studentId, Pageable pageable);
 
     boolean existsByCourseIdAndStudentId(UUID courseId, UUID studentId);
+
+    boolean existsByCourseIdAndStudentIdAndStatus(UUID courseId, UUID studentId, EnrollmentStatus status);
 
     long countByCourseIdAndStatusIn(UUID courseId, List<EnrollmentStatus> statuses);
 

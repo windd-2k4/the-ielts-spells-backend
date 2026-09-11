@@ -18,6 +18,25 @@ class SupabaseJwtAuthoritiesConverterTests {
     }
 
     @Test
+    void normalizesUppercaseDatabaseRolesToCanonicalAuthorities() {
+        var jwt = tokenWithClaim("user_roles", List.of("ADMIN", "SOCIAL_MEDIA", "STUDENT_SUPPORT"));
+        assertThat(converter.convert(jwt)).extracting("authority")
+                .containsExactly("admin", "social_media", "student_support");
+    }
+
+    @Test
+    void normalizesAndDeduplicatesRolesAcrossCompatibilityClaims() {
+        var jwt = Jwt.withTokenValue("token").header("alg", "RS256")
+                .subject("user-id")
+                .claim("user_roles", List.of(" ADMIN ", "teacher"))
+                .claim("user_role", "admin")
+                .build();
+
+        assertThat(converter.convert(jwt)).extracting("authority")
+                .containsExactly("admin", "teacher");
+    }
+
+    @Test
     void supportsSingleRoleClaimForCompatibility() {
         var jwt = tokenWithClaim("user_role", "student");
         assertThat(converter.convert(jwt)).extracting("authority")

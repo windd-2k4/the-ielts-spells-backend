@@ -33,6 +33,9 @@ public class TestAssignment {
     @Column(name = "test_id", nullable = false)
     private UUID testId;
 
+    @Column(name = "test_version_id")
+    private UUID testVersionId;
+
     @Column(name = "course_id", nullable = false)
     private UUID courseId;
 
@@ -48,8 +51,23 @@ public class TestAssignment {
     @Column(name = "max_attempts", nullable = false)
     private Short maxAttempts;
 
+    @Column(name = "mode", nullable = false)
+    private String mode;
+
+    @Column(name = "duration_seconds")
+    private Integer durationSeconds;
+
+    @Column(name = "show_result_after_submit", nullable = false)
+    private Boolean showResultAfterSubmit;
+
+    @Column(name = "archived_at")
+    private OffsetDateTime archivedAt;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
+
+    @Column(name = "updated_at", nullable = false)
+    private OffsetDateTime updatedAt;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "test_id", insertable = false, updatable = false)

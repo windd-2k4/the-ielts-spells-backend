@@ -19,7 +19,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Tag(name = "Admin - Schedule templates")
 @SecurityRequirement(name = "bearerAuth")
-@PreAuthorize("hasAnyAuthority('admin', 'manager')")
+@PreAuthorize("@permissionPolicy.has(authentication, 'schedule.template.manage')")
 public class ScheduleTemplateAdminController {
     private final ScheduleTemplateApplicationService service;
     @GetMapping public List<ScheduleTemplateResponse> list(@RequestParam String skillPair) { return service.list(skillPair); }

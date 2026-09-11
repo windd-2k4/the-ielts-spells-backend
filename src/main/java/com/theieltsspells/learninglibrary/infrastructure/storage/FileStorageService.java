@@ -2,27 +2,31 @@ package com.theieltsspells.learninglibrary.infrastructure.storage;
 
 import com.theieltsspells.learninglibrary.domain.LearningResourceFile;
 import com.theieltsspells.shared.application.BusinessRuleException;
-import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Locale;
 
 @Service
-@RequiredArgsConstructor
 public class FileStorageService {
     private final FileStorageProperties properties;
-    private final HttpClient httpClient = HttpClient.newHttpClient();
+    private final RestClient httpClient;
+
+    public FileStorageService(FileStorageProperties properties, RestClient.Builder restClientBuilder) {
+        this.properties = properties;
+        this.httpClient = restClientBuilder.build();
+    }
 
     @Value("${app.supabase.url:}")
     private String supabaseUrl;
@@ -41,9 +45,13 @@ public class FileStorageService {
     }
 
     public InputStream open(LearningResourceFile file) {
-        return switch (file.getStorageProvider()) {
-            case "LOCAL" -> openLocal(file.getObjectPath());
-            case "SUPABASE" -> openSupabase(file);
+        return open(file.getStorageProvider(), file.getBucketName(), file.getObjectPath());
+    }
+
+    public InputStream open(String storageProvider, String bucketName, String objectPath) {
+        return switch (storageProvider.trim().toUpperCase(Locale.ROOT)) {
+            case "LOCAL" -> openLocal(objectPath);
+            case "SUPABASE" -> openSupabase(bucketName, objectPath);
             default -> throw new BusinessRuleException("Không nhận diện được nơi lưu tệp");
         };
     }
@@ -56,19 +64,16 @@ public class FileStorageService {
             }
             if ("SUPABASE".equals(file.getStorageProvider())) {
                 var key = requireSupabaseKey();
-                var request = HttpRequest.newBuilder(objectUri(file.getBucketName(), file.getObjectPath()))
+                var status = httpClient.delete()
+                        .uri(objectUri(file.getBucketName(), file.getObjectPath()))
                         .header("Authorization", "Bearer " + key)
                         .header("apikey", key)
-                        .DELETE().build();
-                var response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
-                if (response.statusCode() >= 300 && response.statusCode() != 404) {
+                        .exchange((request, response) -> response.getStatusCode().value());
+                if (status >= 300 && status != 404) {
                     throw new BusinessRuleException("Không thể xóa tệp trên Supabase Storage");
                 }
             }
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            throw new BusinessRuleException("Không thể xóa tệp lưu trữ");
-        } catch (IOException exception) {
+        } catch (IOException | RestClientResponseException exception) {
             throw new BusinessRuleException("Không thể xóa tệp lưu trữ");
         }
     }
@@ -88,22 +93,19 @@ public class FileStorageService {
         try {
             var body = file.getBytes();
             var key = requireSupabaseKey();
-            var request = HttpRequest.newBuilder(objectUri(properties.getSupabaseBucket(), objectPath))
+            var status = httpClient.post()
+                    .uri(objectUri(properties.getSupabaseBucket(), objectPath))
                     .header("Authorization", "Bearer " + key)
                     .header("apikey", key)
                     .header("x-upsert", "false")
-                    .header("Content-Type", contentType(file))
-                    .POST(HttpRequest.BodyPublishers.ofByteArray(body))
-                    .build();
-            var response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new BusinessRuleException("Supabase Storage từ chối tải tệp lên: HTTP " + response.statusCode());
+                    .contentType(MediaType.parseMediaType(contentType(file)))
+                    .body(body)
+                    .exchange((request, response) -> response.getStatusCode().value());
+            if (status < 200 || status >= 300) {
+                throw new BusinessRuleException("Supabase Storage từ chối tải tệp lên: HTTP " + status);
             }
             return new StoredFile("SUPABASE", properties.getSupabaseBucket(), objectPath);
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            throw new BusinessRuleException("Không thể tải tệp lên Supabase Storage");
-        } catch (IOException exception) {
+        } catch (IOException | RestClientResponseException exception) {
             throw new BusinessRuleException("Không thể tải tệp lên Supabase Storage");
         }
     }
@@ -116,23 +118,18 @@ public class FileStorageService {
         }
     }
 
-    private InputStream openSupabase(LearningResourceFile file) {
+    private InputStream openSupabase(String bucketName, String objectPath) {
         try {
             var key = requireSupabaseKey();
-            var request = HttpRequest.newBuilder(objectUri(file.getBucketName(), file.getObjectPath()))
+            var body = httpClient.get()
+                    .uri(objectUri(bucketName, objectPath))
                     .header("Authorization", "Bearer " + key)
                     .header("apikey", key)
-                    .GET().build();
-            var response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                response.body().close();
-                throw new BusinessRuleException("Không thể đọc tệp từ Supabase Storage");
-            }
-            return response.body();
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            throw new BusinessRuleException("Không thể tải tệp từ Supabase Storage");
-        } catch (IOException exception) {
+                    .retrieve()
+                    .body(byte[].class);
+            if (body == null) throw new BusinessRuleException("Supabase Storage trả về tệp rỗng");
+            return new ByteArrayInputStream(body);
+        } catch (RestClientResponseException exception) {
             throw new BusinessRuleException("Không thể tải tệp từ Supabase Storage");
         }
     }

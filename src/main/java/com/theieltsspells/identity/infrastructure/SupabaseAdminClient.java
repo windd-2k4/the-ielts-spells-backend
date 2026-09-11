@@ -8,9 +8,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
+import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
-import java.time.OffsetDateTime;
 
 @Component
 public class SupabaseAdminClient {
@@ -63,7 +64,7 @@ public class SupabaseAdminClient {
         try {
             JsonNode existing = client.get()
                     .uri(uri -> uri.path("/rest/v1/user_roles")
-                            .queryParam("select", "id")
+                            .queryParam("select", "user_id")
                             .queryParam("user_id", "eq." + userId)
                             .queryParam("role", "eq." + role)
                             .queryParam("limit", 1)
@@ -82,6 +83,37 @@ public class SupabaseAdminClient {
                     .toBodilessEntity();
         } catch (RestClientResponseException exception) {
             throw new BusinessRuleException("Không thể lưu vai trò lên Supabase (HTTP "
+                    + exception.getStatusCode().value() + "): " + exception.getResponseBodyAsString());
+        }
+    }
+
+    public void upsertProfile(UUID userId, String fullName, String email, String phone,
+                              String avatarPath, OffsetDateTime updatedAt) {
+        requireConfiguration();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("id", userId.toString());
+        body.put("full_name", fullName);
+        body.put("email", email);
+        body.put("phone", phone);
+        body.put("avatar_path", avatarPath);
+        body.put("is_active", true);
+        body.put("updated_at", updatedAt.toString());
+
+        try {
+            client.post()
+                    .uri(uri -> uri.path("/rest/v1/profiles")
+                            .queryParam("on_conflict", "id")
+                            .build())
+                    .headers(headers -> {
+                        authorize(headers);
+                        headers.set("Prefer", "resolution=merge-duplicates,return=minimal");
+                    })
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (RestClientResponseException exception) {
+            throw new BusinessRuleException("Không thể lưu hồ sơ lên Supabase (HTTP "
                     + exception.getStatusCode().value() + "): " + exception.getResponseBodyAsString());
         }
     }

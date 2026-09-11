@@ -22,11 +22,11 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Tag(name = "Admin - Admissions Leads")
 @SecurityRequirement(name = "bearerAuth")
-@PreAuthorize("hasAnyAuthority('admin', 'manager', 'admissions')")
 public class LeadAdminController {
     private final LeadApplicationService service;
 
     @GetMapping
+    @PreAuthorize("@permissionPolicy.has(authentication, 'admissions.lead.read')")
     public PageResponse<LeadResponse> list(@RequestParam(defaultValue = "") String q,
                                            @RequestParam(required = false) LeadStatus status,
                                            @PageableDefault(size = 20, sort = "createdAt") Pageable pageable) {
@@ -34,11 +34,13 @@ public class LeadAdminController {
     }
 
     @PatchMapping("/{id}/status")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'admissions.lead.manage')")
     public LeadResponse updateStatus(@PathVariable UUID id, @Valid @RequestBody UpdateLeadStatusRequest request) {
         return service.updateStatus(id, request);
     }
 
     @PatchMapping("/{id}/convert")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'admissions.lead.convert')")
     public LeadResponse convert(@PathVariable UUID id, @Valid @RequestBody ConvertLeadRequest request) {
         return service.convert(id, request);
     }

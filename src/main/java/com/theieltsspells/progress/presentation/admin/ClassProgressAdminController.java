@@ -14,8 +14,9 @@ import java.util.*;
 @RequiredArgsConstructor
 @Tag(name = "Admin - Learning progress")
 @SecurityRequirement(name = "bearerAuth")
-@PreAuthorize("hasAnyAuthority('admin', 'manager', 'teacher')")
 public class ClassProgressAdminController {
     private final ClassProgressQueryService service;
-    @GetMapping public List<ClassActivityProgressResponse> list(@PathVariable UUID courseId) { return service.courseProgress(courseId); }
+    @GetMapping
+    @PreAuthorize("@permissionPolicy.hasForCourse(authentication, #courseId, 'progress.read')")
+    public List<ClassActivityProgressResponse> list(@PathVariable UUID courseId) { return service.courseProgress(courseId); }
 }

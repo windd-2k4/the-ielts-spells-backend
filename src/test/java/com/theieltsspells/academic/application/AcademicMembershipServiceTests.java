@@ -3,6 +3,8 @@ package com.theieltsspells.academic.application;
 import com.theieltsspells.academic.domain.ClassSession;
 import com.theieltsspells.academic.domain.Enrollment;
 import com.theieltsspells.academic.infrastructure.persistence.ClassSessionRepository;
+import com.theieltsspells.academic.infrastructure.persistence.ClassTeacherRepository;
+import com.theieltsspells.academic.infrastructure.persistence.CourseRepository;
 import com.theieltsspells.academic.infrastructure.persistence.EnrollmentRepository;
 import com.theieltsspells.identity.domain.Profile;
 import com.theieltsspells.identity.domain.StudentProfile;
@@ -30,6 +32,12 @@ class AcademicMembershipServiceTests {
 
     @Mock
     private EnrollmentRepository enrollments;
+
+    @Mock
+    private ClassTeacherRepository teachers;
+
+    @Mock
+    private CourseRepository courses;
 
     @InjectMocks
     private AcademicMembershipService service;

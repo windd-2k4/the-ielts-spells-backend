@@ -23,11 +23,11 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Tag(name = "Admin - Students")
 @SecurityRequirement(name = "bearerAuth")
-@PreAuthorize("hasAnyAuthority('admin', 'manager', 'admissions')")
 public class StudentAdminController {
     private final StudentQueryService service;
 
     @GetMapping
+    @PreAuthorize("@permissionPolicy.has(authentication, 'student.profile.read')")
     @Operation(summary = "Tìm học viên theo tên, email hoặc số điện thoại")
     public PageResponse<StudentSearchResponse> search(
             @RequestParam(defaultValue = "") String q,
@@ -38,12 +38,14 @@ public class StudentAdminController {
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'student.profile.read')")
     @Operation(summary = "Xem hồ sơ chi tiết học viên")
     public StudentDetailResponse get(@PathVariable UUID id) {
         return service.get(id);
     }
 
     @PatchMapping("/{id}")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'student.profile.update_academic')")
     @Operation(summary = "Cập nhật hồ sơ học viên")
     public StudentDetailResponse update(@PathVariable UUID id, @Valid @RequestBody UpdateStudentRequest request) {
         return service.update(id, request);

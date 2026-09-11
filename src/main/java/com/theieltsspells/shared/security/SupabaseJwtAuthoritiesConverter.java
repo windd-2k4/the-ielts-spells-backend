@@ -8,6 +8,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 
 public class SupabaseJwtAuthoritiesConverter implements Converter<Jwt, Collection<GrantedAuthority>> {
 
@@ -17,18 +18,22 @@ public class SupabaseJwtAuthoritiesConverter implements Converter<Jwt, Collectio
         var multipleRoles = jwt.getClaim("user_roles");
 
         if (multipleRoles instanceof Collection<?> values) {
-            values.stream().map(String::valueOf).map(String::trim)
+            values.stream().map(String::valueOf).map(SupabaseJwtAuthoritiesConverter::normalize)
                     .filter(value -> !value.isBlank()).forEach(roles::add);
         } else if (multipleRoles instanceof String value && !value.isBlank()) {
-            roles.add(value.trim());
+            roles.add(normalize(value));
         }
 
         var singleRole = jwt.getClaimAsString("user_role");
-        if (singleRole != null && !singleRole.isBlank()) roles.add(singleRole.trim());
+        if (singleRole != null && !singleRole.isBlank()) roles.add(normalize(singleRole));
 
         return roles.stream()
                 .map(SimpleGrantedAuthority::new)
                 .map(GrantedAuthority.class::cast)
                 .toList();
+    }
+
+    private static String normalize(String role) {
+        return role.trim().toLowerCase(Locale.ROOT);
     }
 }

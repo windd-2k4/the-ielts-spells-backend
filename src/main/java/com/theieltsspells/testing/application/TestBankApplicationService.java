@@ -35,6 +35,7 @@ public class TestBankApplicationService {
     private final JdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
     private final TestDraftValidationService validationService;
+    private final ReadingVersionMaterializer readingVersionMaterializer;
 
     public PageResponse<TestBankResponse> list(String query, SkillType skill, String status,
                                                String testType, String format, int page, int size) {
@@ -307,6 +308,9 @@ public class TestBankApplicationService {
                 returning id
                 """, UUID.class, test.id(), number, label, test.title(), test.description(), test.durationMinutes(),
                 test.skill().name(), test.testType(), json(test.tags()), json(test.builderContent()), actor);
+        if (test.skill() == SkillType.READING) {
+            readingVersionMaterializer.materialize(id, test.builderContent());
+        }
         return new TestVersionResponse(id, number, label, java.time.OffsetDateTime.now(), "");
     }
     private PublishedDraft loadPublishedDraft(UUID versionId) {

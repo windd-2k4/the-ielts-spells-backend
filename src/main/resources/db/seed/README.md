@@ -1,4 +1,37 @@
-# JUNE cohort demo seed
+# Database seed scripts
+
+## Supabase demo seed (current schema)
+
+`seed_supabase_demo.sql` is the recommended, small idempotent seed for a
+Supabase project that has already applied the backend Flyway migrations.
+It creates a representative operations dataset: two courses, four sessions,
+two learning resources, one exercise, one Reading-builder draft, and two leads.
+
+It uses an existing active application administrator from `public.profiles`
+and `public.user_roles` (`role = 'ADMIN'`). It deliberately does **not** create
+or modify `auth.users`, profiles, roles, staff records, student records,
+enrollments, or attendance.
+
+Open `seed_supabase_demo.sql` in **Supabase Dashboard → SQL Editor** and run it
+as the database-admin role. The script is safe to re-run because it updates the
+same records through stable codes and IDs. Sessions have no teacher account;
+leads are assigned to the existing administrator.
+
+Because it has no student Auth users, it intentionally does not create
+enrollments or attendance. Create real student accounts and enroll them through
+the management portal when that data is needed.
+
+You can confirm that the existing administrator is available before running:
+
+```sql
+select p.id, p.email, r.role
+from public.profiles p
+join public.user_roles r on r.user_id = p.id
+where p.is_active = true
+  and r.role = 'ADMIN';
+```
+
+## Legacy JUNE cohort seed
 
 `seed_june_cohorts.sql` is an idempotent development/demo seed generated from:
 

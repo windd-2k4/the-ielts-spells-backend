@@ -28,6 +28,7 @@ public class ClassSessionApplicationService {
     private final ClassSessionRepository sessions;
     private final CourseSessionItemRepository sessionItems;
     private final CourseRepository courses;
+    private final CourseTeacherRosterService teacherRoster;
 
     public List<ClassSessionResponse> list(UUID courseId) {
         requireCourse(courseId);
@@ -52,6 +53,7 @@ public class ClassSessionApplicationService {
     @Transactional
     public List<ClassSessionResponse> bulkCreate(UUID courseId, BulkCreateSessionsRequest request) {
         requireCourse(courseId);
+        UUID teacherId = teacherRoster.resolveSessionTeacher(courseId, request.teacherId());
         var orderedEntries = request.entries().stream()
                 .sorted(Comparator.comparingInt(ScheduleTemplateEntryRequest::sessionNo)).toList();
         orderedEntries.forEach(entry -> {
@@ -73,7 +75,7 @@ public class ClassSessionApplicationService {
             value.setContent(String.join("\n", entry.contents()));
             value.setStartsAt(occurrence.startsAt());
             value.setEndsAt(occurrence.endsAt());
-            value.setTeacherId(request.teacherId());
+            value.setTeacherId(teacherId);
             value.setZoomUrl(blank(request.zoomUrl()));
             value.setStatus(SessionStatus.SCHEDULED);
             value = sessions.save(value);
@@ -184,7 +186,7 @@ public class ClassSessionApplicationService {
         value.setNotes(blank(request.notes()));
         value.setPhaseName(blank(request.phaseName()));
         value.setContent(blank(request.content()));
-        value.setTeacherId(request.teacherId());
+        value.setTeacherId(teacherRoster.resolveSessionTeacher(value.getCourseId(), request.teacherId()));
     }
 
     private void replaceItems(ClassSession session, UpsertClassSessionRequest request) {

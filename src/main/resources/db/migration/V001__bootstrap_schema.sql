@@ -16,9 +16,16 @@ end
 $$;
 
 create schema if not exists auth;
-create table if not exists auth.users (
-  id uuid primary key
-);
+do $$
+begin
+  -- Supabase owns the auth schema and does not grant CREATE to application
+  -- connections. Only create the local compatibility table when auth.users is
+  -- genuinely absent (for example, in the local PostgreSQL container).
+  if to_regclass('auth.users') is null then
+    execute 'create table auth.users (id uuid primary key)';
+  end if;
+end
+$$;
 
 do $$
 begin

@@ -32,6 +32,9 @@ public class TestAttempt {
     @Column(name = "test_assignment_id", nullable = false)
     private UUID testAssignmentId;
 
+    @Column(name = "test_version_id")
+    private UUID testVersionId;
+
     @Column(name = "student_id", nullable = false)
     private UUID studentId;
 
@@ -48,6 +51,15 @@ public class TestAttempt {
 
     @Column(name = "submitted_at")
     private OffsetDateTime submittedAt;
+
+    @Column(name = "expires_at")
+    private OffsetDateTime expiresAt;
+
+    @Column(name = "last_saved_at", nullable = false)
+    private OffsetDateTime lastSavedAt;
+
+    @Column(name = "updated_at", nullable = false)
+    private OffsetDateTime updatedAt;
 
     @Column(name = "auto_score")
     private BigDecimal autoScore;

@@ -24,4 +24,10 @@ class AppRoleConverterTests {
     void writesLabelExpectedByCurrentPostgresqlEnum() {
         assertThat(converter.convertToDatabaseColumn(AppRole.ADMIN)).isEqualTo("ADMIN");
     }
+
+    @Test
+    void readsNewOperationalRoleFromPostgresqlEnum() {
+        assertThat(converter.convertToEntityAttribute("STUDENT_SUPPORT"))
+                .isEqualTo(AppRole.STUDENT_SUPPORT);
+    }
 }

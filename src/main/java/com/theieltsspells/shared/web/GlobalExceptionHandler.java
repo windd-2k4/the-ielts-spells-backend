@@ -7,6 +7,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -39,6 +40,13 @@ class GlobalExceptionHandler {
                 .map(error -> error.getField() + ": " + error.getDefaultMessage())
                 .orElse("Dữ liệu không hợp lệ");
         return response(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", message, request);
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    ResponseEntity<ApiError> handleAccessDenied(AccessDeniedException exception, HttpServletRequest request) {
+        log.warn("Access denied for {} {}", request.getMethod(), request.getRequestURI());
+        return response(HttpStatus.FORBIDDEN, "ACCESS_DENIED",
+                "Bạn không có quyền thực hiện thao tác này", request);
     }
 
     @ExceptionHandler(Exception.class)

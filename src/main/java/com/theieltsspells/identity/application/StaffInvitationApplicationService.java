@@ -20,13 +20,14 @@ import java.util.*;
 @RequiredArgsConstructor
 public class StaffInvitationApplicationService {
     private static final Set<AppRole> STAFF_ROLES = Set.of(
-            AppRole.MANAGER, AppRole.TEACHER, AppRole.TEACHING_ASSISTANT,
-            AppRole.ADMISSIONS, AppRole.CMS_EDITOR);
+            AppRole.ADMISSIONS, AppRole.SOCIAL_MEDIA, AppRole.TEACHER,
+            AppRole.STUDENT_SUPPORT);
 
     private final StaffProfileRepository staffProfiles;
     private final StaffInvitationRepository invitations;
     private final ProfileRepository profiles;
     private final UserRoleRepository roles;
+    private final TeacherProfileRepository teacherProfiles;
     private final SupabaseAdminClient supabase;
 
     @PersistenceContext
@@ -52,6 +53,7 @@ public class StaffInvitationApplicationService {
         staff.setFullName(input.fullName().trim());
         staff.setEmail(email);
         staff.setPhone(input.phone());
+        staff.setAvatarPath(clean(input.avatarPath()));
         staff.setJobTitle(input.jobTitle());
         staff.setDepartment(input.department());
         staff.setEmploymentType(input.employmentType());
@@ -97,6 +99,7 @@ public class StaffInvitationApplicationService {
         StaffProfile staff = findStaff(id);
         if (input.fullName() != null) staff.setFullName(input.fullName().trim());
         if (input.phone() != null) staff.setPhone(clean(input.phone()));
+        if (input.avatarPath() != null) staff.setAvatarPath(clean(input.avatarPath()));
         if (input.jobTitle() != null) staff.setJobTitle(clean(input.jobTitle()));
         if (input.department() != null) staff.setDepartment(clean(input.department()));
         if (input.employmentType() != null) staff.setEmploymentType(clean(input.employmentType()));
@@ -115,11 +118,18 @@ public class StaffInvitationApplicationService {
             throw new BusinessRuleException("Vai trò nhân sự không hợp lệ");
         StaffProfile staff = findStaff(id);
         AppRole previousRole = staff.getPrimaryRole();
-        if (previousRole == nextRole) return map(staff);
+        if (previousRole == nextRole) {
+            if (nextRole == AppRole.TEACHER && staff.getAuthUserId() != null
+                    && staff.getStatus() == StaffStatus.ACTIVE) {
+                ensureTeacherProfile(staff.getAuthUserId());
+            }
+            return map(staff);
+        }
         if (staff.getAuthUserId() != null && staff.getStatus() == StaffStatus.ACTIVE) {
-            supabase.replaceRole(staff.getAuthUserId(), previousRole.getDatabaseValue(), nextRole.getDatabaseValue());
-            roles.deleteRole(staff.getAuthUserId(), previousRole.getDatabaseValue());
-            roles.upsertRole(staff.getAuthUserId(), nextRole.getDatabaseValue(), adminId, OffsetDateTime.now());
+            supabase.replaceRole(staff.getAuthUserId(), previousRole.name(), nextRole.name());
+            roles.deleteRole(staff.getAuthUserId(), previousRole.name());
+            roles.upsertRole(staff.getAuthUserId(), nextRole.name(), adminId, OffsetDateTime.now());
+            if (nextRole == AppRole.TEACHER) ensureTeacherProfile(staff.getAuthUserId());
         }
         staff.setPrimaryRole(nextRole);
         invitations.findFirstByStaffProfileIdAndStatusOrderByInvitedAtDesc(id, InvitationStatus.PENDING)
@@ -168,13 +178,17 @@ public class StaffInvitationApplicationService {
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hồ sơ nhân sự"));
         OffsetDateTime now = OffsetDateTime.now();
         if (input.fullName() != null && !input.fullName().isBlank()) staff.setFullName(input.fullName().trim());
-        if (input.phone() != null) staff.setPhone(input.phone());
-        if (input.avatarPath() != null) staff.setAvatarPath(input.avatarPath());
-        if (input.professionalSummary() != null) staff.setProfessionalSummary(input.professionalSummary());
         staff.setAuthUserId(authUserId);
         staff.setStatus(StaffStatus.ACTIVE);
         staff.setActivatedAt(now);
         staff.setUpdatedAt(now);
+
+        // Synchronize the remote profile before loading the application profile.
+        // When both connections point at the same Supabase database, this lets
+        // the following lookup observe the upsert instead of scheduling a
+        // duplicate profile insert in the current JPA transaction.
+        supabase.upsertProfile(authUserId, staff.getFullName(), staff.getEmail(), staff.getPhone(),
+                staff.getAvatarPath(), now);
 
         Profile profile = profiles.findById(authUserId).orElseGet(Profile::new);
         boolean newProfile = profile.getId() == null;
@@ -188,8 +202,13 @@ public class StaffInvitationApplicationService {
         profile.setUpdatedAt(now);
         if (newProfile) entityManager.persist(profile);
 
-        supabase.assignRole(authUserId, staff.getPrimaryRole().getDatabaseValue(), invitation.getInvitedBy(), now);
-        roles.upsertRole(authUserId, staff.getPrimaryRole().getDatabaseValue(), invitation.getInvitedBy(), now);
+        if (staff.getPrimaryRole() == AppRole.TEACHER) {
+            if (newProfile) entityManager.flush();
+            ensureTeacherProfile(authUserId);
+        }
+
+        supabase.assignRole(authUserId, staff.getPrimaryRole().name(), invitation.getInvitedBy(), now);
+        roles.upsertRole(authUserId, staff.getPrimaryRole().name(), invitation.getInvitedBy(), now);
 
         invitation.setStatus(InvitationStatus.ACCEPTED);
         invitation.setAcceptedAt(now);
@@ -247,6 +266,10 @@ public class StaffInvitationApplicationService {
     private StaffProfile findStaff(UUID id) {
         return staffProfiles.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hồ sơ nhân sự"));
+    }
+
+    private void ensureTeacherProfile(UUID userId) {
+        teacherProfiles.ensureProfile(userId, "GV-" + userId.toString().replace("-", ""));
     }
 
     private String clean(String value) {

@@ -111,7 +111,8 @@ public class LearningLibraryApplicationService {
     }
 
     @Transactional
-    public LearningResourceResponse createResource(LearningResourceRequest request, UUID actor) {
+    public LearningResourceResponse createResource(LearningResourceRequest request, UUID actor, boolean canPublish) {
+        assertCanCreateOrPublish(request.status(), canPublish);
         var value = new LearningResource();
         value.setCreatedBy(actor);
         apply(value, request);
@@ -121,18 +122,26 @@ public class LearningLibraryApplicationService {
     }
 
     @Transactional
-    public LearningResourceResponse updateResource(UUID id, LearningResourceRequest request) {
+    public LearningResourceResponse updateResource(UUID id, LearningResourceRequest request, UUID actor,
+                                                   boolean canManageAny) {
         var value = findResource(id);
+        assertCanMutateResource(value, request.status(), actor, canManageAny);
         apply(value, request);
         return resourceResponse(resources.save(value));
     }
 
     @Transactional
-    public void archiveResource(UUID id) { findResource(id).setStatus("ARCHIVED"); }
+    public void archiveResource(UUID id, UUID actor, boolean canManageAny) {
+        var value = findResource(id);
+        assertCanArchiveResource(value, actor, canManageAny);
+        value.setStatus("ARCHIVED");
+    }
 
     @Transactional
-    public LearningResourceFileResponse uploadResourceFile(UUID resourceId, String fileRole, MultipartFile file, UUID actor) {
-        findResource(resourceId);
+    public LearningResourceFileResponse uploadResourceFile(UUID resourceId, String fileRole, MultipartFile file,
+                                                            UUID actor, boolean canManageAny) {
+        var resource = findResource(resourceId);
+        assertCanMutateResource(resource, resource.getStatus(), actor, canManageAny);
         var originalFilename = normalizedFilename(file.getOriginalFilename());
         var objectPath = "resources/" + resourceId + "/" + UUID.randomUUID() + "-" + originalFilename;
         var stored = fileStorage.store(objectPath, file);
@@ -151,8 +160,9 @@ public class LearningLibraryApplicationService {
     }
 
     @Transactional
-    public void deleteResourceFile(UUID resourceId, UUID fileId) {
-        findResource(resourceId);
+    public void deleteResourceFile(UUID resourceId, UUID fileId, UUID actor, boolean canManageAny) {
+        var resource = findResource(resourceId);
+        assertCanMutateResource(resource, resource.getStatus(), actor, canManageAny);
         var file = findFile(fileId);
         if (!resourceId.equals(file.getResourceId())) throw new ResourceNotFoundException("Không tìm thấy tệp trong học liệu này");
         fileStorage.delete(file);
@@ -201,22 +211,25 @@ public class LearningLibraryApplicationService {
         resource.setStatus("PUBLISHED");
         resource = resources.saveAndFlush(resource);
         entityManager.refresh(resource);
-        uploadResourceFile(resource.getId(), "MAIN", file, actor);
+        uploadResourceFile(resource.getId(), "MAIN", file, actor, false);
         var stored = resourceFiles.findByResourceIdAndArchivedAtIsNullOrderByCreatedAtAsc(resource.getId()).getFirst();
         return mediaResponse(stored);
     }
 
     @Transactional
-    public void deleteMedia(UUID fileId) {
+    public void deleteMedia(UUID fileId, UUID actor, boolean canManageAny) {
         var file = findFile(fileId);
+        var resource = findResource(file.getResourceId());
+        assertOwner(resource.getCreatedBy(), actor, canManageAny);
         var count = entityManager.createNativeQuery("select count(*) from public.course_session_items where source_resource_id=:id")
                 .setParameter("id", file.getResourceId()).getSingleResult();
         if (((Number) count).longValue() > 0) throw new BusinessRuleException("File đang được gắn vào buổi học; hãy gỡ liên kết trước khi xóa");
-        deleteResourceFile(file.getResourceId(), fileId);
+        deleteResourceFile(file.getResourceId(), fileId, actor, canManageAny);
     }
 
     @Transactional
-    public ExerciseTemplateResponse createExercise(ExerciseTemplateRequest request, UUID actor) {
+    public ExerciseTemplateResponse createExercise(ExerciseTemplateRequest request, UUID actor, boolean canPublish) {
+        assertCanCreateOrPublish(request.status(), canPublish);
         var value = new ExerciseTemplate();
         value.setCreatedBy(actor);
         apply(value, request);
@@ -226,14 +239,20 @@ public class LearningLibraryApplicationService {
     }
 
     @Transactional
-    public ExerciseTemplateResponse updateExercise(UUID id, ExerciseTemplateRequest request) {
+    public ExerciseTemplateResponse updateExercise(UUID id, ExerciseTemplateRequest request, UUID actor,
+                                                   boolean canManageAny) {
         var value = findExercise(id);
+        assertCanMutateExercise(value, request.status(), actor, canManageAny);
         apply(value, request);
         return exerciseResponse(exercises.save(value));
     }
 
     @Transactional
-    public void archiveExercise(UUID id) { findExercise(id).setStatus("ARCHIVED"); }
+    public void archiveExercise(UUID id, UUID actor, boolean canManageAny) {
+        var value = findExercise(id);
+        assertCanArchiveExercise(value, actor, canManageAny);
+        value.setStatus("ARCHIVED");
+    }
 
     private void apply(LearningResource value, LearningResourceRequest request) {
         var scope = allowed(request.scope(), SCOPES, "Phạm vi tài liệu không hợp lệ");
@@ -291,6 +310,44 @@ public class LearningLibraryApplicationService {
         var normalized = normalize(value);
         if (!allowed.contains(normalized)) throw new BusinessRuleException(message);
         return normalized;
+    }
+    private void assertOwner(UUID createdBy, UUID actor, boolean canManageAny) {
+        if (!canManageAny && !actor.equals(createdBy)) {
+            throw new BusinessRuleException("Bạn chỉ có thể thay đổi học liệu do mình tạo");
+        }
+    }
+    private void assertCanCreateOrPublish(String requestedStatus, boolean canPublish) {
+        if (!canPublish && !"DRAFT".equals(normalize(requestedStatus))) {
+            throw new BusinessRuleException("Chỉ quản trị viên mới có thể xuất bản học liệu");
+        }
+    }
+    private void assertCanMutateResource(LearningResource value, String requestedStatus, UUID actor,
+                                         boolean canManageAny) {
+        assertOwner(value.getCreatedBy(), actor, canManageAny);
+        assertDraftMutation(value.getStatus(), requestedStatus, canManageAny);
+    }
+    private void assertCanArchiveResource(LearningResource value, UUID actor, boolean canManageAny) {
+        assertOwner(value.getCreatedBy(), actor, canManageAny);
+        assertDraftOnly(value.getStatus(), canManageAny);
+    }
+    private void assertCanMutateExercise(ExerciseTemplate value, String requestedStatus, UUID actor,
+                                         boolean canManageAny) {
+        assertOwner(value.getCreatedBy(), actor, canManageAny);
+        assertDraftMutation(value.getStatus(), requestedStatus, canManageAny);
+    }
+    private void assertCanArchiveExercise(ExerciseTemplate value, UUID actor, boolean canManageAny) {
+        assertOwner(value.getCreatedBy(), actor, canManageAny);
+        assertDraftOnly(value.getStatus(), canManageAny);
+    }
+    private void assertDraftMutation(String currentStatus, String requestedStatus, boolean canPublish) {
+        if (!canPublish && (!"DRAFT".equals(currentStatus) || !"DRAFT".equals(normalize(requestedStatus)))) {
+            throw new BusinessRuleException("Chỉ quản trị viên mới có thể thay đổi học liệu đã xuất bản");
+        }
+    }
+    private void assertDraftOnly(String currentStatus, boolean canPublish) {
+        if (!canPublish && !"DRAFT".equals(currentStatus)) {
+            throw new BusinessRuleException("Chỉ quản trị viên mới có thể thay đổi học liệu đã xuất bản");
+        }
     }
     private String normalize(String value) { return value == null ? "" : value.trim().toUpperCase(Locale.ROOT); }
     private String blank(String value) { return value == null || value.isBlank() ? null : value.trim(); }

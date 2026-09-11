@@ -22,11 +22,11 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Tag(name = "Admin - Enrollments")
 @SecurityRequirement(name = "bearerAuth")
-@PreAuthorize("hasAnyAuthority('admin', 'manager', 'admissions')")
 public class EnrollmentAdminController {
     private final EnrollmentApplicationService service;
 
     @PostMapping
+    @PreAuthorize("@permissionPolicy.has(authentication, 'enrollment.create')")
     @Operation(summary = "Ghi danh học viên vào lớp")
     public ResponseEntity<EnrollmentResponse> enroll(@Valid @RequestBody EnrollStudentRequest request) {
         var result = service.enroll(request);
@@ -34,9 +34,11 @@ public class EnrollmentAdminController {
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("@permissionPolicy.hasAdministrativeScope(authentication, 'enrollment.read')")
     public EnrollmentResponse get(@PathVariable UUID id) { return service.get(id); }
 
     @GetMapping
+    @PreAuthorize("@permissionPolicy.hasAdministrativeScope(authentication, 'enrollment.read')")
     @Operation(summary = "Danh sách ghi danh theo lớp hoặc học viên")
     public PageResponse<EnrollmentResponse> list(
             @RequestParam(required = false) UUID courseId,
@@ -49,6 +51,7 @@ public class EnrollmentAdminController {
     }
 
     @PatchMapping("/{id}")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'enrollment.status.manage')")
     @Operation(summary = "Cập nhật trạng thái ghi danh")
     public EnrollmentResponse update(@PathVariable UUID id,
                                      @Valid @RequestBody UpdateEnrollmentRequest request) {
@@ -56,6 +59,7 @@ public class EnrollmentAdminController {
     }
 
     @PatchMapping("/{id}/exam-plan")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'enrollment.exam_plan.manage')")
     @Operation(summary = "Cập nhật kế hoạch thi IELTS của học viên trong khóa")
     public EnrollmentResponse updateExamPlan(@PathVariable UUID id,
                                              @Valid @RequestBody UpdateEnrollmentExamPlanRequest request) {

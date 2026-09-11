@@ -20,23 +20,25 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Tag(name = "Admin - Attendance")
 @SecurityRequirement(name = "bearerAuth")
-@PreAuthorize("hasAnyAuthority('admin', 'manager', 'teacher')")
 public class AttendanceAdminController {
     private final AttendanceApplicationService service;
 
     @GetMapping("/sessions")
+    @PreAuthorize("@permissionPolicy.hasForCourse(authentication, #courseId, 'attendance.read')")
     @Operation(summary = "Danh sách tình trạng điểm danh theo từng buổi")
     public List<AttendanceSessionSummaryResponse> sessions(@PathVariable UUID courseId) {
         return service.listSessions(courseId);
     }
 
     @GetMapping("/sessions/{sessionId}")
+    @PreAuthorize("@permissionPolicy.hasForCourse(authentication, #courseId, 'attendance.read')")
     @Operation(summary = "Chi tiết phiếu điểm danh của một buổi")
     public AttendanceSheetResponse sheet(@PathVariable UUID courseId, @PathVariable UUID sessionId) {
         return service.getSheet(courseId, sessionId);
     }
 
     @PostMapping("/sessions/{sessionId}/initialize")
+    @PreAuthorize("@permissionPolicy.hasForCourse(authentication, #courseId, 'attendance.mark')")
     @Operation(summary = "Khởi tạo phiếu từ danh sách học viên hợp lệ tại ngày học")
     public AttendanceSheetResponse initialize(@PathVariable UUID courseId, @PathVariable UUID sessionId,
                                               @AuthenticationPrincipal Jwt jwt) {
@@ -44,6 +46,7 @@ public class AttendanceAdminController {
     }
 
     @PutMapping("/sessions/{sessionId}/draft")
+    @PreAuthorize("@permissionPolicy.hasForCourse(authentication, #courseId, 'attendance.mark')")
     @Operation(summary = "Lưu nháp nhiều dòng điểm danh")
     public AttendanceSheetResponse saveDraft(@PathVariable UUID courseId, @PathVariable UUID sessionId,
                                              @Valid @RequestBody BulkUpdateAttendanceRequest request,
@@ -52,6 +55,7 @@ public class AttendanceAdminController {
     }
 
     @PostMapping("/sessions/{sessionId}/lock")
+    @PreAuthorize("@permissionPolicy.hasForCourse(authentication, #courseId, 'attendance.mark')")
     @Operation(summary = "Xác nhận và khóa phiếu; không cho phép còn học viên chưa đánh dấu")
     public AttendanceSheetResponse lock(@PathVariable UUID courseId, @PathVariable UUID sessionId,
                                         @AuthenticationPrincipal Jwt jwt) {
@@ -59,7 +63,7 @@ public class AttendanceAdminController {
     }
 
     @PostMapping("/sessions/{sessionId}/reopen")
-    @PreAuthorize("hasAnyAuthority('admin', 'manager')")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'attendance.reopen')")
     @Operation(summary = "Mở lại phiếu đã khóa; bắt buộc có lý do")
     public AttendanceSheetResponse reopen(@PathVariable UUID courseId, @PathVariable UUID sessionId,
                                           @AuthenticationPrincipal Jwt jwt,
@@ -68,12 +72,14 @@ public class AttendanceAdminController {
     }
 
     @GetMapping
+    @PreAuthorize("@permissionPolicy.hasForCourse(authentication, #courseId, 'attendance.read')")
     @Operation(summary = "API tương thích: tất cả bản ghi điểm danh của khóa")
     public List<AttendanceResponse> list(@PathVariable UUID courseId) {
         return service.list(courseId);
     }
 
     @PutMapping
+    @PreAuthorize("@permissionPolicy.hasForCourse(authentication, #courseId, 'attendance.mark')")
     @Operation(summary = "API tương thích: cập nhật một dòng trong phiếu đang mở")
     public AttendanceResponse upsert(@PathVariable UUID courseId,
                                      @Valid @RequestBody UpsertAttendanceRequest request,

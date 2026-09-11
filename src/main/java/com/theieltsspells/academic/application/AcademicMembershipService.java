@@ -4,6 +4,9 @@ import com.theieltsspells.academic.domain.ClassSession;
 import com.theieltsspells.shared.persistence.enums.EnrollmentStatus;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
 import com.theieltsspells.academic.infrastructure.persistence.ClassSessionRepository;
+import com.theieltsspells.academic.infrastructure.persistence.ClassTeacherRepository;
+import com.theieltsspells.academic.infrastructure.persistence.CourseStudentSupportRepository;
+import com.theieltsspells.academic.infrastructure.persistence.CourseRepository;
 import com.theieltsspells.academic.infrastructure.persistence.EnrollmentRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -18,6 +21,13 @@ import java.util.Comparator;
 public class AcademicMembershipService {
     private final ClassSessionRepository sessions;
     private final EnrollmentRepository enrollments;
+    private final ClassTeacherRepository teachers;
+    private final CourseStudentSupportRepository studentSupports;
+    private final CourseRepository courses;
+
+    public boolean courseExists(UUID courseId) {
+        return courses.existsById(courseId);
+    }
 
     public List<UUID> sessionIds(UUID courseId) {
         return sessions.findByCourseIdOrderBySessionNo(courseId).stream().map(ClassSession::getId).toList();
@@ -33,6 +43,19 @@ public class AcademicMembershipService {
 
     public boolean isEnrolled(UUID courseId, UUID studentId) {
         return enrollments.existsByCourseIdAndStudentId(courseId, studentId);
+    }
+
+    /** Delivery access requires a currently active enrollment, not only a historical record. */
+    public boolean hasActiveEnrollment(UUID courseId, UUID studentId) {
+        return enrollments.existsByCourseIdAndStudentIdAndStatus(courseId, studentId, EnrollmentStatus.ACTIVE);
+    }
+
+    public boolean isTeacherAssigned(UUID courseId, UUID teacherId) {
+        return teachers.existsByCourseIdAndTeacherId(courseId, teacherId);
+    }
+
+    public boolean isStudentSupportAssigned(UUID courseId, UUID studentSupportId) {
+        return studentSupports.existsByCourseIdAndStudentSupportId(courseId, studentSupportId);
     }
 
     public List<AttendanceRosterMember> attendanceRoster(UUID courseId, UUID sessionId) {

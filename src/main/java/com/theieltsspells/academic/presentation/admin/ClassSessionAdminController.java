@@ -18,13 +18,12 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Tag(name = "Admin - Class sessions")
 @SecurityRequirement(name = "bearerAuth")
-@PreAuthorize("hasAnyAuthority('admin', 'manager', 'teacher')")
 public class ClassSessionAdminController {
     private final ClassSessionApplicationService service;
-    @GetMapping public List<ClassSessionResponse> list(@PathVariable UUID courseId) { return service.list(courseId); }
-    @PostMapping @PreAuthorize("hasAnyAuthority('admin', 'manager')") public ClassSessionResponse create(@PathVariable UUID courseId, @Valid @RequestBody UpsertClassSessionRequest request) { return service.create(courseId, request); }
-    @PostMapping("/bulk") @PreAuthorize("hasAnyAuthority('admin', 'manager')") public List<ClassSessionResponse> bulkCreate(@PathVariable UUID courseId, @Valid @RequestBody BulkCreateSessionsRequest request) { return service.bulkCreate(courseId, request); }
-    @PutMapping("/{id}") @PreAuthorize("hasAnyAuthority('admin', 'manager')") public ClassSessionResponse update(@PathVariable UUID courseId, @PathVariable UUID id, @Valid @RequestBody UpsertClassSessionRequest request) { return service.update(courseId, id, request); }
-    @PostMapping("/{id}/reschedule") @PreAuthorize("hasAnyAuthority('admin', 'manager')") public List<ClassSessionResponse> reschedule(@PathVariable UUID courseId, @PathVariable UUID id, @Valid @RequestBody RescheduleSessionRequest request) { return service.reschedule(courseId, id, request); }
-    @DeleteMapping("/{id}") @PreAuthorize("hasAnyAuthority('admin', 'manager')") public ResponseEntity<Void> delete(@PathVariable UUID courseId, @PathVariable UUID id) { service.delete(courseId, id); return ResponseEntity.noContent().build(); }
+    @GetMapping @PreAuthorize("@permissionPolicy.hasForCourse(authentication, #courseId, 'session.read')") public List<ClassSessionResponse> list(@PathVariable UUID courseId) { return service.list(courseId); }
+    @PostMapping @PreAuthorize("@permissionPolicy.hasForCourse(authentication, #courseId, 'session.manage')") public ClassSessionResponse create(@PathVariable UUID courseId, @Valid @RequestBody UpsertClassSessionRequest request) { return service.create(courseId, request); }
+    @PostMapping("/bulk") @PreAuthorize("@permissionPolicy.hasForCourse(authentication, #courseId, 'session.manage')") public List<ClassSessionResponse> bulkCreate(@PathVariable UUID courseId, @Valid @RequestBody BulkCreateSessionsRequest request) { return service.bulkCreate(courseId, request); }
+    @PutMapping("/{id}") @PreAuthorize("@permissionPolicy.hasForCourse(authentication, #courseId, 'session.manage')") public ClassSessionResponse update(@PathVariable UUID courseId, @PathVariable UUID id, @Valid @RequestBody UpsertClassSessionRequest request) { return service.update(courseId, id, request); }
+    @PostMapping("/{id}/reschedule") @PreAuthorize("@permissionPolicy.hasForCourse(authentication, #courseId, 'session.manage')") public List<ClassSessionResponse> reschedule(@PathVariable UUID courseId, @PathVariable UUID id, @Valid @RequestBody RescheduleSessionRequest request) { return service.reschedule(courseId, id, request); }
+    @DeleteMapping("/{id}") @PreAuthorize("@permissionPolicy.hasForCourse(authentication, #courseId, 'session.manage')") public ResponseEntity<Void> delete(@PathVariable UUID courseId, @PathVariable UUID id) { service.delete(courseId, id); return ResponseEntity.noContent().build(); }
 }

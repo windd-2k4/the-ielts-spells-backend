@@ -1,6 +1,7 @@
 package com.theieltsspells.testing.presentation.admin;
 
 import com.theieltsspells.shared.persistence.enums.SkillType;
+import com.theieltsspells.shared.security.PermissionPolicy;
 import com.theieltsspells.shared.web.PageResponse;
 import com.theieltsspells.testing.application.TestBankApplicationService;
 import com.theieltsspells.testing.application.dto.TestBankRequest;
@@ -27,47 +28,65 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Tag(name = "Admin - Test bank")
 @SecurityRequirement(name = "bearerAuth")
-@PreAuthorize("hasAnyAuthority('admin', 'manager', 'teacher')")
 public class TestBankAdminController {
     private final TestBankApplicationService service;
-    @GetMapping public PageResponse<TestBankResponse> list(@RequestParam(required = false) String query,
+    private final PermissionPolicy permissionPolicy;
+
+    @GetMapping
+    @PreAuthorize("@permissionPolicy.canViewTestBank(authentication)")
+    public PageResponse<TestBankResponse> list(@RequestParam(required = false) String query,
             @RequestParam(required = false) SkillType skill,
             @RequestParam(required = false) String status, @RequestParam(required = false) String testType,
             @RequestParam(required = false) String format, @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "24") int size) { return service.list(query, skill, status, testType, format, page, size); }
-    @GetMapping("/{id}") public TestBankResponse get(@PathVariable UUID id) { return service.get(id); }
-    @PostMapping public ResponseEntity<TestBankResponse> create(@Valid @RequestBody TestBankRequest request,
+    @GetMapping("/{id}")
+    @PreAuthorize("@permissionPolicy.canViewTestBank(authentication)")
+    public TestBankResponse get(@PathVariable UUID id) { return service.get(id); }
+    @PostMapping
+    @PreAuthorize("@permissionPolicy.has(authentication, 'test.draft.create')")
+    public ResponseEntity<TestBankResponse> create(@Valid @RequestBody TestBankRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         var result = service.create(request, UUID.fromString(jwt.getSubject()));
         return ResponseEntity.created(URI.create("/api/v1/admin/test-bank/" + result.id())).body(result);
     }
-    @PutMapping("/{id}") public TestBankResponse update(@PathVariable UUID id, @Valid @RequestBody TestBankRequest request,
+    @PutMapping("/{id}")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'test.draft.update_own')")
+    public TestBankResponse update(@PathVariable UUID id, @Valid @RequestBody TestBankRequest request,
             @AuthenticationPrincipal Jwt jwt, Authentication authentication) {
         return service.update(id, request, UUID.fromString(jwt.getSubject()), isModerator(authentication));
     }
-    @GetMapping("/{id}/validation") public TestValidationResponse validate(@PathVariable UUID id) {
+    @GetMapping("/{id}/validation")
+    @PreAuthorize("@permissionPolicy.canViewTestBank(authentication)")
+    public TestValidationResponse validate(@PathVariable UUID id) {
         return service.validateDraft(id);
     }
-    @GetMapping("/{id}/versions") public java.util.List<TestVersionResponse> versions(@PathVariable UUID id) {
+    @GetMapping("/{id}/versions")
+    @PreAuthorize("@permissionPolicy.canViewTestBank(authentication)")
+    public java.util.List<TestVersionResponse> versions(@PathVariable UUID id) {
         return service.listVersions(id);
     }
-    @PostMapping("/{id}/revisions") public TestBankResponse createRevision(@PathVariable UUID id,
+    @PostMapping("/{id}/revisions")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'test.draft.update_own')")
+    public TestBankResponse createRevision(@PathVariable UUID id,
             @Valid @RequestBody TestRevisionRequest request, @AuthenticationPrincipal Jwt jwt,
             Authentication authentication) {
         return service.createRevision(id, request.draftRevision(), UUID.fromString(jwt.getSubject()), isModerator(authentication));
     }
-    @PatchMapping("/{id}/status") public TestBankResponse status(@PathVariable UUID id, @Valid @RequestBody TestStatusRequest request,
+    @PatchMapping("/{id}/status")
+    @PreAuthorize("@permissionPolicy.canChangeTestStatus(authentication, #request.status())")
+    public TestBankResponse status(@PathVariable UUID id, @Valid @RequestBody TestStatusRequest request,
             @AuthenticationPrincipal Jwt jwt, Authentication authentication) {
         return service.changeStatus(id, request.status(), request.draftRevision(), UUID.fromString(jwt.getSubject()), isModerator(authentication));
     }
-    @DeleteMapping("/{id}") public ResponseEntity<Void> archive(@PathVariable UUID id,
+    @DeleteMapping("/{id}")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'test.draft.update_own')")
+    public ResponseEntity<Void> archive(@PathVariable UUID id,
             @AuthenticationPrincipal Jwt jwt, Authentication authentication) {
         service.archive(id, UUID.fromString(jwt.getSubject()), isModerator(authentication));
         return ResponseEntity.noContent().build();
     }
 
     private boolean isModerator(Authentication authentication) {
-        return authentication.getAuthorities().stream().anyMatch(authority ->
-                "admin".equals(authority.getAuthority()) || "manager".equals(authority.getAuthority()));
+        return permissionPolicy.isTestModerator(authentication);
     }
 }
