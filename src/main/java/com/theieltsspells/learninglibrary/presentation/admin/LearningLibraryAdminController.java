@@ -41,6 +41,10 @@ public class LearningLibraryAdminController {
     @PreAuthorize("@permissionPolicy.canAccessLibraryAdministration(authentication)")
     public ContentHubSummaryResponse summary() { return service.summary(); }
 
+    @GetMapping("/dashboard")
+    @PreAuthorize("@permissionPolicy.canAccessLibraryAdministration(authentication)")
+    public ContentHubDashboardResponse dashboard() { return service.dashboard(); }
+
     @GetMapping("/resources")
     @PreAuthorize("@permissionPolicy.canAccessLibraryAdministration(authentication)")
     public PageResponse<LearningResourceResponse> resources(

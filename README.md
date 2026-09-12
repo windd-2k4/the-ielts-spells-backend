@@ -236,6 +236,12 @@ Spring Boot tự đọc file `.env` ở thư mục gốc qua `application.yml`.
 
 > Không đưa `SUPABASE_SERVICE_ROLE_KEY` vào frontend, Git, log hoặc ảnh chụp màn hình.
 
+Để đăng ký học viên trên Main Web hoạt động đầy đủ, migration `V002__supabase_jwt_role_hook.sql`
+phải được áp dụng và `public.custom_access_token_hook` phải được bật tại
+Supabase Dashboard > Authentication > Hooks. Endpoint xác thực
+`POST /api/v1/auth/student/onboarding` tạo idempotent `profiles`,
+`student_profiles` và role `STUDENT` sau khi Supabase đã xác thực người dùng.
+
 ### File storage
 
 | Biến | Ý nghĩa |

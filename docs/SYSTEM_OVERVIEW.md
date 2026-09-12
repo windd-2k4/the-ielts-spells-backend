@@ -358,12 +358,14 @@ API có base path `/api/v1`. Một số nhóm endpoint quan trọng:
 | --- | --- |
 | Hồ sơ đăng nhập | `GET /api/v1/auth/me` |
 | CMS công khai | `GET /api/v1/public/home` |
+| Dashboard quản trị | `GET /api/v1/admin/dashboard` |
+| Góc học tập học viên | `GET /api/v1/student/portal/overview` |
 | Course | `GET/POST /api/v1/admin/courses`, `GET /api/v1/admin/courses/{id}` |
 | Session | `/api/v1/admin/courses/{courseId}/sessions` |
 | Attendance | `/api/v1/admin/courses/{courseId}/attendance/sessions` |
 | Progress | `GET /api/v1/admin/courses/{courseId}/progress` |
 | Students/Enrollment | `/api/v1/admin/students`, `/api/v1/admin/enrollments` |
-| Library | `/api/v1/admin/library/resources`, `/media`, `/exercises` |
+| Library | `/api/v1/admin/library/dashboard`, `/resources`, `/media`, `/exercises` |
 | Test Bank | `/api/v1/admin/test-bank` |
 | Test validation/version | `/{id}/validation`, `/{id}/versions`, `/{id}/revisions`, `/{id}/status` |
 

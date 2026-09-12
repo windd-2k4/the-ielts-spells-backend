@@ -4,6 +4,7 @@ import com.theieltsspells.identity.domain.StudentProfile;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -11,6 +12,14 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface StudentProfileRepository extends JpaRepository<StudentProfile, UUID> {
+    @Modifying(flushAutomatically = true)
+    @Query(value = """
+            insert into public.student_profiles (user_id, student_code)
+            values (:userId, :studentCode)
+            on conflict (user_id) do nothing
+            """, nativeQuery = true)
+    void ensureProfile(@Param("userId") UUID userId, @Param("studentCode") String studentCode);
+
     @Query("select student from StudentProfile student join fetch student.userRef where student.userId = :id")
     Optional<StudentProfile> findByIdWithProfile(@Param("id") UUID id);
 

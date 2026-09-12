@@ -6,9 +6,12 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 public interface UserRoleRepository extends JpaRepository<UserRole, UserRoleId> {
+    List<UserRole> findAllByUserId(UUID userId);
+
     @Modifying(flushAutomatically = true)
     @Query(value = """
             insert into public.user_roles (user_id, role, assigned_by, assigned_at)
