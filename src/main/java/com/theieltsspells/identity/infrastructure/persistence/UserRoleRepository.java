@@ -6,11 +6,18 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.OffsetDateTime;
-import java.util.List;
 import java.util.UUID;
 
 public interface UserRoleRepository extends JpaRepository<UserRole, UserRoleId> {
-    List<UserRole> findAllByUserId(UUID userId);
+    @Query(value = """
+            select exists (
+                select 1
+                from public.user_roles
+                where user_id = :userId
+                  and role <> cast('STUDENT' as app_role)
+            )
+            """, nativeQuery = true)
+    boolean existsNonStudentRole(@Param("userId") UUID userId);
 
     @Modifying(flushAutomatically = true)
     @Query(value = """

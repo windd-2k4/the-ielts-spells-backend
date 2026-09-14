@@ -53,6 +53,14 @@ class StudentPortalServiceTests {
                   "enrollments": [],
                   "upcomingSessions": [],
                   "recentAttempts": [],
+                  "activityCalendar": [{
+                    "activityDate": "2026-01-02",
+                    "reading": 1,
+                    "listening": 0,
+                    "writing": 0,
+                    "speaking": 0,
+                    "totalAttempts": 1
+                  }],
                   "readingAssignments": [],
                   "recommendedCourses": [],
                   "aiStatus": "DEVELOPMENT"
@@ -63,6 +71,12 @@ class StudentPortalServiceTests {
 
         assertThat(result.profile().id()).isEqualTo(profileId);
         assertThat(result.metrics().assignedTests()).isEqualTo(1);
+        assertThat(result.activityCalendar()).singleElement()
+                .satisfies(activity -> {
+                    assertThat(activity.activityDate()).isEqualTo(java.time.LocalDate.of(2026, 1, 2));
+                    assertThat(activity.reading()).isEqualTo(1);
+                    assertThat(activity.totalAttempts()).isEqualTo(1);
+                });
         assertThat(result.readingAssignments()).isEmpty();
         verify(jdbc).queryForObject(any(String.class), eq(String.class), eq(studentId));
     }

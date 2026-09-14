@@ -57,6 +57,8 @@ public class StudentPortalService {
                     course.id course_id, course.code course_code, course.name course_name,
                     course.description, course.level, course.skill_pair::text skill_pair,
                     course.target_band, course.starts_on, course.ends_on,
+                    enrollment.planned_exam_month, enrollment.actual_exam_date,
+                    enrollment.exam_registration_status,
                     count(session.id) filter (where session.status = 'COMPLETED') completed_sessions,
                     course.total_sessions,
                     (select teacher_profile.full_name
@@ -72,7 +74,9 @@ public class StudentPortalService {
                   join public.courses course on course.id = enrollment.course_id
                   left join public.course_sessions session on session.course_id = course.id
                   where enrollment.status <> 'WITHDRAWN'
-                  group by enrollment.id, enrollment.status, course.id
+                  group by enrollment.id, enrollment.status, course.id,
+                    enrollment.planned_exam_month, enrollment.actual_exam_date,
+                    enrollment.exam_registration_status
                 ), upcoming_session_items as (
                   select session.id session_id, course.id course_id, course.code course_code,
                     course.name course_name, session.session_no, session.title, session.phase_name,
@@ -140,6 +144,20 @@ public class StudentPortalService {
                     at time zone 'Asia/Ho_Chi_Minh')::date activity_date
                   from public.test_attempts attempt
                   join params on params.student_id = attempt.student_id
+                ), activity_summary_items as (
+                  select (attempt.submitted_at at time zone 'Asia/Ho_Chi_Minh')::date activity_date,
+                    count(*) filter (where version.primary_skill = 'READING')::integer reading,
+                    count(*) filter (where version.primary_skill = 'LISTENING')::integer listening,
+                    count(*) filter (where version.primary_skill = 'WRITING')::integer writing,
+                    count(*) filter (where version.primary_skill = 'SPEAKING')::integer speaking,
+                    count(*)::integer total_attempts
+                  from public.test_attempts attempt
+                  join params on params.student_id = attempt.student_id
+                  join public.test_versions version on version.id = attempt.test_version_id
+                  where attempt.submitted_at is not null
+                    and (attempt.submitted_at at time zone 'Asia/Ho_Chi_Minh')::date
+                      >= (now() at time zone 'Asia/Ho_Chi_Minh')::date - 41
+                  group by (attempt.submitted_at at time zone 'Asia/Ho_Chi_Minh')::date
                 ), activity_ranked as (
                   select activity_date, (row_number() over (order by activity_date desc) - 1)::integer day_offset
                   from activity_days
@@ -224,7 +242,10 @@ public class StudentPortalService {
                     'completedSessions', item.completed_sessions,
                     'totalSessions', item.total_sessions,
                     'primaryTeacherName', item.primary_teacher_name,
-                    'nextSessionAt', item.next_session_at
+                    'nextSessionAt', item.next_session_at,
+                    'plannedExamMonth', item.planned_exam_month,
+                    'actualExamDate', item.actual_exam_date,
+                    'examRegistrationStatus', item.exam_registration_status
                   ) order by case item.enrollment_status
                     when 'ACTIVE' then 0 when 'PENDING' then 1 when 'PAUSED' then 2 else 3 end,
                     item.starts_on desc) from enrollment_items item), '[]'::jsonb),
@@ -255,6 +276,14 @@ public class StudentPortalService {
                     'correctCount', case when item.submitted_at is null then null else item.correct_count end,
                     'totalQuestions', item.total_questions
                   ) order by item.activity_at desc) from recent_attempt_items item), '[]'::jsonb),
+                  'activityCalendar', coalesce((select jsonb_agg(jsonb_build_object(
+                    'activityDate', item.activity_date,
+                    'reading', item.reading,
+                    'listening', item.listening,
+                    'writing', item.writing,
+                    'speaking', item.speaking,
+                    'totalAttempts', item.total_attempts
+                  ) order by item.activity_date) from activity_summary_items item), '[]'::jsonb),
                   'readingAssignments', coalesce((select jsonb_agg(jsonb_build_object(
                     'assignmentId', item.assignment_id,
                     'testVersionId', item.test_version_id,
@@ -341,6 +370,8 @@ public class StudentPortalService {
                   course.id course_id, course.code course_code, course.name course_name,
                   course.description, course.level, course.skill_pair::text skill_pair,
                   course.target_band, course.starts_on, course.ends_on,
+                  enrollment.planned_exam_month, enrollment.actual_exam_date,
+                  enrollment.exam_registration_status,
                   count(session.id) filter (where session.status = 'COMPLETED') completed_sessions,
                   course.total_sessions,
                   (select teacher_profile.full_name
@@ -355,7 +386,9 @@ public class StudentPortalService {
                 join public.courses course on course.id = enrollment.course_id
                 left join public.course_sessions session on session.course_id = course.id
                 where enrollment.student_id = ? and enrollment.status <> 'WITHDRAWN'
-                group by enrollment.id, enrollment.status, course.id
+                group by enrollment.id, enrollment.status, course.id,
+                  enrollment.planned_exam_month, enrollment.actual_exam_date,
+                  enrollment.exam_registration_status
                 order by case enrollment.status
                   when 'ACTIVE' then 0 when 'PENDING' then 1 when 'PAUSED' then 2 else 3 end,
                   course.starts_on desc
@@ -374,7 +407,10 @@ public class StudentPortalService {
                 rs.getInt("completed_sessions"),
                 rs.getInt("total_sessions"),
                 rs.getString("primary_teacher_name"),
-                rs.getObject("next_session_at", OffsetDateTime.class)
+                rs.getObject("next_session_at", OffsetDateTime.class),
+                rs.getObject("planned_exam_month", LocalDate.class),
+                rs.getObject("actual_exam_date", LocalDate.class),
+                rs.getString("exam_registration_status")
         ), studentId);
     }
 

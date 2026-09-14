@@ -27,9 +27,7 @@ public class StudentOnboardingService {
 
     @Transactional
     public StudentOnboardingResponse onboard(UUID userId, String email, String requestedFullName) {
-        boolean hasStaffRole = roles.findAllByUserId(userId).stream()
-                .anyMatch(role -> role.getRole() != AppRole.STUDENT);
-        if (hasStaffRole) {
+        if (roles.existsNonStudentRole(userId)) {
             throw new ConflictException("Tài khoản nhân sự không thể tự đăng ký thành học viên");
         }
 

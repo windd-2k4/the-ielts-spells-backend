@@ -1,17 +1,14 @@
 package com.theieltsspells.identity.application;
 
 import com.theieltsspells.identity.domain.Profile;
-import com.theieltsspells.identity.domain.UserRole;
 import com.theieltsspells.identity.infrastructure.SupabaseAdminClient;
 import com.theieltsspells.identity.infrastructure.persistence.ProfileRepository;
 import com.theieltsspells.identity.infrastructure.persistence.StudentProfileRepository;
 import com.theieltsspells.identity.infrastructure.persistence.UserRoleRepository;
 import com.theieltsspells.shared.application.ConflictException;
 import com.theieltsspells.shared.application.BusinessRuleException;
-import com.theieltsspells.shared.persistence.enums.AppRole;
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -35,7 +32,6 @@ class StudentOnboardingServiceTests {
     @Test
     void createsTheApplicationIdentityForANewSupabaseStudent() {
         UUID userId = UUID.fromString("0b070e99-d4ea-43f5-b3dd-f5530f2fd0d8");
-        when(roles.findAllByUserId(userId)).thenReturn(List.of());
         when(profiles.findById(userId)).thenReturn(Optional.empty());
         when(profiles.save(any(Profile.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -55,7 +51,6 @@ class StudentOnboardingServiceTests {
         var profile = new Profile();
         profile.setId(userId);
         profile.setFullName("Tên hồ sơ hiện tại");
-        when(roles.findAllByUserId(userId)).thenReturn(List.of(studentRole(userId)));
         when(profiles.findById(userId)).thenReturn(Optional.of(profile));
         when(profiles.save(profile)).thenReturn(profile);
 
@@ -68,10 +63,7 @@ class StudentOnboardingServiceTests {
     @Test
     void rejectsAnExistingStaffIdentity() {
         UUID userId = UUID.randomUUID();
-        var role = new UserRole();
-        role.setUserId(userId);
-        role.setRole(AppRole.TEACHER);
-        when(roles.findAllByUserId(userId)).thenReturn(List.of(role));
+        when(roles.existsNonStudentRole(userId)).thenReturn(true);
 
         assertThatThrownBy(() -> service.onboard(userId, "teacher@example.com", "Teacher"))
                 .isInstanceOf(ConflictException.class)
@@ -87,7 +79,6 @@ class StudentOnboardingServiceTests {
         profile.setId(userId);
         profile.setFullName("Học viên đã khóa");
         profile.setIsActive(false);
-        when(roles.findAllByUserId(userId)).thenReturn(List.of(studentRole(userId)));
         when(profiles.findById(userId)).thenReturn(Optional.of(profile));
 
         assertThatThrownBy(() -> service.onboard(userId, "learner@example.com", null))
@@ -96,10 +87,4 @@ class StudentOnboardingServiceTests {
         verify(supabase, never()).upsertProfile(any(), any(), any(), any(), any(), any());
     }
 
-    private static UserRole studentRole(UUID userId) {
-        var role = new UserRole();
-        role.setUserId(userId);
-        role.setRole(AppRole.STUDENT);
-        return role;
-    }
 }

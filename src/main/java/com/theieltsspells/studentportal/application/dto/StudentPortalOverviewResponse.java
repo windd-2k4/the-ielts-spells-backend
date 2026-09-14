@@ -12,6 +12,7 @@ public record StudentPortalOverviewResponse(
         List<Enrollment> enrollments,
         List<UpcomingSession> upcomingSessions,
         List<RecentAttempt> recentAttempts,
+        List<DailyActivity> activityCalendar,
         List<ReadingAssignment> readingAssignments,
         List<CourseRecommendation> recommendedCourses,
         String aiStatus
@@ -53,7 +54,10 @@ public record StudentPortalOverviewResponse(
             int completedSessions,
             int totalSessions,
             String primaryTeacherName,
-            OffsetDateTime nextSessionAt
+            OffsetDateTime nextSessionAt,
+            LocalDate plannedExamMonth,
+            LocalDate actualExamDate,
+            String examRegistrationStatus
     ) {
     }
 
@@ -85,6 +89,16 @@ public record StudentPortalOverviewResponse(
             BigDecimal maxScore,
             Integer correctCount,
             Integer totalQuestions
+    ) {
+    }
+
+    public record DailyActivity(
+            LocalDate activityDate,
+            int reading,
+            int listening,
+            int writing,
+            int speaking,
+            int totalAttempts
     ) {
     }
 
