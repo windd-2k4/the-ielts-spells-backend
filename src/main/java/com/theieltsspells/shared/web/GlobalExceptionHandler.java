@@ -52,7 +52,10 @@ class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     ResponseEntity<ApiError> handleUnexpected(Exception exception, HttpServletRequest request) {
         log.error("Unexpected error for {} {}", request.getMethod(), request.getRequestURI(), exception);
-        return response(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "Đã xảy ra lỗi hệ thống", request);
+        String detail = exception.getMessage() != null && !exception.getMessage().isBlank()
+                ? exception.getMessage()
+                : "Đã xảy ra lỗi hệ thống";
+        return response(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", detail, request);
     }
 
     private ResponseEntity<ApiError> response(HttpStatus status, String code, String message,
