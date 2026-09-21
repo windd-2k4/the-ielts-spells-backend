@@ -79,12 +79,12 @@ public class TestBankApplicationService {
     @Transactional
     public TestBankResponse create(TestBankRequest request, UUID actor) {
         validate(request);
-        UUID id = jdbc.queryForObject("""
-                insert into public.tests(title, description, duration_minutes, status, created_by,
+        UUID id = UUID.randomUUID();
+        jdbc.update("""
+                insert into public.tests(id, title, description, duration_minutes, status, created_by,
                   primary_skill, test_type, version, tags, builder_content)
-                values (?, ?, ?, 'DRAFT', ?, cast(? as public.skill_type), ?, ?, cast(? as jsonb), cast(? as jsonb))
-                returning id
-                """, UUID.class, request.title().trim(), blank(request.description()), duration(request), actor,
+                values (?, ?, ?, ?, 'DRAFT', ?, cast(? as public.skill_type), ?, ?, cast(? as jsonb), cast(? as jsonb))
+                """, id, request.title().trim(), blank(request.description()), duration(request), actor,
                 request.skill().name(), allowed(request.testType(), TYPES), blankOr(request.version(), "v1.0"),
                 json(request.tags() == null ? List.of() : request.tags()),
                 json(request.builderContent() == null ? Map.of() : request.builderContent()));
@@ -300,6 +300,9 @@ public class TestBankApplicationService {
     private TestVersionResponse createPublishedVersion(TestBankResponse test, UUID actor) {
         int number = jdbc.queryForObject("select coalesce(max(version_number), 0) + 1 from public.test_versions where test_id=?", Integer.class, test.id());
         String label = "v" + number + ".0";
+        Map<String, Object> publishedContent = test.skill() == SkillType.READING
+                ? ReadingPublishedSnapshotSanitizer.sanitize(test.builderContent())
+                : test.builderContent();
         UUID id = jdbc.queryForObject("""
                 insert into public.test_versions(
                   test_id, version_number, version_label, title, description, duration_minutes,
@@ -307,9 +310,9 @@ public class TestBankApplicationService {
                 ) values (?, ?, ?, ?, ?, ?, cast(? as public.skill_type), ?, cast(? as jsonb), cast(? as jsonb), ?)
                 returning id
                 """, UUID.class, test.id(), number, label, test.title(), test.description(), test.durationMinutes(),
-                test.skill().name(), test.testType(), json(test.tags()), json(test.builderContent()), actor);
+                test.skill().name(), test.testType(), json(test.tags()), json(publishedContent), actor);
         if (test.skill() == SkillType.READING) {
-            readingVersionMaterializer.materialize(id, test.builderContent());
+            readingVersionMaterializer.materialize(id, publishedContent);
         }
         return new TestVersionResponse(id, number, label, java.time.OffsetDateTime.now(), "");
     }

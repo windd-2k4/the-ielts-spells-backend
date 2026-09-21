@@ -106,7 +106,7 @@ public class StudentPortalService {
                     coalesce(attempt.submitted_at, attempt.last_saved_at, attempt.started_at) activity_at
                   from public.test_attempts attempt
                   join params on params.student_id = attempt.student_id
-                  join public.test_assignments assignment on assignment.id = attempt.test_assignment_id
+                  left join public.test_assignments assignment on assignment.id = attempt.test_assignment_id
                   join public.test_versions version on version.id = attempt.test_version_id
                   left join public.test_version_questions question on question.test_version_id = version.id
                   left join public.test_attempt_responses response
@@ -458,7 +458,7 @@ public class StudentPortalService {
                   count(response.id) filter (where response.is_correct = true) correct_count,
                   count(question.id) total_questions
                 from public.test_attempts attempt
-                join public.test_assignments assignment on assignment.id = attempt.test_assignment_id
+                left join public.test_assignments assignment on assignment.id = attempt.test_assignment_id
                 join public.test_versions version on version.id = attempt.test_version_id
                 left join public.test_version_questions question on question.test_version_id = version.id
                 left join public.test_attempt_responses response

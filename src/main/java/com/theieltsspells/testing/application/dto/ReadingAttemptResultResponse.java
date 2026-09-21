@@ -26,7 +26,32 @@ public record ReadingAttemptResultResponse(
             BigDecimal score,
             BigDecimal maxScore,
             List<String> correctAnswers,
-            String explanation
+            String explanation,
+            QuestionSolution solution,
+            List<EvidenceSpan> evidenceSpans,
+            EvidenceSpan evidenceSpan
+    ) {
+    }
+
+    public record QuestionSolution(
+            String explanation,
+            List<String> reasoningSteps,
+            String trapAnalysis,
+            String vocabularyNotes,
+            String relatedLessonUrl
+        ) {
+    }
+
+    public record EvidenceSpan(
+            UUID id,
+            Integer start,
+            Integer end,
+            String quote,
+            String prefix,
+            String suffix,
+            String paragraphKey,
+            String label,
+            ReadingEvidenceMode mode
     ) {
     }
 }

@@ -42,11 +42,7 @@ class TestDraftValidationService {
     }
 
     private void validateReading(TestBankResponse test, List<TestValidationIssueResponse> issues) {
-        try {
-            ReadingDraftValidator.validate(test.builderContent(), "FULL_TEST".equals(test.testType()));
-        } catch (RuntimeException exception) {
-            error(issues, "reading-draft", "Reading", null, exception.getMessage(), "reading-question-panel");
-        }
+        ReadingDraftValidator.validate(test, issues);
     }
 
     private void validateListening(TestBankResponse test, List<TestValidationIssueResponse> issues) {

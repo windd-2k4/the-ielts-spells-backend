@@ -265,6 +265,23 @@ Supabase Dashboard > Authentication > Hooks. Endpoint xác thực
 
 Nếu chưa kiểm thử email, có thể để trống cấu hình mail; các luồng gửi mail tương ứng sẽ không hoạt động đầy đủ.
 
+### AI đa provider
+
+Backend dùng `AiProviderRouter` để điều phối Gemini và NVIDIA theo từng loại tác vụ. Mỗi tác vụ có thứ tự provider, danh sách model và timeout riêng:
+
+| Nhóm biến | Ý nghĩa |
+| --- | --- |
+| `AI_IMPORT_PROVIDERS`, `AI_CHAT_PROVIDERS`, `AI_QUIZ_PROVIDERS` | Thứ tự provider, ví dụ `GEMINI,NVIDIA` |
+| `GEMINI_*_MODELS`, `NVIDIA_*_MODELS` | Danh sách model thử lần lượt cho import, chat và quiz |
+| `AI_*_TIMEOUT_SECONDS` | Thời gian tối đa chờ một lần gọi theo loại tác vụ |
+| `AI_MAX_RETRIES_PER_MODEL` | Số lần retry thêm cho lỗi timeout, mạng, 429 và 5xx |
+| `AI_INITIAL_BACKOFF_MILLIS`, `AI_MAX_BACKOFF_MILLIS` | Khoảng backoff có jitter giữa các lần retry |
+| `AI_CIRCUIT_FAILURE_THRESHOLD`, `AI_CIRCUIT_COOLDOWN_SECONDS` | Ngưỡng mở circuit và thời gian tạm bỏ qua route lỗi |
+
+Router retry cùng model đối với lỗi tạm thời, sau đó chuyển model và provider. Model không tồn tại được bỏ qua; provider sai API key hoặc thiếu quyền bị tạm ngắt để request tiếp theo không tiếp tục chờ. Lỗi request 400/422 không được fallback vì thay provider không sửa được payload sai. Nếu toàn bộ route import thất bại, bộ phân tách offline vẫn được dùng và kết quả được đánh dấu bằng cảnh báo thay vì giả vờ AI đã thành công.
+
+Không đặt API key trong frontend hoặc log. NVIDIA hosted endpoint thuộc chương trình thử nghiệm/phát triển; cần kiểm tra giấy phép và hình thức triển khai trước khi dùng production.
+
 ## Database và migration
 
 - PostgreSQL local dùng cho phát triển, thử migration và dữ liệu test.
