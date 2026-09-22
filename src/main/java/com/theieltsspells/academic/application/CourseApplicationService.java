@@ -108,13 +108,13 @@ public class CourseApplicationService {
     @Transactional
     public void deletePermanently(UUID id) {
         var course = find(id);
-        long totalEnrollments = enrollments.countByCourseIdAndStatusIn(id, List.of(EnrollmentStatus.ACTIVE, EnrollmentStatus.PENDING, EnrollmentStatus.COMPLETED, EnrollmentStatus.DROPPED));
+        long totalEnrollments = enrollments.countByCourseId(id);
         if (totalEnrollments > 0) {
             throw new BusinessRuleException("Không thể xóa vĩnh viễn khóa học đã có " + totalEnrollments + " học viên ghi danh. Vui lòng chọn ngừng hoạt động.");
         }
         var sessions = classSessions.findByCourseIdOrderBySessionNo(id);
-        boolean hasRunningSessions = sessions.stream().anyMatch(s -> s.getStatus() == SessionStatus.COMPLETED || s.getStatus() == SessionStatus.IN_PROGRESS);
-        if (hasRunningSessions) {
+        boolean hasCompletedSessions = sessions.stream().anyMatch(s -> s.getStatus() == SessionStatus.COMPLETED);
+        if (hasCompletedSessions) {
             throw new BusinessRuleException("Không thể xóa vĩnh viễn khóa học đã có buổi học diễn ra.");
         }
         classSessions.deleteAll(sessions);
