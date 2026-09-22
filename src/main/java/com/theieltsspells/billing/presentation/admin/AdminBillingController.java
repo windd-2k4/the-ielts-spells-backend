@@ -18,6 +18,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
+import com.theieltsspells.billing.infrastructure.sepay.SepayEInvoiceClient;
 import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
 import java.time.LocalDate;
@@ -37,6 +38,7 @@ public class AdminBillingController {
     private final ElectronicInvoiceService invoiceService;
     private final SepayWebhookService webhookService;
     private final BillingSettingRepository settingsRepository;
+    private final SepayEInvoiceClient sepayEInvoiceClient;
 
     // -------------------------------------------------------------------------
     // 1. ORDERS MANAGEMENT
@@ -99,6 +101,12 @@ public class AdminBillingController {
     ) {
         webhookService.confirmManualPayment(id, note);
         return ResponseEntity.ok(orderService.getOrderAdmin(id));
+    }
+
+    @PostMapping("/orders/{id}/retry-invoice")
+    @Operation(summary = "Thử lại phát hành hóa đơn điện tử cho đơn hàng bị lỗi")
+    public ResponseEntity<InvoiceAdminDto> retryInvoiceByOrder(@PathVariable UUID id) {
+        return ResponseEntity.ok(invoiceService.retryInvoice(id));
     }
 
     // -------------------------------------------------------------------------
@@ -231,6 +239,10 @@ public class AdminBillingController {
         setting.setSepayAccountNumber(dto.sepayAccountNumber());
         setting.setSepayBankName(dto.sepayBankName());
         setting.setEinvoiceApiToken(dto.einvoiceApiToken());
+        setting.setEinvoiceClientId(dto.einvoiceClientId());
+        setting.setEinvoiceClientSecret(dto.einvoiceClientSecret());
+        setting.setEinvoiceProviderAccountId(dto.einvoiceProviderAccountId());
+        if (dto.einvoiceInvoiceSeries() != null) setting.setEinvoiceInvoiceSeries(dto.einvoiceInvoiceSeries());
         if (dto.einvoiceTemplateCode() != null) setting.setEinvoiceTemplateCode(dto.einvoiceTemplateCode());
         if (dto.einvoiceTaxRate() != null) setting.setEinvoiceTaxRate(dto.einvoiceTaxRate());
         setting.setSellerName(dto.sellerName());
@@ -242,6 +254,13 @@ public class AdminBillingController {
         return ResponseEntity.ok(toDto(saved));
     }
 
+    @PostMapping("/settings/test-einvoice")
+    @Operation(summary = "Kiểm tra kết nối SePay eInvoice API (Sandbox / Production)")
+    public ResponseEntity<SepayEInvoiceClient.ConnectionTestResult> testEinvoiceConnection() {
+        BillingSetting setting = settingsRepository.findFirstByOrderByUpdatedAtDesc().orElseGet(BillingSetting::new);
+        return ResponseEntity.ok(sepayEInvoiceClient.testConnection(setting));
+    }
+
     private BillingSettingsDto toDto(BillingSetting s) {
         return new BillingSettingsDto(
                 s.getSepayApiKey(),
@@ -249,6 +268,10 @@ public class AdminBillingController {
                 s.getSepayAccountNumber(),
                 s.getSepayBankName(),
                 s.getEinvoiceApiToken(),
+                s.getEinvoiceClientId(),
+                s.getEinvoiceClientSecret(),
+                s.getEinvoiceProviderAccountId(),
+                s.getEinvoiceInvoiceSeries(),
                 s.getEinvoiceTemplateCode(),
                 s.getEinvoiceTaxRate(),
                 s.getSellerName(),

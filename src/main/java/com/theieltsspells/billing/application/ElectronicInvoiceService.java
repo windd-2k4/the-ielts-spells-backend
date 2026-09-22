@@ -27,6 +27,9 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import com.theieltsspells.academic.domain.Course;
+import com.theieltsspells.academic.infrastructure.persistence.CourseRepository;
+import com.theieltsspells.billing.infrastructure.sepay.SepayEInvoiceClient;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -41,6 +44,8 @@ public class ElectronicInvoiceService {
     private final ElectronicInvoiceRepository invoiceRepository;
     private final OrderRepository orderRepository;
     private final BillingSettingRepository billingSettingRepository;
+    private final SepayEInvoiceClient sepayEInvoiceClient;
+    private final CourseRepository courseRepository;
 
     @Transactional
     public ElectronicInvoice initOrGetInvoice(Order order) {
@@ -56,7 +61,6 @@ public class ElectronicInvoiceService {
     }
 
     @Async
-    @Transactional
     public void issueInvoiceAsync(UUID orderId) {
         Order order = orderRepository.findById(orderId).orElse(null);
         if (order == null) return;
@@ -77,8 +81,45 @@ public class ElectronicInvoiceService {
         BillingSetting settings = billingSettingRepository.findLatest().orElseGet(BillingSetting::new);
 
         try {
-            // Check if SePay eInvoice API token is present or in sandbox/demo mode
-            String templateCode = settings.getEinvoiceTemplateCode() != null ? settings.getEinvoiceTemplateCode() : "2C26TLN";
+            Course course = courseRepository.findById(order.getCourseId()).orElse(null);
+
+            // 1. Nếu đã cấu hình SePay eInvoice API Client ID -> Gọi trực tiếp REST API SePay (Sandbox/Production)
+            if (settings.getEinvoiceClientId() != null && !settings.getEinvoiceClientId().isBlank()
+                    && settings.getEinvoiceClientSecret() != null && !settings.getEinvoiceClientSecret().isBlank()) {
+
+                SepayEInvoiceClient.IssueResult result = sepayEInvoiceClient.createAndIssueInvoice(order, course, settings);
+
+                if (result.success()) {
+                    String templateCode = settings.getEinvoiceTemplateCode() != null ? settings.getEinvoiceTemplateCode() : "1";
+                    String series = result.invoiceSeries() != null ? result.invoiceSeries() : settings.getEinvoiceInvoiceSeries();
+
+                    invoice.setInvoiceTemplate(series != null ? (templateCode + " - " + series) : templateCode);
+                    invoice.setInvoiceNumber(result.invoiceNumber());
+                    invoice.setCqtCode(result.cqtCode());
+                    invoice.setLookupCode(result.lookupCode() != null ? result.lookupCode() : order.getOrderCode());
+                    invoice.setLookupUrl(result.pdfUrl() != null ? result.pdfUrl() : "https://sepay.vn/tra-cuu-hoa-don-dien-tu");
+                    invoice.setPdfUrl(result.pdfUrl());
+                    invoice.setXmlUrl(result.xmlUrl());
+                    invoice.setStatus(InvoiceStatus.ISSUED);
+                    invoice.setIssuedAt(OffsetDateTime.now());
+                    invoice.setErrorLog(null);
+                    invoice.setUpdatedAt(OffsetDateTime.now());
+
+                    log.info("Đã phát hành HĐĐT thật qua SePay eInvoice cho đơn {}: Số HĐ={}, Ký hiệu={}, PDF={}",
+                            order.getOrderCode(), result.invoiceNumber(), series, result.pdfUrl());
+                    return invoiceRepository.save(invoice);
+                } else {
+                    log.warn("SePay eInvoice từ chối hoặc đang xử lý cho đơn {}: {}", order.getOrderCode(), result.errorMessage());
+                    invoice.setStatus(InvoiceStatus.FAILED);
+                    invoice.setRetryCount(invoice.getRetryCount() + 1);
+                    invoice.setErrorLog(result.errorMessage());
+                    invoice.setUpdatedAt(OffsetDateTime.now());
+                    return invoiceRepository.save(invoice);
+                }
+            }
+
+            // 2. Fallback mô phỏng nếu hệ thống chưa điền Client ID / Secret
+            String templateCode = settings.getEinvoiceTemplateCode() != null ? settings.getEinvoiceTemplateCode() : "1 - C26TSE";
             String invoiceNumber = String.valueOf(70000 + (System.currentTimeMillis() % 10000));
             String lookupCode = UUID.randomUUID().toString();
             String cqtCode = "00D0649FD" + UUID.randomUUID().toString().replace("-", "").substring(0, 24).toUpperCase();
@@ -86,7 +127,6 @@ public class ElectronicInvoiceService {
             String pdfUrl = String.format("https://sepay.vn/api/v1/invoices/%s/pdf", lookupCode);
             String xmlUrl = String.format("https://sepay.vn/api/v1/invoices/%s/xml", lookupCode);
 
-            // Record successful issue
             invoice.setInvoiceTemplate(templateCode);
             invoice.setInvoiceNumber(invoiceNumber);
             invoice.setCqtCode(cqtCode);
@@ -99,7 +139,7 @@ public class ElectronicInvoiceService {
             invoice.setErrorLog(null);
             invoice.setUpdatedAt(OffsetDateTime.now());
 
-            log.info("Đã phát hành HĐĐT thành công cho đơn {}: Số HĐ={}, Mã CQT={}", order.getOrderCode(), invoiceNumber, cqtCode);
+            log.info("Đã phát hành HĐĐT (Demo Fallback) cho đơn {}: Số HĐ={}, Mã CQT={}", order.getOrderCode(), invoiceNumber, cqtCode);
             return invoiceRepository.save(invoice);
 
         } catch (Exception ex) {
@@ -113,12 +153,19 @@ public class ElectronicInvoiceService {
     }
 
     @Transactional
-    public InvoiceAdminDto retryInvoice(UUID invoiceId) {
-        ElectronicInvoice invoice = invoiceRepository.findById(invoiceId)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hóa đơn"));
+    public InvoiceAdminDto retryInvoice(UUID targetId) {
+        ElectronicInvoice invoice = invoiceRepository.findById(targetId)
+                .or(() -> invoiceRepository.findByOrderId(targetId))
+                .orElse(null);
 
-        Order order = orderRepository.findById(invoice.getOrderId())
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng liên kết"));
+        Order order;
+        if (invoice != null) {
+            order = orderRepository.findById(invoice.getOrderId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng liên kết"));
+        } else {
+            order = orderRepository.findById(targetId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hóa đơn hoặc đơn hàng với ID: " + targetId));
+        }
 
         ElectronicInvoice issued = issueInvoice(order);
         return toAdminDto(issued, order);

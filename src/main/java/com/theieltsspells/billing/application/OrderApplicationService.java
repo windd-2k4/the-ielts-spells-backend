@@ -155,10 +155,15 @@ public class OrderApplicationService {
         order.setCreatedAt(now);
         order.setUpdatedAt(now);
 
-        // Always true for B2C mandatory e-invoicing
-        order.setInvoiceRequired(true);
-        order.setBuyerType(InvoiceBuyerType.PERSONAL);
-        order.setInvoiceEmail(normalizedEmail);
+        boolean invRequired = request.invoiceRequired() == null || request.invoiceRequired();
+        order.setInvoiceRequired(invRequired);
+        order.setBuyerType(request.buyerType() != null ? request.buyerType() : InvoiceBuyerType.PERSONAL);
+        order.setInvoiceCompanyName(request.invoiceCompanyName() != null && !request.invoiceCompanyName().isBlank() ? request.invoiceCompanyName().trim() : null);
+        order.setInvoiceTaxCode(request.invoiceTaxCode() != null && !request.invoiceTaxCode().isBlank() ? request.invoiceTaxCode().trim() : null);
+        order.setInvoiceAddress(request.invoiceAddress() != null && !request.invoiceAddress().isBlank() ? request.invoiceAddress().trim() : null);
+        order.setInvoiceEmail(request.invoiceEmail() != null && !request.invoiceEmail().isBlank()
+                ? request.invoiceEmail().trim().toLowerCase(Locale.ROOT)
+                : normalizedEmail);
 
         Order saved = orderRepository.save(order);
 

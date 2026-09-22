@@ -24,5 +24,17 @@ public record AdminCreateOrderRequest(
 
         Integer expiresInHours,
 
-        String notes
+        String notes,
+
+        Boolean invoiceRequired,
+
+        com.theieltsspells.billing.domain.InvoiceBuyerType buyerType,
+
+        String invoiceCompanyName,
+
+        String invoiceTaxCode,
+
+        String invoiceAddress,
+
+        String invoiceEmail
 ) {}

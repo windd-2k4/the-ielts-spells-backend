@@ -40,8 +40,20 @@ public class BillingSetting {
     @Column(name = "einvoice_api_token")
     private String einvoiceApiToken;
 
+    @Column(name = "einvoice_client_id")
+    private String einvoiceClientId;
+
+    @Column(name = "einvoice_client_secret")
+    private String einvoiceClientSecret;
+
+    @Column(name = "einvoice_provider_account_id")
+    private String einvoiceProviderAccountId;
+
+    @Column(name = "einvoice_invoice_series", length = 20)
+    private String einvoiceInvoiceSeries = "C26TSE";
+
     @Column(name = "einvoice_template_code", length = 20)
-    private String einvoiceTemplateCode = "2C26TLN";
+    private String einvoiceTemplateCode = "1";
 
     @Column(name = "einvoice_tax_rate", precision = 4, scale = 2)
     private BigDecimal einvoiceTaxRate = BigDecimal.ZERO;
