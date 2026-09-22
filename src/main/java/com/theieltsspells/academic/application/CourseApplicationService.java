@@ -2,11 +2,13 @@ package com.theieltsspells.academic.application;
 
 import com.theieltsspells.academic.application.dto.*;
 import com.theieltsspells.academic.domain.Course;
-import com.theieltsspells.academic.infrastructure.persistence.CourseRepository;
+import com.theieltsspells.academic.infrastructure.persistence.*;
 import com.theieltsspells.shared.application.ConflictException;
 import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
 import com.theieltsspells.shared.persistence.enums.ClassStatus;
+import com.theieltsspells.shared.persistence.enums.EnrollmentStatus;
+import com.theieltsspells.shared.persistence.enums.SessionStatus;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -24,6 +26,10 @@ import java.util.UUID;
 public class CourseApplicationService {
     private final CourseRepository courses;
     private final CourseCodeGenerator codeGenerator;
+    private final EnrollmentRepository enrollments;
+    private final ClassSessionRepository classSessions;
+    private final ClassTeacherRepository classTeachers;
+    private final CourseStudentSupportRepository courseStudentSupports;
 
     @Transactional
     public CourseResponse create(CreateCourseRequest request) {
@@ -70,6 +76,10 @@ public class CourseApplicationService {
     @Transactional
     public CourseResponse update(UUID id, UpdateCourseRequest request) {
         var course = find(id);
+        long activeEnrollments = enrollments.countByCourseIdAndStatusIn(id, List.of(EnrollmentStatus.ACTIVE, EnrollmentStatus.PENDING));
+        if (request.capacity() < activeEnrollments) {
+            throw new BusinessRuleException("Sĩ số tối đa (" + request.capacity() + ") không thể nhỏ hơn số học viên hiện tại (" + activeEnrollments + " học viên)");
+        }
         apply(course, request.name(), request.description(), request.level(), request.skillPair(), request.targetBand(),
                 request.totalSessions(), request.tuitionAmount(), request.capacity(), request.startsOn(), request.endsOn(),
                 normalizeRequestedStatus(request.status()), request.defaultZoomUrl(), request.isPublic(), request.isActive());
@@ -83,6 +93,34 @@ public class CourseApplicationService {
         var course = find(id);
         course.setIsActive(false);
         course.setUpdatedAt(OffsetDateTime.now());
+        courses.save(course);
+    }
+
+    @Transactional
+    public CourseResponse restore(UUID id) {
+        var course = find(id);
+        course.setIsActive(true);
+        synchronizeLifecycle(course);
+        course.setUpdatedAt(OffsetDateTime.now());
+        return AcademicMapper.toResponse(courses.save(course));
+    }
+
+    @Transactional
+    public void deletePermanently(UUID id) {
+        var course = find(id);
+        long totalEnrollments = enrollments.countByCourseIdAndStatusIn(id, List.of(EnrollmentStatus.ACTIVE, EnrollmentStatus.PENDING, EnrollmentStatus.COMPLETED, EnrollmentStatus.DROPPED));
+        if (totalEnrollments > 0) {
+            throw new BusinessRuleException("Không thể xóa vĩnh viễn khóa học đã có " + totalEnrollments + " học viên ghi danh. Vui lòng chọn ngừng hoạt động.");
+        }
+        var sessions = classSessions.findByCourseIdOrderBySessionNo(id);
+        boolean hasRunningSessions = sessions.stream().anyMatch(s -> s.getStatus() == SessionStatus.COMPLETED || s.getStatus() == SessionStatus.IN_PROGRESS);
+        if (hasRunningSessions) {
+            throw new BusinessRuleException("Không thể xóa vĩnh viễn khóa học đã có buổi học diễn ra.");
+        }
+        classSessions.deleteAll(sessions);
+        classTeachers.deleteAll(classTeachers.findByCourseIdOrderByIsPrimaryDescAssignedAtAsc(id));
+        courseStudentSupports.deleteAll(courseStudentSupports.findByCourseIdOrderByAssignedAtAsc(id));
+        courses.delete(course);
     }
 
     private Course find(UUID id) {

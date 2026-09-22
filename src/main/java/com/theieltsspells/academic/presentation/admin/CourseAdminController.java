@@ -79,6 +79,21 @@ public class CourseAdminController {
         return ResponseEntity.noContent().build();
     }
 
+    @PutMapping("/{id}/restore")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'course.manage')")
+    @Operation(summary = "Khôi phục khóa học đã ngừng hoạt động")
+    public CourseResponse restore(@PathVariable UUID id) {
+        return service.restore(id);
+    }
+
+    @DeleteMapping("/{id}/permanent")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'course.manage')")
+    @Operation(summary = "Xóa vĩnh viễn khóa học rác/trống")
+    public ResponseEntity<Void> deletePermanently(@PathVariable UUID id) {
+        service.deletePermanently(id);
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping("/{id}/teachers")
     @PreAuthorize("@permissionPolicy.hasForCourse(authentication, #id, 'course.read')")
     @Operation(summary = "Danh sách giáo viên chính và giáo viên dạy thay của khóa học")
