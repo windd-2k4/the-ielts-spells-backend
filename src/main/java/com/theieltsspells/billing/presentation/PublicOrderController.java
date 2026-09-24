@@ -21,7 +21,7 @@ public class PublicOrderController {
     private final OrderApplicationService orderService;
 
     @PostMapping("/checkout")
-    @Operation(summary = "Đăng ký khóa học và sinh mã thanh toán VietQR")
+    @Operation(summary = "Đăng ký khóa học và sinh VietQR động để tự động vào học")
     public ResponseEntity<CheckoutResponse> checkout(@Valid @RequestBody CheckoutRequest request) {
         CheckoutResponse response = orderService.checkout(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);

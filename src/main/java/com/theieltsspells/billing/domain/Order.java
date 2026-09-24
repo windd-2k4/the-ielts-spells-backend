@@ -79,6 +79,9 @@ public class Order {
     @Column(name = "invoice_email")
     private String invoiceEmail;
 
+    @Column(name = "pilot_approved", nullable = false)
+    private Boolean pilotApproved = false;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 

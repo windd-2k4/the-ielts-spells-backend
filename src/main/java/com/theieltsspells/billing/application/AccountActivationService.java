@@ -120,7 +120,7 @@ public class AccountActivationService {
         OffsetDateTime now = OffsetDateTime.now();
 
         // 1. Ensure User / Profile exists
-        Profile profile = profileRepository.findByEmailIgnoreCase(normalizedEmail).orElse(null);
+        Profile profile = profileRepository.findFirstByEmailIgnoreCaseOrderByCreatedAtDesc(normalizedEmail).orElse(null);
         UUID userId;
 
         if (profile == null) {
@@ -164,16 +164,12 @@ public class AccountActivationService {
         order.setUserId(userId);
         orderRepository.save(order);
 
-        // 4. Enroll student into the course
-        try {
-            enrollmentService.enroll(new EnrollStudentRequest(
-                    order.getCourseId(),
-                    userId,
-                    "Kích hoạt tự động sau thanh toán đơn hàng " + order.getOrderCode()
-            ));
-        } catch (Exception ex) {
-            log.warn("Học viên đã được ghi danh hoặc lỗi ghi danh: {}", ex.getMessage());
-        }
+        // 4. Enroll student into the course safely
+        enrollmentService.enrollSafely(new EnrollStudentRequest(
+                order.getCourseId(),
+                userId,
+                "Kích hoạt tự động sau thanh toán đơn hàng " + order.getOrderCode()
+        ));
 
         Course course = courseRepository.findById(order.getCourseId()).orElse(null);
 

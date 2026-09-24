@@ -49,6 +49,9 @@ public class PaymentTransaction {
     @Column(name = "transfer_content")
     private String transferContent;
 
+    @Column(name = "payer_name")
+    private String payerName;
+
     @Column(name = "bank_brand_name", length = 50)
     private String bankBrandName;
 

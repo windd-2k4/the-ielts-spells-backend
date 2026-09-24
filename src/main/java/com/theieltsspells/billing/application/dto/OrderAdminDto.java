@@ -1,8 +1,10 @@
 package com.theieltsspells.billing.application.dto;
 
 import com.theieltsspells.billing.domain.InvoiceBuyerType;
+import com.theieltsspells.billing.domain.InvoiceErrorCategory;
 import com.theieltsspells.billing.domain.InvoiceStatus;
 import com.theieltsspells.billing.domain.OrderStatus;
+import com.theieltsspells.billing.domain.ReconciliationStatus;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -27,11 +29,15 @@ public record OrderAdminDto(
         String invoiceTaxCode,
         String invoiceAddress,
         String invoiceEmail,
+        UUID invoiceId,
         InvoiceStatus invoiceStatus,
+        InvoiceErrorCategory invoiceErrorCategory,
+        ReconciliationStatus reconciliationStatus,
         String invoiceNumber,
         String invoiceTemplate,
         String cqtCode,
         String lookupUrl,
         String pdfUrl,
+        Boolean pilotApproved,
         OffsetDateTime createdAt
 ) {}

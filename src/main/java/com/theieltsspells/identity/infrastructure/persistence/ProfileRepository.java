@@ -12,6 +12,10 @@ public interface ProfileRepository extends JpaRepository<Profile, UUID> {
 
     Optional<Profile> findByEmailIgnoreCase(String email);
 
+    Optional<Profile> findFirstByEmailIgnoreCaseOrderByCreatedAtDesc(String email);
+
+    Optional<Profile> findFirstByEmailIgnoreCase(String email);
+
     Optional<Profile> findByPhone(String phone);
 
     Page<Profile> findByIsActive(Boolean isActive, Pageable pageable);

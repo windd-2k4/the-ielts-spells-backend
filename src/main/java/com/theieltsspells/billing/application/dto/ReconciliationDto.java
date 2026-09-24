@@ -15,6 +15,7 @@ public record ReconciliationDto(
         String orderCode,
         BigDecimal amountIn,
         BigDecimal accumulatedAmount,
+        String payerName,
         String transferContent,
         String bankBrandName,
         String accountNumber,

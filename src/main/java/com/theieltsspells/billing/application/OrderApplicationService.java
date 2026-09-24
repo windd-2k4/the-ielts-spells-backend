@@ -58,10 +58,13 @@ public class OrderApplicationService {
         }
 
         BigDecimal amount = course.getTuitionAmount() != null ? course.getTuitionAmount() : BigDecimal.ZERO;
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessRuleException("Khóa học chưa được cấu hình học phí hợp lệ");
+        }
 
         // Check if an existing profile matches this email
         String normalizedEmail = request.email().trim().toLowerCase(Locale.ROOT);
-        Optional<Profile> existingProfile = profileRepository.findByEmailIgnoreCase(normalizedEmail);
+        Optional<Profile> existingProfile = profileRepository.findFirstByEmailIgnoreCaseOrderByCreatedAtDesc(normalizedEmail);
 
         // Generate unique order code: KH + yyMMdd + 4 random digits
         String orderCode = generateOrderCode();
@@ -99,11 +102,13 @@ public class OrderApplicationService {
 
         // Get bank details for VietQR
         BillingSetting settings = billingSettingRepository.findLatest().orElseGet(BillingSetting::new);
-        String bankName = settings.getSepayBankName() != null ? settings.getSepayBankName() : "MBBank";
-        String accountNumber = settings.getSepayAccountNumber() != null ? settings.getSepayAccountNumber() : "0987654321";
-        String accountName = settings.getSellerName() != null ? settings.getSellerName() : "THE IELTS SPELLS";
+        String bankName = requireConfigured(settings.getSepayBankName(), "ngân hàng nhận tiền");
+        String accountNumber = requireConfigured(settings.getSepayAccountNumber(), "số tài khoản nhận tiền");
+        String accountName = requireConfigured(settings.getSellerName(), "tên chủ tài khoản");
 
-        String qrCodeUrl = generateVietQrUrl(bankName, accountNumber, amount, orderCode, accountName);
+        String transferContent = saved.getCustomerName() + " " + saved.getOrderCode();
+        String qrCodeUrl = generateDynamicVietQrUrl(
+                bankName, accountNumber, accountName, saved.getAmount(), transferContent);
 
         return new CheckoutResponse(
                 saved.getId(),
@@ -116,7 +121,7 @@ public class OrderApplicationService {
                 accountNumber,
                 bankName,
                 accountName,
-                saved.getOrderCode(),
+                transferContent,
                 saved.getExpiresAt()
         );
     }
@@ -130,12 +135,15 @@ public class OrderApplicationService {
             throw new BusinessRuleException("Khóa học hiện không mở đăng ký");
         }
 
-        BigDecimal amount = (request.amount() != null && request.amount().compareTo(BigDecimal.ZERO) >= 0)
+        BigDecimal amount = (request.amount() != null && request.amount().compareTo(BigDecimal.ZERO) > 0)
                 ? request.amount()
                 : (course.getTuitionAmount() != null ? course.getTuitionAmount() : BigDecimal.ZERO);
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessRuleException("Số tiền học phí phải lớn hơn 0");
+        }
 
         String normalizedEmail = request.email().trim().toLowerCase(Locale.ROOT);
-        Optional<Profile> existingProfile = profileRepository.findByEmailIgnoreCase(normalizedEmail);
+        Optional<Profile> existingProfile = profileRepository.findFirstByEmailIgnoreCaseOrderByCreatedAtDesc(normalizedEmail);
 
         String orderCode = generateOrderCode();
         OffsetDateTime now = OffsetDateTime.now();
@@ -168,11 +176,13 @@ public class OrderApplicationService {
         Order saved = orderRepository.save(order);
 
         BillingSetting settings = billingSettingRepository.findLatest().orElseGet(BillingSetting::new);
-        String bankName = settings.getSepayBankName() != null ? settings.getSepayBankName() : "MBBank";
-        String accountNumber = settings.getSepayAccountNumber() != null ? settings.getSepayAccountNumber() : "0987654321";
-        String accountName = settings.getSellerName() != null ? settings.getSellerName() : "THE IELTS SPELLS";
+        String bankName = requireConfigured(settings.getSepayBankName(), "ngân hàng nhận tiền");
+        String accountNumber = requireConfigured(settings.getSepayAccountNumber(), "số tài khoản nhận tiền");
+        String accountName = requireConfigured(settings.getSellerName(), "tên chủ tài khoản");
 
-        String qrCodeUrl = generateVietQrUrl(bankName, accountNumber, amount, orderCode, accountName);
+        String transferContent = saved.getCustomerName() + " " + saved.getOrderCode();
+        String qrCodeUrl = generateDynamicVietQrUrl(
+                bankName, accountNumber, accountName, saved.getAmount(), transferContent);
 
         return new CheckoutResponse(
                 saved.getId(),
@@ -185,7 +195,7 @@ public class OrderApplicationService {
                 accountNumber,
                 bankName,
                 accountName,
-                saved.getOrderCode(),
+                transferContent,
                 saved.getExpiresAt()
         );
     }
@@ -203,6 +213,27 @@ public class OrderApplicationService {
                 .toList();
     }
 
+    /**
+     * QR tài khoản doanh nghiệp dùng lâu dài. QR này không tạo đơn hàng, không
+     * gắn khóa học và không khóa số tiền; mọi khoản tiền vào vẫn được webhook
+     * ghi nhận và lập hóa đơn độc lập theo số tiền thực nhận.
+     */
+    public StaticQrResponse getStaticTuitionQr() {
+        BillingSetting settings = billingSettingRepository.findLatest().orElseGet(BillingSetting::new);
+        String bankName = requireConfigured(settings.getSepayBankName(), "ngân hàng nhận tiền");
+        String accountNumber = requireConfigured(settings.getSepayAccountNumber(), "số tài khoản nhận tiền");
+        String accountName = requireConfigured(settings.getSellerName(), "tên chủ tài khoản");
+
+        return new StaticQrResponse(
+                generateStaticVietQrUrl(bankName, accountNumber, accountName),
+                accountNumber,
+                bankName,
+                accountName,
+                "Họ và tên học viên",
+                "Đóng học phí đào tạo IELTS"
+        );
+    }
+
     public OrderStatusResponse getOrderStatus(String orderCode) {
         Order order = orderRepository.findByOrderCode(orderCode)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng: " + orderCode));
@@ -215,7 +246,7 @@ public class OrderApplicationService {
         Course course = courseRepository.findById(order.getCourseId()).orElse(null);
         String courseTitle = course != null ? course.getName() : "Khóa học IELTS";
 
-        ElectronicInvoice invoice = invoiceRepository.findByOrderId(order.getId()).orElse(null);
+        ElectronicInvoice invoice = invoiceRepository.findFirstByOrderIdOrderByCreatedAtDesc(order.getId()).orElse(null);
 
         return new OrderStatusResponse(
                 order.getOrderCode(),
@@ -283,7 +314,7 @@ public class OrderApplicationService {
 
     private OrderAdminDto toAdminDto(Order order) {
         Course course = courseRepository.findById(order.getCourseId()).orElse(null);
-        ElectronicInvoice invoice = invoiceRepository.findByOrderId(order.getId()).orElse(null);
+        ElectronicInvoice invoice = invoiceRepository.findFirstByOrderIdOrderByCreatedAtDesc(order.getId()).orElse(null);
 
         return new OrderAdminDto(
                 order.getId(),
@@ -304,12 +335,16 @@ public class OrderApplicationService {
                 order.getInvoiceTaxCode(),
                 order.getInvoiceAddress(),
                 order.getInvoiceEmail(),
+                invoice != null ? invoice.getId() : null,
                 invoice != null ? invoice.getStatus() : null,
+                invoice != null ? invoice.getErrorCategory() : null,
+                invoice != null ? invoice.getReconciliationStatus() : null,
                 invoice != null ? invoice.getInvoiceNumber() : null,
                 invoice != null ? invoice.getInvoiceTemplate() : null,
                 invoice != null ? invoice.getCqtCode() : null,
                 invoice != null ? invoice.getLookupUrl() : null,
                 invoice != null ? invoice.getPdfUrl() : null,
+                order.getPilotApproved(),
                 order.getCreatedAt()
         );
     }
@@ -326,16 +361,39 @@ public class OrderApplicationService {
         return "KH" + System.currentTimeMillis();
     }
 
-    private String generateVietQrUrl(String bank, String accountNo, BigDecimal amount, String content, String accountName) {
-        // VietQR compact2 format
+    private String generateStaticVietQrUrl(String bank, String accountNo, String accountName) {
+        // QR tĩnh: học viên tự nhập số tiền (cọc/đóng nhiều lần) và nội dung chuyển khoản.
         String cleanBank = bank.replaceAll("\\s+", "");
         String encodedAccountName = URLEncoder.encode(accountName, StandardCharsets.UTF_8);
-        String encodedContent = URLEncoder.encode(content, StandardCharsets.UTF_8);
-        long amountLong = amount.longValue();
 
         return String.format(
-                "https://img.vietqr.io/image/%s-%s-compact2.png?amount=%d&addInfo=%s&accountName=%s",
-                cleanBank, accountNo, amountLong, encodedContent, encodedAccountName
+                "https://img.vietqr.io/image/%s-%s-compact2.png?accountName=%s",
+                cleanBank, accountNo, encodedAccountName
         );
+    }
+
+    private String generateDynamicVietQrUrl(
+            String bank,
+            String accountNo,
+            String accountName,
+            BigDecimal amount,
+            String transferContent
+    ) {
+        String cleanBank = bank.replaceAll("\\s+", "");
+        String encodedAccountName = URLEncoder.encode(accountName, StandardCharsets.UTF_8);
+        String encodedTransferContent = URLEncoder.encode(transferContent, StandardCharsets.UTF_8);
+        String encodedAmount = amount.stripTrailingZeros().toPlainString();
+
+        return String.format(
+                "https://img.vietqr.io/image/%s-%s-compact2.png?amount=%s&addInfo=%s&accountName=%s",
+                cleanBank, accountNo, encodedAmount, encodedTransferContent, encodedAccountName
+        );
+    }
+
+    private String requireConfigured(String value, String fieldName) {
+        if (value == null || value.isBlank()) {
+            throw new BusinessRuleException("Chưa cấu hình " + fieldName + " cho QR học phí");
+        }
+        return value.trim();
     }
 }
