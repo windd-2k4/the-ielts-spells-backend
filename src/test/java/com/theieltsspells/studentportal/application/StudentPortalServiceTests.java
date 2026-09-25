@@ -2,6 +2,7 @@ package com.theieltsspells.studentportal.application;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.theieltsspells.shared.application.BusinessRuleException;
+import com.theieltsspells.shared.application.ResourceNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 
@@ -79,6 +80,18 @@ class StudentPortalServiceTests {
                 });
         assertThat(result.readingAssignments()).isEmpty();
         verify(jdbc).queryForObject(any(String.class), eq(String.class), eq(studentId));
+    }
+
+    @Test
+    void rejectsCourseSessionsWhenTheStudentIsNotEnrolled() {
+        UUID studentId = UUID.randomUUID();
+        UUID courseId = UUID.randomUUID();
+        when(jdbc.queryForObject(any(String.class), eq(Boolean.class), eq(studentId), eq(courseId)))
+                .thenReturn(false);
+
+        assertThatThrownBy(() -> service.courseSessions(studentId, courseId))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage("Không tìm thấy khóa học trong danh sách ghi danh");
     }
 
     @Test

@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
+import com.theieltsspells.studentportal.application.dto.StudentCourseResponse;
+import com.theieltsspells.studentportal.application.dto.StudentCourseSessionResponse;
 import com.theieltsspells.studentportal.application.dto.StudentPortalOverviewResponse;
 import com.theieltsspells.studentportal.application.dto.StudentTargetBandResponse;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +40,76 @@ public class StudentPortalService {
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("Không thể đọc dữ liệu tổng quan học viên", exception);
         }
+    }
+
+    public List<StudentCourseResponse> courses(UUID studentId) {
+        return jdbc.query("""
+                select course.id, course.code, course.name, course.description, course.level,
+                  course.skill_pair::text skill_pair, course.target_band, course.total_sessions,
+                  course.tuition_amount, course.capacity, course.starts_on, course.ends_on,
+                  course.status::text course_status,
+                  case when exists (
+                    select 1 from public.enrollments enrollment
+                    where enrollment.course_id = course.id and enrollment.student_id = ?
+                      and enrollment.status <> 'WITHDRAWN'
+                  ) then course.default_zoom_url else null end default_zoom_url
+                from public.courses course
+                where course.is_public = true and course.is_active = true
+                order by course.starts_on, course.code
+                """, (rs, ignored) -> new StudentCourseResponse(
+                rs.getObject("id", UUID.class),
+                rs.getString("code"),
+                rs.getString("name"),
+                rs.getString("description"),
+                rs.getString("level"),
+                rs.getString("skill_pair"),
+                rs.getBigDecimal("target_band"),
+                rs.getObject("total_sessions", Short.class),
+                rs.getBigDecimal("tuition_amount"),
+                rs.getObject("capacity", Short.class),
+                rs.getObject("starts_on", LocalDate.class),
+                rs.getObject("ends_on", LocalDate.class),
+                rs.getString("course_status"),
+                rs.getString("default_zoom_url")
+        ), studentId);
+    }
+
+    public List<StudentCourseSessionResponse> courseSessions(UUID studentId, UUID courseId) {
+        Boolean enrolled = jdbc.queryForObject("""
+                select exists (
+                  select 1 from public.enrollments
+                  where student_id = ? and course_id = ? and status <> 'WITHDRAWN'
+                )
+                """, Boolean.class, studentId, courseId);
+        if (!Boolean.TRUE.equals(enrolled)) {
+            throw new ResourceNotFoundException("Không tìm thấy khóa học trong danh sách ghi danh");
+        }
+
+        return jdbc.query("""
+                select session.id, session.course_id, session.session_no, session.title,
+                  session.starts_at, session.ends_at, session.status::text session_status,
+                  session.phase_name, coalesce(session.zoom_url, course.default_zoom_url) zoom_url,
+                  coalesce(session_teacher.full_name, primary_teacher.full_name) teacher_name
+                from public.course_sessions session
+                join public.courses course on course.id = session.course_id
+                left join public.profiles session_teacher on session_teacher.id = session.teacher_id
+                left join public.course_teachers primary_assignment
+                  on primary_assignment.course_id = course.id and primary_assignment.is_primary = true
+                left join public.profiles primary_teacher on primary_teacher.id = primary_assignment.teacher_id
+                where session.course_id = ?
+                order by session.session_no
+                """, (rs, ignored) -> new StudentCourseSessionResponse(
+                rs.getObject("id", UUID.class),
+                rs.getObject("course_id", UUID.class),
+                rs.getObject("session_no", Short.class),
+                rs.getString("title"),
+                rs.getObject("starts_at", OffsetDateTime.class),
+                rs.getObject("ends_at", OffsetDateTime.class),
+                rs.getString("zoom_url"),
+                rs.getString("session_status"),
+                rs.getString("phase_name"),
+                rs.getString("teacher_name")
+        ), courseId);
     }
 
     private String overviewSql() {
