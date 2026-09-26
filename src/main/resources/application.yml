@@ -72,7 +72,7 @@ app:
     supabase-bucket: ${SUPABASE_STORAGE_BUCKET:learning-library}
   ai:
     connect-timeout-seconds: ${AI_CONNECT_TIMEOUT_SECONDS:10}
-    import-timeout-seconds: ${AI_IMPORT_TIMEOUT_SECONDS:120}
+    import-timeout-seconds: ${AI_IMPORT_TIMEOUT_SECONDS:${AI_READ_TIMEOUT_SECONDS:120}}
     chat-timeout-seconds: ${AI_CHAT_TIMEOUT_SECONDS:30}
     quiz-timeout-seconds: ${AI_QUIZ_TIMEOUT_SECONDS:60}
     import-providers: ${AI_IMPORT_PROVIDERS:GEMINI,NVIDIA}
@@ -88,9 +88,9 @@ app:
     gemini:
       api-key: ${GEMINI_API_KEY:}
       base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com/v1beta}
-      import-models: ${GEMINI_IMPORT_MODELS:${GEMINI_MODEL:gemini-3.5-flash-lite,gemini-2.5-flash,gemini-3.5-flash,gemini-3.1-flash-lite}}
-      chat-models: ${GEMINI_CHAT_MODELS:gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite,gemini-2.5-flash}
-      quiz-models: ${GEMINI_QUIZ_MODELS:gemini-3.5-flash,gemini-2.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite}
+      import-models: ${GEMINI_IMPORT_MODELS:${GEMINI_MODEL:gemini-2.5-flash,gemini-flash-latest,gemini-2.5-pro}}
+      chat-models: ${GEMINI_CHAT_MODELS:gemini-2.5-flash-lite,gemini-2.5-flash,gemini-flash-latest}
+      quiz-models: ${GEMINI_QUIZ_MODELS:gemini-2.5-flash,gemini-flash-latest,gemini-2.5-pro}
     nvidia:
       api-key: ${NVIDIA_API_KEY:}
       base-url: ${NVIDIA_BASE_URL:https://integrate.api.nvidia.com/v1}

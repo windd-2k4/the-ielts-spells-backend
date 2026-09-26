@@ -44,6 +44,9 @@ public class GeminiAiModelClient extends AbstractHttpAiModelClient implements Ai
         if (request.temperature() != null && !model.startsWith("gemini-3.5")) {
             generationConfig.put("temperature", request.temperature());
         }
+        if (request.disableReasoning() && (model.startsWith("gemini-2.5") || model.startsWith("gemini-2.0"))) {
+            generationConfig.put("thinkingConfig", Map.of("thinkingBudget", 0));
+        }
         Map<String, Object> body = Map.of(
                 "contents", List.of(Map.of("parts", List.of(Map.of(
                         "text", request.systemPrompt() + "\n" + request.userPrompt()
@@ -78,7 +81,18 @@ public class GeminiAiModelClient extends AbstractHttpAiModelClient implements Ai
                 throw new AiProviderException(AiProviderException.Kind.INVALID_RESPONSE,
                         "Gemini response has no content");
             }
-            String content = text(map(parts.getFirst()).get("text"));
+            StringBuilder contentBuilder = new StringBuilder();
+            for (Object p : parts) {
+                Map<?, ?> partMap = map(p);
+                if (Boolean.TRUE.equals(partMap.get("thought"))) {
+                    continue;
+                }
+                String t = text(partMap.get("text"));
+                if (!t.isBlank()) {
+                    contentBuilder.append(t);
+                }
+            }
+            String content = contentBuilder.toString().trim();
             if (content.isBlank()) {
                 throw new AiProviderException(AiProviderException.Kind.INVALID_RESPONSE,
                         "Gemini response has empty content");

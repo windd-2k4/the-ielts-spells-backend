@@ -169,6 +169,107 @@ class AiTestParserServiceTests {
     }
 
     @Test
+    void offlineParserExtractsExplanationEvidenceAndKeywordsAndMapsAnswer() {
+        String rawText = """
+                Bioluminescence in Nature
+
+                Unlike incandescence, which produces light through heat, bioluminescence is a form of 'cold light' produced by living organisms through chemical oxidation reactions.
+
+                Questions 1-1
+                Choose the correct letter, A, B, C or D.
+                1. According to the first paragraph, bioluminescence is:
+                A. Produced through heat
+                B. A form of cold light
+                C. Common only in terrestrial creatures
+                D. Dependent on high thermal energy
+
+                Đáp án đúng: B
+                Giải thích chi tiết đáp án:
+                Thông tin nằm ở câu thứ hai của đoạn 1: bioluminescence tạo ra ánh sáng lạnh (cold light), ít sinh nhiệt, trái ngược với incandescence (tạo nhiệt).
+                Trích đoạn chứa đáp án:
+                "Unlike incandescence, which produces light through heat, bioluminescence is a form of 'cold light'..."
+                Keywords:
+                heatless illumination, chemical reaction, oxidation
+                """;
+
+        var result = service.parse(new AiTestParseRequest(
+                rawText, SkillType.READING, "PASSAGE_1", null, null, AiParserProvider.OFFLINE_REGEX, null
+        ));
+
+        assertThat(result.questionCount()).isEqualTo(1);
+        Map<?, ?> group = groups(result.builderContent(), "passages").getFirst();
+        Map<?, ?> question = maps(group.get("questions")).getFirst();
+
+        assertThat(question.get("prompt")).isEqualTo("According to the first paragraph, bioluminescence is:");
+        assertThat(question.get("isComplete")).isEqualTo(true);
+        assertThat(question.get("hasError")).isEqualTo(false);
+
+        String optionBId = maps(question.get("options")).stream()
+                .filter(opt -> "B".equals(opt.get("label")))
+                .map(opt -> String.valueOf(opt.get("id")))
+                .findFirst().orElseThrow();
+        assertThat(strings(question.get("correctAnswers"))).containsExactly(optionBId);
+
+        assertThat(String.valueOf(question.get("explanation")))
+                .contains("Thông tin nằm ở câu thứ hai của đoạn 1");
+
+        assertThat(String.valueOf(question.get("vocabularyNotes")))
+                .contains("heatless illumination, chemical reaction, oxidation");
+
+        List<Map<?, ?>> spans = maps(question.get("evidenceSpans"));
+        assertThat(spans).hasSize(1);
+        assertThat(String.valueOf(spans.getFirst().get("quote")))
+                .isEqualTo("Unlike incandescence, which produces light through heat, bioluminescence is a form of 'cold light'...");
+        assertThat(spans.getFirst().get("mode")).isEqualTo("DIRECT_QUOTE");
+        assertThat(spans.getFirst().get("start")).isNotNull();
+        assertThat(spans.getFirst().get("end")).isNotNull();
+    }
+
+    @Test
+    void aiNormalizerExtractsExplanationEvidenceAndKeywords() {
+        Map<String, Object> parsed = Map.of(
+                "title", "Imported passage",
+                "passages", List.of(Map.of(
+                        "passageNo", 1,
+                        "title", "Bioluminescence",
+                        "content", "Unlike incandescence, bioluminescence is cold light.",
+                        "questionGroups", List.of(Map.of(
+                                "title", "Questions 1-1",
+                                "typeFormat", "MULTIPLE_CHOICE",
+                                "questions", List.of(
+                                        Map.of(
+                                                "number", 1,
+                                                "prompt", "Bioluminescence is:",
+                                                "options", List.of(Map.of("label", "A", "text", "Hot"), Map.of("label", "B", "text", "Cold light")),
+                                                "correctAnswers", "B",
+                                                "explanation", "Detailed explanation here",
+                                                "evidenceQuote", "bioluminescence is cold light",
+                                                "vocabularyNotes", "cold light, emission",
+                                                "trapAnalysis", "Option A is wrong because heat is not produced"
+                                        )
+                                )
+                        ))
+                ))
+        );
+
+        Map<String, Object> content = service.normalizeAiBuilderContent(
+                parsed, "raw", SkillType.READING, "PASSAGE_1", new ArrayList<>()
+        );
+
+        Map<?, ?> group = groups(content, "passages").getFirst();
+        Map<?, ?> question = maps(group.get("questions")).getFirst();
+
+        assertThat(question.get("explanation")).isEqualTo("Detailed explanation here");
+        assertThat(question.get("vocabularyNotes")).isEqualTo("cold light, emission");
+        assertThat(question.get("trapAnalysis")).isEqualTo("Option A is wrong because heat is not produced");
+        List<Map<?, ?>> spans = maps(question.get("evidenceSpans"));
+        assertThat(spans).hasSize(1);
+        assertThat(spans.getFirst().get("quote")).isEqualTo("bioluminescence is cold light");
+        assertThat(spans.getFirst().get("start")).isNotNull();
+        assertThat(spans.getFirst().get("end")).isNotNull();
+    }
+
+    @Test
     void promptIncludesEscapedTeacherGuidanceWithoutWeakeningParserRules() {
         String prompt = service.buildSystemPrompt(
                 SkillType.READING,
