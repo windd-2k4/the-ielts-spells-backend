@@ -176,6 +176,15 @@ public class SepayEInvoiceClient {
             Integer remainingQuota
     ) {}
 
+    public record DownloadResult(
+            boolean success,
+            String fileType,
+            String fileName,
+            byte[] content,
+            String errorCode,
+            String errorMessage
+    ) {}
+
     private HttpResponse<String> sendWithAuth(BillingSetting settings, RequestFactory requestFactory) throws Exception {
         String token = tokenService.getAccessToken(settings);
         HttpRequest request = requestFactory.create(token);
@@ -211,14 +220,14 @@ public class SepayEInvoiceClient {
             );
 
             if (response.statusCode() != 200) {
-                log.error("Lỗi lấy danh sách Provider Accounts (HTTP {}): {}", response.statusCode(), response.body());
-                return Collections.emptyList();
+                log.error("Lỗi lấy danh sách Provider Accounts (HTTP {}). Nội dung phản hồi đã được ẩn.", response.statusCode());
+                throw new IllegalStateException("SePay từ chối truy vấn Provider Account (HTTP " + response.statusCode() + ")");
             }
 
             JsonNode root = objectMapper.readTree(response.body());
             JsonNode items = root.path("data").path("items");
             if (!items.isArray()) {
-                return Collections.emptyList();
+                throw new IllegalStateException("SePay trả về dữ liệu Provider Account không đúng định dạng");
             }
 
             List<ProviderAccountDto> result = new ArrayList<>();
@@ -237,9 +246,11 @@ public class SepayEInvoiceClient {
             }
 
             return result;
+        } catch (IllegalStateException ex) {
+            throw ex;
         } catch (Exception ex) {
             log.error("Ngoại lệ khi lấy danh sách Provider Accounts từ SePay: {}", ex.getMessage());
-            return Collections.emptyList();
+            throw new IllegalStateException("Không thể đọc danh sách Provider Account từ SePay", ex);
         }
     }
 
@@ -265,28 +276,30 @@ public class SepayEInvoiceClient {
             );
 
             if (response.statusCode() != 200) {
-                log.warn("Không thể lấy chi tiết Provider Account {} (HTTP {}): {}", providerAccountId, response.statusCode(), response.body());
-                return Collections.emptyList();
+                log.warn("Không thể lấy chi tiết Provider Account {} (HTTP {}). Nội dung phản hồi đã được ẩn.", providerAccountId, response.statusCode());
+                throw new IllegalStateException("SePay từ chối truy vấn chi tiết Provider Account (HTTP " + response.statusCode() + ")");
             }
 
             JsonNode root = objectMapper.readTree(response.body());
             JsonNode templatesNode = root.path("data").path("templates");
             if (!templatesNode.isArray()) {
-                return Collections.emptyList();
+                throw new IllegalStateException("SePay trả về dữ liệu mẫu hóa đơn không đúng định dạng");
             }
 
             List<TemplateDto> list = new ArrayList<>();
             for (JsonNode t : templatesNode) {
                 String tCode = t.path("template_code").asText("1");
                 String series = t.path("invoice_series").asText("");
-                String name = t.path("template_name").asText(t.path("name").asText(""));
+                String name = t.path("template_name").asText(t.path("invoice_label").asText(t.path("name").asText("")));
                 Integer rate = t.has("tax_rate") && !t.path("tax_rate").isNull() ? t.path("tax_rate").asInt() : null;
                 list.add(new TemplateDto(tCode, series, name, rate));
             }
             return list;
+        } catch (IllegalStateException ex) {
+            throw ex;
         } catch (Exception ex) {
             log.warn("Ngoại lệ khi lấy templates cho provider {}: {}", providerAccountId, ex.getMessage());
-            return Collections.emptyList();
+            throw new IllegalStateException("Không thể đọc chi tiết Provider Account từ SePay", ex);
         }
     }
 
@@ -328,27 +341,61 @@ public class SepayEInvoiceClient {
             if (providers.isEmpty()) {
                 return new ConnectionTestResult(
                         false,
-                        "Kết nối thành công tới SePay nhưng không tìm thấy Provider Account nào trên tài khoản",
+                        "Client ID/Secret Sandbox đã xác thực thành công, nhưng API /v1/provider-accounts trả về danh sách rỗng. "
+                                + "Tài khoản SePay này chưa được gắn Provider Account Sandbox; hãy yêu cầu SePay/Mắt Bão kích hoạt tài khoản nhà cung cấp thử nghiệm. "
+                                + "Không sử dụng UUID ví dụ trong tài liệu.",
                         null, null, null, null, null, null
                 );
             }
 
+            String configuredProviderId = settings.getActiveProviderAccountId();
             ProviderAccountDto activeProvider = providers.stream()
                     .filter(ProviderAccountDto::active)
+                    .filter(provider -> configuredProviderId == null || configuredProviderId.isBlank()
+                            || provider.id().equals(configuredProviderId))
                     .findFirst()
-                    .orElse(providers.get(0));
-
-            String templateCode = "1";
-            String series = "";
-            if (!activeProvider.templates().isEmpty()) {
-                TemplateDto first = activeProvider.templates().get(0);
-                templateCode = first.templateCode();
-                series = first.invoiceSeries();
+                    .orElse(null);
+            if (activeProvider == null) {
+                return new ConnectionTestResult(
+                        false,
+                        configuredProviderId == null || configuredProviderId.isBlank()
+                                ? "Có Provider Account nhưng chưa có tài khoản nào ở trạng thái active"
+                                : "Provider Account cấu hình không tồn tại hoặc chưa active",
+                        null, null, null, null, null, null
+                );
             }
+
+            if (activeProvider.templates() == null || activeProvider.templates().isEmpty()) {
+                return new ConnectionTestResult(
+                        false,
+                        "Provider Account đã active nhưng chưa có mẫu số/ký hiệu hóa đơn khả dụng",
+                        activeProvider.provider(), activeProvider.id(), null, null,
+                        activeProvider.taxAuthorityApprovedDate(), null
+                );
+            }
+            String configuredTemplate = settings.getActiveTemplateCode();
+            String configuredSeries = settings.getActiveInvoiceSeries();
+            TemplateDto selectedTemplate = activeProvider.templates().stream()
+                    .filter(template -> configuredTemplate == null || configuredTemplate.isBlank()
+                            || configuredTemplate.equals(template.templateCode()))
+                    .filter(template -> configuredSeries == null || configuredSeries.isBlank()
+                            || configuredSeries.equals(template.invoiceSeries()))
+                    .findFirst()
+                    .orElse(null);
+            if (selectedTemplate == null) {
+                return new ConnectionTestResult(
+                        false,
+                        "Mẫu số/ký hiệu cấu hình không tồn tại trên Provider Account đang active",
+                        activeProvider.provider(), activeProvider.id(), null, null,
+                        activeProvider.taxAuthorityApprovedDate(), null
+                );
+            }
+            String templateCode = selectedTemplate.templateCode();
+            String series = selectedTemplate.invoiceSeries();
 
             Integer quota = getRemainingQuota(settings);
 
-            boolean isProd = Boolean.FALSE.equals(settings.getIsSandbox());
+            boolean isProd = settings.isProductionContext();
             String envName = isProd ? "Production" : "Sandbox";
 
             return new ConnectionTestResult(
@@ -444,17 +491,18 @@ public class SepayEInvoiceClient {
                             .build()
             );
 
-            log.info("Phản hồi POST /v1/invoices/create (HTTP {}): {}", response.statusCode(), response.body());
+            log.info("POST /v1/invoices/create [ref={}] hoàn tất với HTTP {}. Nội dung phản hồi không được ghi log.",
+                    p.referenceCode(), response.statusCode());
 
             if (response.statusCode() != 200 && response.statusCode() != 202) {
                 String errBody = response.body();
                 try {
                     JsonNode errNode = objectMapper.readTree(errBody);
                     String errCode = errNode.path("error").path("code").asText("HTTP_" + response.statusCode());
-                    String errMsg = errNode.path("error").path("message").asText(errBody);
+                    String errMsg = errNode.path("error").path("message").asText("SePay từ chối tạo hóa đơn");
                     return new CreateResult(false, null, errCode, errMsg);
                 } catch (Exception e) {
-                    return new CreateResult(false, null, "HTTP_" + response.statusCode(), errBody);
+                    return new CreateResult(false, null, "HTTP_" + response.statusCode(), "SePay trả về HTTP " + response.statusCode());
                 }
             }
 
@@ -505,10 +553,10 @@ public class SepayEInvoiceClient {
                 try {
                     JsonNode errNode = objectMapper.readTree(errBody);
                     String errCode = errNode.path("error").path("code").asText("HTTP_" + response.statusCode());
-                    String errMsg = errNode.path("error").path("message").asText(errBody);
+                    String errMsg = errNode.path("error").path("message").asText("Không thể lấy chi tiết hóa đơn từ SePay");
                     return InvoiceDetailResult.error(errCode, errMsg);
                 } catch (Exception e) {
-                    return InvoiceDetailResult.error("HTTP_" + response.statusCode(), errBody);
+                    return InvoiceDetailResult.error("HTTP_" + response.statusCode(), "SePay trả về HTTP " + response.statusCode());
                 }
             }
 
@@ -559,8 +607,8 @@ public class SepayEInvoiceClient {
             );
 
             if (response.statusCode() != 200) {
-                log.warn("Lỗi kiểm tra create status tracking {} (HTTP {}): {}", trackingCode, response.statusCode(), response.body());
-                return CheckStatusResult.failed("HTTP_" + response.statusCode(), response.body());
+                log.warn("Lỗi kiểm tra create status tracking {} (HTTP {}). Nội dung phản hồi đã được ẩn.", trackingCode, response.statusCode());
+                return CheckStatusResult.failed("HTTP_" + response.statusCode(), "SePay trả về HTTP " + response.statusCode());
             }
 
             JsonNode root = objectMapper.readTree(response.body());
@@ -635,17 +683,18 @@ public class SepayEInvoiceClient {
                             .build()
             );
 
-            log.info("Phản hồi POST /v1/invoices/issue (HTTP {}): {}", response.statusCode(), response.body());
+            log.info("POST /v1/invoices/issue [ref={}] hoàn tất với HTTP {}. Nội dung phản hồi không được ghi log.",
+                    referenceCode, response.statusCode());
 
             if (response.statusCode() != 200 && response.statusCode() != 202) {
                 String errBody = response.body();
                 try {
                     JsonNode errNode = objectMapper.readTree(errBody);
                     String errCode = errNode.path("error").path("code").asText("HTTP_" + response.statusCode());
-                    String errMsg = errNode.path("error").path("message").asText(errBody);
+                    String errMsg = errNode.path("error").path("message").asText("SePay từ chối phát hành hóa đơn nháp");
                     return new IssueDraftResult(false, null, errCode, errMsg);
                 } catch (Exception e) {
-                    return new IssueDraftResult(false, null, "HTTP_" + response.statusCode(), errBody);
+                    return new IssueDraftResult(false, null, "HTTP_" + response.statusCode(), "SePay trả về HTTP " + response.statusCode());
                 }
             }
 
@@ -683,8 +732,8 @@ public class SepayEInvoiceClient {
             );
 
             if (response.statusCode() != 200) {
-                log.warn("Lỗi kiểm tra issue status tracking {} (HTTP {}): {}", trackingCode, response.statusCode(), response.body());
-                return CheckStatusResult.failed("HTTP_" + response.statusCode(), response.body());
+                log.warn("Lỗi kiểm tra issue status tracking {} (HTTP {}). Nội dung phản hồi đã được ẩn.", trackingCode, response.statusCode());
+                return CheckStatusResult.failed("HTTP_" + response.statusCode(), "SePay trả về HTTP " + response.statusCode());
             }
 
             JsonNode root = objectMapper.readTree(response.body());
@@ -749,5 +798,48 @@ public class SepayEInvoiceClient {
     public String getDownloadUrl(BillingSetting settings, String trackingCode, String type) {
         String baseUrl = tokenService.getBaseUrl(settings);
         return String.format("%s/v1/invoices/%s/download?type=%s", baseUrl, trackingCode, type);
+    }
+
+    public DownloadResult downloadInvoiceFile(BillingSetting settings, String trackingCode, String type) {
+        String normalizedType = type == null ? "" : type.trim().toLowerCase(Locale.ROOT);
+        if (!("pdf".equals(normalizedType) || "xml".equals(normalizedType))) {
+            return new DownloadResult(false, null, null, null, "INVALID_TYPE", "Chỉ hỗ trợ tải pdf hoặc xml");
+        }
+
+        String url = getDownloadUrl(settings, trackingCode, normalizedType);
+        try {
+            HttpResponse<String> response = sendWithAuth(settings, token ->
+                    HttpRequest.newBuilder()
+                            .uri(URI.create(url))
+                            .timeout(Duration.ofSeconds(20))
+                            .header("Authorization", "Bearer " + token)
+                            .GET()
+                            .build()
+            );
+            if (response.statusCode() != 200) {
+                log.warn("Không thể tải file {} cho tracking {} (HTTP {}). Nội dung phản hồi đã được ẩn.",
+                        normalizedType, trackingCode, response.statusCode());
+                return new DownloadResult(false, null, null, null,
+                        "HTTP_" + response.statusCode(), "SePay trả về HTTP " + response.statusCode());
+            }
+
+            JsonNode root = objectMapper.readTree(response.body());
+            if (!root.path("success").asBoolean(false)) {
+                return new DownloadResult(false, null, null, null,
+                        root.path("error").path("code").asText("DOWNLOAD_FAILED"),
+                        root.path("error").path("message").asText("SePay từ chối tải file hóa đơn"));
+            }
+            JsonNode data = root.path("data");
+            byte[] content = Base64.getDecoder().decode(data.path("content").asText(""));
+            return new DownloadResult(true,
+                    data.path("file_type").asText(normalizedType),
+                    data.path("file_name").asText(null),
+                    content,
+                    null,
+                    null);
+        } catch (Exception ex) {
+            log.error("Ngoại lệ khi tải file {} cho tracking {}: {}", normalizedType, trackingCode, ex.getMessage());
+            return new DownloadResult(false, null, null, null, "EXCEPTION", ex.getMessage());
+        }
     }
 }

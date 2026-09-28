@@ -231,13 +231,14 @@ public class ElectronicInvoiceService {
                 throw new BusinessRuleException(errMsg);
             }
             if (state == ProductionActivationState.PRODUCTION_PILOT) {
-                boolean pilotApproved = order != null && (Boolean.TRUE.equals(order.getPilotApproved())
-                        || isOrderInPilotAllowlist(order.getOrderCode(), settings.getPilotOrderAllowlist()));
-                if (!pilotApproved) {
-                    String errMsg = "Chế độ PRODUCTION_PILOT chỉ phát hành giao dịch thuộc đơn hàng đã được Admin phê duyệt.";
-                    log.error("[PILOT BLOCKED] {}", errMsg);
+                if (!isPilotApproved(invoice, order, settings)) {
+                    String errMsg = "Chế độ PRODUCTION_PILOT đang chờ Admin phê duyệt hóa đơn này trước khi phát hành thật.";
+                    log.warn("[PILOT PENDING] {}", errMsg);
+                    invoice.setStatus(InvoiceStatus.PILOT_PENDING_APPROVAL);
+                    invoice.setNextRetryAt(null);
+                    invoice.setUpdatedAt(OffsetDateTime.now());
                     recordAudit(invoice.getId(), "ISSUANCE_BLOCKED_PILOT_NOT_APPROVED", "SYSTEM", errMsg, null);
-                    throw new BusinessRuleException(errMsg);
+                    return invoiceRepository.save(invoice);
                 }
             }
         }
@@ -465,9 +466,8 @@ public class ElectronicInvoiceService {
                 throw new BusinessRuleException(errMsg);
             }
             if (state == ProductionActivationState.PRODUCTION_PILOT) {
-                boolean pilotApproved = order != null && (Boolean.TRUE.equals(order.getPilotApproved()) || isOrderInPilotAllowlist(order.getOrderCode(), settings.getPilotOrderAllowlist()));
-                if (!pilotApproved) {
-                    String errMsg = "Chế độ Thử nghiệm có kiểm soát (PRODUCTION_PILOT): Chỉ đơn hàng được Admin phê duyệt mới được phát hành hóa đơn thật.";
+                if (!isPilotApproved(invoice, order, settings)) {
+                    String errMsg = "Chế độ PRODUCTION_PILOT: hóa đơn nháp này chưa được Admin phê duyệt để phát hành thật.";
                     log.error("[PILOT BLOCKED] {}", errMsg);
                     throw new BusinessRuleException(errMsg);
                 }
@@ -943,13 +943,49 @@ public class ElectronicInvoiceService {
                 ? orderRepository.findById(invoice.getOrderId()).orElse(null)
                 : null;
 
+        if (invoice.getStatus() == InvoiceStatus.CANCELLED) {
+            return toAdminDto(invoice, order);
+        }
+
+        boolean neverSubmitted = invoice.getCreateTrackingCode() == null
+                && invoice.getIssueTrackingCode() == null
+                && invoice.getFirstSubmittedAt() == null;
+        boolean locallyCancellable = invoice.getStatus() == InvoiceStatus.PENDING_ISSUE
+                || invoice.getStatus() == InvoiceStatus.PILOT_PENDING_APPROVAL;
+        if (!neverSubmitted || !locallyCancellable) {
+            throw new BusinessRuleException(
+                    "Không thể hủy cục bộ hóa đơn đã gửi SePay/Cơ quan Thuế. "
+                            + "Hãy lập hóa đơn điều chỉnh hoặc thay thế theo quy trình nghiệp vụ của nhà cung cấp HĐĐT."
+            );
+        }
+
         invoice.setStatus(InvoiceStatus.CANCELLED);
-        invoice.setErrorLog("Đã hủy bởi quản trị viên: " + (reason != null ? reason : "Không có lý do"));
+        invoice.setErrorLog("Đã hủy yêu cầu chưa gửi SePay bởi quản trị viên: " + (reason != null ? reason : "Không có lý do"));
         invoice.setUpdatedAt(OffsetDateTime.now());
         invoiceRepository.save(invoice);
 
-        recordAudit(invoice.getId(), "CANCEL_INVOICE", "ADMIN", "Hủy hóa đơn: " + reason, null);
+        recordAudit(invoice.getId(), "CANCEL_PENDING_INVOICE", "ADMIN", "Hủy yêu cầu hóa đơn chưa gửi: " + reason, null);
 
+        return toAdminDto(invoice, order);
+    }
+
+    @Transactional
+    public InvoiceAdminDto approvePilotInvoice(UUID invoiceId) {
+        ElectronicInvoice invoice = invoiceRepository.findById(invoiceId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hóa đơn: " + invoiceId));
+        Order order = invoice.getOrderId() != null
+                ? orderRepository.findById(invoice.getOrderId()).orElse(null)
+                : null;
+
+        invoice.setPilotApproved(true);
+        if (invoice.getStatus() == InvoiceStatus.PILOT_PENDING_APPROVAL) {
+            invoice.setStatus(InvoiceStatus.PENDING_ISSUE);
+            invoice.setNextRetryAt(OffsetDateTime.now());
+        }
+        invoice.setUpdatedAt(OffsetDateTime.now());
+        invoiceRepository.save(invoice);
+        recordAudit(invoice.getId(), "PILOT_INVOICE_APPROVED", "ADMIN",
+                "Admin phê duyệt hóa đơn cho đợt Production Pilot", null);
         return toAdminDto(invoice, order);
     }
 
@@ -1052,7 +1088,7 @@ public class ElectronicInvoiceService {
                 if (inv.getTotalAmount() != null) {
                     totalAmount = totalAmount.add(inv.getTotalAmount());
                 }
-            } else if (s == InvoiceStatus.PENDING_ISSUE || s == InvoiceStatus.CREATING || s == InvoiceStatus.PROCESSING || s == InvoiceStatus.ISSUING || s == InvoiceStatus.DRAFT) {
+            } else if (s == InvoiceStatus.PENDING_ISSUE || s == InvoiceStatus.PILOT_PENDING_APPROVAL || s == InvoiceStatus.CREATING || s == InvoiceStatus.PROCESSING || s == InvoiceStatus.ISSUING || s == InvoiceStatus.DRAFT) {
                 pending++;
             } else if (s == InvoiceStatus.FAILED || s == InvoiceStatus.UNKNOWN) {
                 failed++;
@@ -1092,6 +1128,10 @@ public class ElectronicInvoiceService {
         return toAdminDto(invoice, order);
     }
 
+    public Optional<ElectronicInvoice> findByPaymentTransactionId(UUID paymentTransactionId) {
+        return invoiceRepository.findByPaymentTransactionId(paymentTransactionId);
+    }
+
     public InvoiceAdminDto toAdminDto(ElectronicInvoice invoice, Order order) {
         return new InvoiceAdminDto(
                 invoice.getId(),
@@ -1116,6 +1156,7 @@ public class ElectronicInvoiceService {
                 invoice.getXmlUrl(),
                 invoice.getStatus(),
                 invoice.getIsDraft(),
+                invoice.getPilotApproved(),
                 invoice.getRetryCount(),
                 invoice.getCreateTrackingCode(),
                 invoice.getIssueTrackingCode(),
@@ -1142,5 +1183,11 @@ public class ElectronicInvoiceService {
             return false;
         }
         return allowlistJson.contains(orderCode.trim());
+    }
+
+    private boolean isPilotApproved(ElectronicInvoice invoice, Order order, BillingSetting settings) {
+        return Boolean.TRUE.equals(invoice.getPilotApproved())
+                || (order != null && (Boolean.TRUE.equals(order.getPilotApproved())
+                || isOrderInPilotAllowlist(order.getOrderCode(), settings.getPilotOrderAllowlist())));
     }
 }

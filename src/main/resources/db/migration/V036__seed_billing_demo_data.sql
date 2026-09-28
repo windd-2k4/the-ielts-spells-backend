@@ -14,7 +14,10 @@ begin
 
   if v_course_id is null then
     v_course_id := gen_random_uuid();
-    insert into public.courses (id, code, name, description, level, target_band, total_sessions, tuition_amount, is_public, is_active)
+    insert into public.courses (
+      id, code, name, description, level, target_band, total_sessions,
+      tuition_amount, capacity, starts_on, skill_pair, is_public, is_active
+    )
     values (
       v_course_id,
       'IELTS-INTENSIVE-75',
@@ -24,6 +27,9 @@ begin
       7.5,
       36,
       8500000.00,
+      30,
+      current_date + 7,
+      'LISTENING_READING'::public.skill_pair,
       true,
       true
     );

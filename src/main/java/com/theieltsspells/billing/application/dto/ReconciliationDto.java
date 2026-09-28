@@ -1,6 +1,7 @@
 package com.theieltsspells.billing.application.dto;
 
 import com.theieltsspells.billing.domain.PaymentTransactionStatus;
+import com.theieltsspells.billing.domain.InvoiceStatus;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -20,6 +21,9 @@ public record ReconciliationDto(
         String bankBrandName,
         String accountNumber,
         PaymentTransactionStatus status,
+        UUID invoiceId,
+        InvoiceStatus invoiceStatus,
+        Boolean invoicePilotApproved,
         String reconciliationNote,
         Map<String, Object> rawPayload,
         OffsetDateTime createdAt

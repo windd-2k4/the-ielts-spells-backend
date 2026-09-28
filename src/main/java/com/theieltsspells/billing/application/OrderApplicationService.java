@@ -14,6 +14,7 @@ import com.theieltsspells.shared.application.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,10 +27,10 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import jakarta.persistence.criteria.Predicate;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -287,11 +288,139 @@ public class OrderApplicationService {
             return predicates.isEmpty() ? cb.conjunction() : cb.and(predicates.toArray(new Predicate[0]));
         };
 
-        Pageable sortedPageable = pageable.getSort().isSorted()
-                ? pageable
-                : PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), Sort.by(Sort.Direction.DESC, "createdAt"));
+        // Build the requested page only after merging both data sources. Fetching
+        // a single order page first would drop normal orders when a QR-tĩnh row
+        // is inserted before them in the merged result.
+        List<OrderAdminDto> unified = new ArrayList<>(
+                orderRepository.findAll(spec, Sort.by(Sort.Direction.DESC, "createdAt"))
+                        .stream()
+                        .map(this::toAdminDto)
+                        .toList()
+        );
 
-        return orderRepository.findAll(spec, sortedPageable).map(this::toAdminDto);
+        // QR tĩnh không có order_id, nhưng hóa đơn của nó vẫn phải xuất hiện
+        // trong cùng bảng quản trị. Đây là dòng hiển thị ảo, không phải đơn
+        // khóa học giả và không thể kích hoạt quyền học.
+        invoiceRepository.findAll(Sort.by(Sort.Direction.DESC, "createdAt")).stream()
+                .filter(invoice -> invoice.getOrderId() == null)
+                .filter(invoice -> matchesStandaloneInvoice(invoice, query, status, courseId, fromDate, toDate))
+                .map(this::toStandaloneAdminDto)
+                .forEach(unified::add);
+
+        unified.sort(Comparator.comparing(
+                OrderAdminDto::createdAt,
+                Comparator.nullsLast(Comparator.reverseOrder())
+        ));
+
+        int fromIndex = (int) Math.min(pageable.getOffset(), unified.size());
+        int toIndex = Math.min(fromIndex + pageable.getPageSize(), unified.size());
+        return new PageImpl<>(unified.subList(fromIndex, toIndex), pageable, unified.size());
+    }
+
+    private boolean matchesStandaloneInvoice(
+            ElectronicInvoice invoice,
+            String query,
+            OrderStatus status,
+            UUID courseId,
+            LocalDate fromDate,
+            LocalDate toDate
+    ) {
+        if (status != null && status != OrderStatus.PAID) return false;
+        if (courseId != null) return false;
+
+        OffsetDateTime createdAt = invoice.getCreatedAt();
+        if (fromDate != null && createdAt != null
+                && createdAt.isBefore(fromDate.atStartOfDay().atOffset(ZoneOffset.ofHours(7)))) return false;
+        if (toDate != null && createdAt != null
+                && !createdAt.isBefore(toDate.plusDays(1).atStartOfDay().atOffset(ZoneOffset.ofHours(7)))) return false;
+
+        if (query == null || query.isBlank()) return true;
+        String needle = query.trim().toLowerCase(Locale.ROOT);
+        PaymentTransaction transaction = invoice.getPaymentTransaction();
+        String transactionCode = transaction != null ? transaction.getSepayTransactionId() : "";
+        String transferContent = transaction != null ? transaction.getTransferContent() : "";
+        String payerName = transaction != null ? transaction.getPayerName() : "";
+        return contains(needle, "qr-tinh")
+                || contains(needle, "static-" + transactionCode)
+                || contains(needle, invoice.getReferenceCode())
+                || contains(needle, invoice.getInvoiceNumber())
+                || contains(needle, invoice.getCqtCode())
+                || contains(needle, invoice.getLookupCode())
+                || contains(needle, invoice.getBuyerName())
+                || contains(needle, invoice.getBuyerEmail())
+                || contains(needle, payerName)
+                || contains(needle, transferContent);
+    }
+
+    private boolean contains(String needle, String value) {
+        return value != null && value.toLowerCase(Locale.ROOT).contains(needle);
+    }
+
+    private OrderAdminDto toStandaloneAdminDto(ElectronicInvoice invoice) {
+        PaymentTransaction transaction = invoice.getPaymentTransaction();
+        String transactionCode = transaction != null && transaction.getSepayTransactionId() != null
+                ? transaction.getSepayTransactionId()
+                : invoice.getPaymentTransactionId() != null ? invoice.getPaymentTransactionId().toString() : "UNKNOWN";
+        String customerName = firstNonBlank(
+                invoice.getBuyerName(),
+                transaction != null ? transaction.getPayerName() : null,
+                "Khách thanh toán QR tĩnh"
+        );
+        String customerEmail = firstNonBlank(invoice.getBuyerEmail(), "");
+        BigDecimal amount = invoice.getTotalAmount() != null
+                ? invoice.getTotalAmount()
+                : transaction != null ? transaction.getAmountIn() : BigDecimal.ZERO;
+        OffsetDateTime paidAt = transaction != null && transaction.getCreatedAt() != null
+                ? transaction.getCreatedAt()
+                : invoice.getIssuedAt() != null ? invoice.getIssuedAt() : invoice.getCreatedAt();
+        InvoiceBuyerType buyerType = InvoiceBuyerType.PERSONAL;
+        if (invoice.getBuyerType() != null) {
+            try {
+                buyerType = InvoiceBuyerType.valueOf(invoice.getBuyerType().toUpperCase(Locale.ROOT));
+            } catch (IllegalArgumentException ignored) {
+                // Keep PERSONAL for legacy/static invoices with no buyer type.
+            }
+        }
+
+        return new OrderAdminDto(
+                invoice.getId(),
+                "STATIC-" + transactionCode,
+                null,
+                invoice.getProductName() != null ? invoice.getProductName() : "Thanh toán QR tĩnh",
+                null,
+                customerName,
+                customerEmail,
+                invoice.getBuyerPhone(),
+                amount,
+                OrderStatus.PAID,
+                paidAt,
+                paidAt,
+                true,
+                buyerType,
+                invoice.getBuyerLegalName(),
+                invoice.getBuyerTaxCode(),
+                invoice.getBuyerAddress(),
+                invoice.getBuyerEmail(),
+                invoice.getId(),
+                invoice.getStatus(),
+                invoice.getErrorCategory(),
+                invoice.getReconciliationStatus(),
+                invoice.getInvoiceNumber(),
+                invoice.getInvoiceTemplate(),
+                invoice.getCqtCode(),
+                invoice.getLookupUrl(),
+                invoice.getPdfUrl(),
+                invoice.getPilotApproved(),
+                invoice.getCreatedAt(),
+                true
+        );
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) return value;
+        }
+        return "";
     }
 
     public OrderAdminDto getOrderAdmin(UUID id) {
@@ -345,7 +474,8 @@ public class OrderApplicationService {
                 invoice != null ? invoice.getLookupUrl() : null,
                 invoice != null ? invoice.getPdfUrl() : null,
                 order.getPilotApproved(),
-                order.getCreatedAt()
+                order.getCreatedAt(),
+                false
         );
     }
 

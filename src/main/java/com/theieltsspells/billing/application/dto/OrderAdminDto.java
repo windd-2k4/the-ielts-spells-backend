@@ -39,5 +39,6 @@ public record OrderAdminDto(
         String lookupUrl,
         String pdfUrl,
         Boolean pilotApproved,
-        OffsetDateTime createdAt
+        OffsetDateTime createdAt,
+        Boolean standalonePayment
 ) {}

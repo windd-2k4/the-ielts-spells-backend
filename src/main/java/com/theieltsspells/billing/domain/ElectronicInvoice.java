@@ -69,6 +69,9 @@ public class ElectronicInvoice {
     @Column(name = "is_draft", nullable = false)
     private Boolean isDraft = false;
 
+    @Column(name = "pilot_approved", nullable = false)
+    private Boolean pilotApproved = false;
+
     @Column(name = "invoice_template", length = 20)
     private String invoiceTemplate;
 

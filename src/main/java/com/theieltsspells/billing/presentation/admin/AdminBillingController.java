@@ -123,6 +123,14 @@ public class AdminBillingController {
             List<ReadinessCheckItem> checks
     ) {}
 
+    public record SandboxSmokeStep(String name, String status, String details) {}
+
+    public record SandboxSmokeResult(
+            boolean success,
+            String referenceCode,
+            List<SandboxSmokeStep> steps
+    ) {}
+
     // -------------------------------------------------------------------------
     // 1. ORDERS MANAGEMENT
     // -------------------------------------------------------------------------
@@ -201,6 +209,15 @@ public class AdminBillingController {
         order.setPilotApproved(true);
         order.setUpdatedAt(OffsetDateTime.now());
         orderRepository.save(order);
+        invoiceRepository.findFirstByOrderIdOrderByCreatedAtDesc(id).ifPresent(invoice -> {
+            invoice.setPilotApproved(true);
+            if (invoice.getStatus() == InvoiceStatus.PILOT_PENDING_APPROVAL) {
+                invoice.setStatus(InvoiceStatus.PENDING_ISSUE);
+                invoice.setNextRetryAt(OffsetDateTime.now());
+            }
+            invoice.setUpdatedAt(OffsetDateTime.now());
+            invoiceRepository.save(invoice);
+        });
         log.info("[PILOT APPROVAL] Đơn hàng {} đã được Admin phê duyệt cho pilot phát hành HĐĐT thật.", order.getOrderCode());
         return ResponseEntity.ok(orderService.getOrderAdmin(id));
     }
@@ -293,12 +310,26 @@ public class AdminBillingController {
     }
 
     @PostMapping("/invoices/{id}/cancel")
-    @Operation(summary = "Hủy hóa đơn điện tử trên Cơ quan Thuế")
+    @Operation(summary = "Hủy yêu cầu hóa đơn chưa từng gửi SePay (không dùng cho hóa đơn đã phát hành)")
     public ResponseEntity<InvoiceAdminDto> cancelInvoice(
             @PathVariable UUID id,
             @RequestParam(required = false) String reason
     ) {
         return ResponseEntity.ok(invoiceService.cancelInvoice(id, reason));
+    }
+
+    @PostMapping("/invoices/{id}/approve-pilot")
+    @Operation(summary = "Phê duyệt một hóa đơn, gồm cả giao dịch QR tĩnh, cho Production Pilot")
+    public ResponseEntity<InvoiceAdminDto> approvePilotInvoice(@PathVariable UUID id) {
+        return ResponseEntity.ok(invoiceService.approvePilotInvoice(id));
+    }
+
+    @PostMapping("/transactions/{id}/approve-pilot-invoice")
+    @Operation(summary = "Phê duyệt hóa đơn QR tĩnh theo mã giao dịch cho Production Pilot")
+    public ResponseEntity<InvoiceAdminDto> approvePilotInvoiceByTransaction(@PathVariable UUID id) {
+        ElectronicInvoice invoice = invoiceRepository.findByPaymentTransactionId(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Giao dịch chưa có hóa đơn để duyệt Pilot: " + id));
+        return ResponseEntity.ok(invoiceService.approvePilotInvoice(invoice.getId()));
     }
 
     // -------------------------------------------------------------------------
@@ -518,6 +549,161 @@ public class AdminBillingController {
         return ResponseEntity.ok(sepayEInvoiceClient.testConnection(setting));
     }
 
+    @PostMapping("/settings/test-einvoice-sandbox-e2e")
+    @PreAuthorize("hasAuthority('admin')")
+    @Operation(summary = "Chạy vòng đời hóa đơn E2E trên Sandbox bằng cấu hình đã lưu trên web")
+    public ResponseEntity<SandboxSmokeResult> testEinvoiceSandboxE2e(
+            @RequestParam(defaultValue = "false") boolean confirm
+    ) {
+        if (!confirm) {
+            throw new BusinessRuleException("Cần xác nhận tường minh để tạo và phát hành hóa đơn kiểm thử Sandbox");
+        }
+
+        BillingSetting setting = settingsRepository.findFirstByOrderByUpdatedAtDesc().orElseGet(BillingSetting::new);
+        if (setting.isProductionContext()) {
+            throw new BusinessRuleException("Chỉ được chạy kiểm thử E2E khi hệ thống đang ở trạng thái SANDBOX");
+        }
+
+        List<SandboxSmokeStep> steps = new ArrayList<>();
+        String referenceCode = "SMOKE-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        SepayEInvoiceClient.ConnectionTestResult connection = sepayEInvoiceClient.testConnection(setting);
+        if (!connection.success()) {
+            steps.add(new SandboxSmokeStep("CONNECTION", "FAILED", connection.message()));
+            return ResponseEntity.ok(new SandboxSmokeResult(false, referenceCode, steps));
+        }
+        steps.add(new SandboxSmokeStep("CONNECTION", "PASSED", connection.message()));
+
+        SepayEInvoiceClient.CreateInvoicePayload payload = new SepayEInvoiceClient.CreateInvoicePayload(
+                connection.templateCode(),
+                connection.invoiceSeries(),
+                connection.providerAccountId(),
+                referenceCode,
+                "CK",
+                true,
+                "PERSONAL",
+                "Khách hàng kiểm thử Sandbox",
+                null,
+                null,
+                "Việt Nam",
+                "sandbox-test@example.com",
+                null,
+                referenceCode,
+                "IELTS-TUITION",
+                "Đóng học phí đào tạo IELTS",
+                "Khoản",
+                1,
+                1_000L,
+                TaxTreatment.NOT_SUBJECT_TO_VAT.getSepayTaxRate(),
+                "Hóa đơn kiểm thử tự động trên SePay Sandbox"
+        );
+
+        SepayEInvoiceClient.CreateResult created = sepayEInvoiceClient.createInvoice(setting, payload);
+        if (!created.success() || created.trackingCode() == null || created.trackingCode().isBlank()) {
+            steps.add(new SandboxSmokeStep("CREATE_DRAFT", "FAILED", smokeError(created.errorCode(), created.errorMessage())));
+            return ResponseEntity.ok(new SandboxSmokeResult(false, referenceCode, steps));
+        }
+
+        SepayEInvoiceClient.CheckStatusResult createStatus = awaitSandboxStatus(setting, created.trackingCode(), false);
+        if (!createStatus.success() || !createStatus.isDraft()) {
+            steps.add(new SandboxSmokeStep("CREATE_DRAFT", "FAILED", smokeError(createStatus.errorCode(), createStatus.errorMessage())));
+            return ResponseEntity.ok(new SandboxSmokeResult(false, referenceCode, steps));
+        }
+        steps.add(new SandboxSmokeStep("CREATE_DRAFT", "PASSED", "SePay đã tạo hóa đơn nháp"));
+
+        SepayEInvoiceClient.CreateResult duplicate = sepayEInvoiceClient.createInvoice(setting, payload);
+        boolean idempotencyProtected = duplicate.success()
+                || "EINVOICE_DOCUMENT_EXISTED".equalsIgnoreCase(duplicate.errorCode());
+        if (!idempotencyProtected) {
+            steps.add(new SandboxSmokeStep("IDEMPOTENCY", "FAILED", smokeError(duplicate.errorCode(), duplicate.errorMessage())));
+            return ResponseEntity.ok(new SandboxSmokeResult(false, referenceCode, steps));
+        }
+        steps.add(new SandboxSmokeStep("IDEMPOTENCY", "PASSED", "Reference code trùng không tạo hóa đơn ngoài ý muốn"));
+
+        SepayEInvoiceClient.InvoiceDetailResult draftDetail = sepayEInvoiceClient.getInvoiceDetail(setting, referenceCode);
+        if (!draftDetail.success()) {
+            steps.add(new SandboxSmokeStep("GET_DRAFT", "FAILED", smokeError(draftDetail.errorCode(), draftDetail.errorMessage())));
+            return ResponseEntity.ok(new SandboxSmokeResult(false, referenceCode, steps));
+        }
+        steps.add(new SandboxSmokeStep("GET_DRAFT", "PASSED", "Đã đọc lại hóa đơn nháp theo reference_code"));
+
+        SepayEInvoiceClient.IssueDraftResult issued = sepayEInvoiceClient.issueDraft(setting, referenceCode);
+        if (!issued.success() || issued.trackingCode() == null || issued.trackingCode().isBlank()) {
+            steps.add(new SandboxSmokeStep("ISSUE", "FAILED", smokeError(issued.errorCode(), issued.errorMessage())));
+            return ResponseEntity.ok(new SandboxSmokeResult(false, referenceCode, steps));
+        }
+
+        SepayEInvoiceClient.CheckStatusResult issueStatus = awaitSandboxStatus(setting, issued.trackingCode(), true);
+        if (!issueStatus.success() || issueStatus.isDraft()) {
+            steps.add(new SandboxSmokeStep("ISSUE", "FAILED", smokeError(issueStatus.errorCode(), issueStatus.errorMessage())));
+            return ResponseEntity.ok(new SandboxSmokeResult(false, referenceCode, steps));
+        }
+        steps.add(new SandboxSmokeStep("ISSUE", "PASSED", "SePay đã phát hành hóa đơn Sandbox"));
+
+        SepayEInvoiceClient.DownloadResult pdf = downloadSandboxFile(setting, issued.trackingCode(), created.trackingCode(), "pdf");
+        SepayEInvoiceClient.DownloadResult xml = downloadSandboxFile(setting, issued.trackingCode(), created.trackingCode(), "xml");
+        boolean pdfSignatureValid = pdf.success()
+                && pdf.content() != null
+                && pdf.content().length >= 4
+                && pdf.content()[0] == '%'
+                && pdf.content()[1] == 'P'
+                && pdf.content()[2] == 'D'
+                && pdf.content()[3] == 'F';
+        boolean xmlHasContent = xml.success() && xml.content() != null && xml.content().length > 0;
+        if (!pdfSignatureValid || !xmlHasContent) {
+            String error = !pdf.success()
+                    ? smokeError(pdf.errorCode(), pdf.errorMessage())
+                    : !xml.success()
+                    ? smokeError(xml.errorCode(), xml.errorMessage())
+                    : "INVALID_FILE: Nội dung PDF/XML Sandbox không hợp lệ";
+            steps.add(new SandboxSmokeStep("DOWNLOAD", "FAILED", error));
+            return ResponseEntity.ok(new SandboxSmokeResult(false, referenceCode, steps));
+        }
+        steps.add(new SandboxSmokeStep(
+                "DOWNLOAD",
+                "PASSED",
+                "Đã tải PDF (" + pdf.content().length + " bytes) và XML (" + xml.content().length + " bytes)"
+        ));
+
+        return ResponseEntity.ok(new SandboxSmokeResult(true, referenceCode, steps));
+    }
+
+    private SepayEInvoiceClient.CheckStatusResult awaitSandboxStatus(
+            BillingSetting setting,
+            String trackingCode,
+            boolean issue
+    ) {
+        SepayEInvoiceClient.CheckStatusResult result = null;
+        for (int attempt = 0; attempt < 30; attempt++) {
+            result = issue
+                    ? sepayEInvoiceClient.checkIssueStatus(setting, trackingCode)
+                    : sepayEInvoiceClient.checkCreateStatus(setting, trackingCode);
+            if (!result.isPending()) return result;
+            try {
+                Thread.sleep(1_000);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                return SepayEInvoiceClient.CheckStatusResult.failed("INTERRUPTED", "Kiểm thử Sandbox bị ngắt");
+            }
+        }
+        return SepayEInvoiceClient.CheckStatusResult.failed("TIMEOUT", "Quá thời gian chờ SePay Sandbox xử lý");
+    }
+
+    private SepayEInvoiceClient.DownloadResult downloadSandboxFile(
+            BillingSetting setting,
+            String primaryTrackingCode,
+            String fallbackTrackingCode,
+            String type
+    ) {
+        SepayEInvoiceClient.DownloadResult result = sepayEInvoiceClient.downloadInvoiceFile(setting, primaryTrackingCode, type);
+        return result.success() ? result : sepayEInvoiceClient.downloadInvoiceFile(setting, fallbackTrackingCode, type);
+    }
+
+    private String smokeError(String code, String message) {
+        String safeCode = code == null || code.isBlank() ? "UNKNOWN" : code;
+        String safeMessage = message == null || message.isBlank() ? "Không có thông tin chi tiết" : message;
+        return safeCode + ": " + safeMessage;
+    }
+
     // -------------------------------------------------------------------------
     // 5. GO-LIVE READINESS 15-POINT HEALTH CHECK
     // -------------------------------------------------------------------------
@@ -566,7 +752,9 @@ public class AdminBillingController {
         boolean isProdContext = s.isProductionContext();
 
         // 3. Production Credentials Set
-        boolean hasProdCredentials = s.getProdClientId() != null && !s.getProdClientId().isBlank()
+        boolean hasProdCredentials = tokenService != null
+                ? tokenService.hasProductionCredentials(s)
+                : s.getProdClientId() != null && !s.getProdClientId().isBlank()
                 && s.getProdClientSecret() != null && !s.getProdClientSecret().isBlank();
         String prodCredsStatus = hasProdCredentials ? "PASS" : (isProdContext ? "FAIL" : "WARN");
         items.add(new ReadinessCheckItem(
@@ -577,6 +765,18 @@ public class AdminBillingController {
                         : (isProdContext ? "Chưa cấu hình Production Client ID hoặc Client Secret riêng biệt" : "Đang ở chế độ Sandbox (Chưa cần kích hoạt Production credentials)"),
                 hasProdCredentials ? null : "Nhập Client ID và Secret lấy từ dashboard SePay eInvoice Production"
         ));
+
+        SepayEInvoiceClient.ConnectionTestResult productionConnection = null;
+        if (hasProdCredentials && sepayEInvoiceClient != null) {
+            BillingSetting probe = new BillingSetting();
+            probe.setActivationState(ProductionActivationState.PRODUCTION_CONFIGURED);
+            probe.setProdClientId(s.getProdClientId());
+            probe.setProdClientSecret(s.getProdClientSecret());
+            probe.setProdProviderAccountId(s.getProdProviderAccountId());
+            probe.setProdTemplateCode(s.getProdTemplateCode());
+            probe.setProdInvoiceSeries(s.getProdInvoiceSeries());
+            productionConnection = sepayEInvoiceClient.testConnection(probe);
+        }
 
         // 3b. Production Secret Decryptability (Prevent silent overwrite or corrupted master key)
         if (s.getProdClientSecret() != null && !s.getProdClientSecret().isBlank()) {
@@ -596,11 +796,13 @@ public class AdminBillingController {
         String separationDetails;
         if (!hasProdCredentials) {
             separationDetails = isProdContext ? "Chưa có Production Client ID để so sánh với Sandbox" : "Đang chạy chế độ Sandbox";
-        } else if (s.getProdClientId().trim().equalsIgnoreCase(s.getEinvoiceClientId() != null ? s.getEinvoiceClientId().trim() : "")) {
-            separationDetails = "Production Client ID trùng lặp hoàn toàn với Sandbox Client ID! Không được dùng chung credential Sandbox cho Production.";
-        } else {
+        } else if (tokenService != null && tokenService.areProductionAndSandboxCredentialsSeparated(s)) {
             sandboxSeparated = true;
             separationDetails = "Production credentials đã được tách biệt độc lập với Sandbox credentials";
+        } else if (s.getProdClientId() != null && s.getProdClientId().trim().equalsIgnoreCase(s.getEinvoiceClientId() != null ? s.getEinvoiceClientId().trim() : "")) {
+            separationDetails = "Production Client ID trùng lặp hoàn toàn với Sandbox Client ID! Không được dùng chung credential Sandbox cho Production.";
+        } else {
+            separationDetails = "Chưa thể xác minh Production Client ID khác Sandbox Client ID";
         }
         String sepStatus = sandboxSeparated ? "PASS" : (isProdContext ? "FAIL" : "WARN");
         items.add(new ReadinessCheckItem(
@@ -641,40 +843,52 @@ public class AdminBillingController {
         ));
 
         // 6. Production Provider Account
-        boolean hasProdProvider = (s.getProdProviderAccountId() != null && !s.getProdProviderAccountId().isBlank())
-                || (s.getEinvoiceProviderAccountId() != null && !s.getEinvoiceProviderAccountId().isBlank());
-        String prodProviderStatus = hasProdProvider ? "PASS" : (isProdContext ? "FAIL" : "WARN");
+        boolean hasConfiguredProdProvider = s.getProdProviderAccountId() != null && !s.getProdProviderAccountId().isBlank();
+        boolean liveProviderMatches = productionConnection != null
+                && productionConnection.success()
+                && hasConfiguredProdProvider
+                && s.getProdProviderAccountId().equals(productionConnection.providerAccountId());
+        String prodProviderStatus = liveProviderMatches ? "PASS" : (isProdContext || hasProdCredentials ? "FAIL" : "WARN");
         items.add(new ReadinessCheckItem(
                 "PROD_PROVIDER_ACCOUNT",
                 "Nhà cung cấp HĐĐT (VNPT / Viettel / MISA / Mắt Bão...)",
                 prodProviderStatus,
-                hasProdProvider ? String.format("Đã liên kết Provider Account ID: %s", s.getActiveProviderAccountId())
-                        : (isProdContext ? "Chưa cấu hình Provider Account ID cho môi trường Production" : "Đang chạy chế độ Sandbox"),
-                (hasProdProvider || !isProdContext) ? null : "Nhập Provider Account ID chính thức đã kích hoạt trên SePay Production"
+                liveProviderMatches ? String.format("Provider Production đang active và khớp cấu hình: %s (%s)",
+                        productionConnection.providerName(), productionConnection.providerAccountId())
+                        : (productionConnection != null && productionConnection.success()
+                        ? "SePay có Provider active nhưng Provider Account ID cấu hình Production chưa khớp"
+                        : (productionConnection != null ? productionConnection.message() : "Chưa kiểm chứng Provider Account Production qua API")),
+                liveProviderMatches ? null : "Chọn đúng Provider Account đang active từ SePay Production"
         ));
 
         // 7. Production Tax Authority Approved Date
-        boolean hasTaxDate = (s.getProdTaxAuthorityApprovedDate() != null && !s.getProdTaxAuthorityApprovedDate().isBlank())
-                || (s.getTaxAuthorityApprovedDate() != null && !s.getTaxAuthorityApprovedDate().isBlank());
+        boolean hasTaxDate = productionConnection != null
+                && productionConnection.success()
+                && productionConnection.taxAuthorityApprovedDate() != null
+                && !productionConnection.taxAuthorityApprovedDate().isBlank();
         items.add(new ReadinessCheckItem(
                 "PROD_TAX_AUTHORITY_APPROVED",
                 "Phê duyệt của Cơ quan Thuế (tax_authority_approved_date)",
-                hasTaxDate ? "PASS" : "WARN",
-                hasTaxDate ? ("Đã được Cơ quan Thuế phê duyệt ngày: " + (s.getProdTaxAuthorityApprovedDate() != null ? s.getProdTaxAuthorityApprovedDate() : s.getTaxAuthorityApprovedDate()))
-                        : "Chưa có ngày phê duyệt tờ khai từ Cơ quan Thuế trên tài khoản Production",
+                hasTaxDate ? "PASS" : (isProdContext || hasProdCredentials ? "FAIL" : "WARN"),
+                hasTaxDate ? ("SePay Production xác nhận ngày Cơ quan Thuế phê duyệt: " + productionConnection.taxAuthorityApprovedDate())
+                        : "API SePay Production chưa xác nhận ngày phê duyệt tờ khai của Cơ quan Thuế",
                 hasTaxDate ? null : "Đảm bảo tờ khai Đăng ký sử dụng HĐĐT (Mẫu 01/ĐKTĐ-HĐĐT) đã được Thuế chấp thuận trước khi xuất hóa đơn thật"
         ));
 
         // 8. Production Series & Template
-        boolean hasSeriesTemplate = (s.getProdTemplateCode() != null && !s.getProdTemplateCode().isBlank() && s.getProdInvoiceSeries() != null && !s.getProdInvoiceSeries().isBlank())
-                || (s.getEinvoiceTemplateCode() != null && !s.getEinvoiceTemplateCode().isBlank() && s.getEinvoiceInvoiceSeries() != null && !s.getEinvoiceInvoiceSeries().isBlank());
+        boolean hasSeriesTemplate = productionConnection != null
+                && productionConnection.success()
+                && s.getProdTemplateCode() != null
+                && s.getProdInvoiceSeries() != null
+                && s.getProdTemplateCode().equals(productionConnection.templateCode())
+                && s.getProdInvoiceSeries().equals(productionConnection.invoiceSeries());
         items.add(new ReadinessCheckItem(
                 "PROD_SERIES_AND_TEMPLATE",
                 "Mẫu số & Ký hiệu hóa đơn (Template & Series)",
-                hasSeriesTemplate ? "PASS" : (isProdContext ? "FAIL" : "WARN"),
-                hasSeriesTemplate ? String.format("Mẫu số: %s, Ký hiệu: %s", s.getActiveTemplateCode(), s.getActiveInvoiceSeries())
-                        : "Chưa cấu hình Mẫu số hoặc Ký hiệu hóa đơn",
-                hasSeriesTemplate ? null : "Nhập Mẫu số và Ký hiệu đã đăng ký từ nhà cung cấp HĐĐT chính thức"
+                hasSeriesTemplate ? "PASS" : (isProdContext || hasProdCredentials ? "FAIL" : "WARN"),
+                hasSeriesTemplate ? String.format("API SePay Production xác nhận Mẫu số: %s, Ký hiệu: %s", s.getProdTemplateCode(), s.getProdInvoiceSeries())
+                        : "Mẫu số/Ký hiệu Production cấu hình chưa được API SePay xác nhận là khả dụng",
+                hasSeriesTemplate ? null : "Chọn Mẫu số và Ký hiệu trả về từ Provider Account Production đang active"
         ));
 
         // 9. Seller Legal Info
@@ -692,10 +906,14 @@ public class AdminBillingController {
         ));
 
         // 10. Remaining Quota
-        Integer quota = null;
-        try {
-            quota = sepayEInvoiceClient.getRemainingQuota(s);
-        } catch (Exception ignored) {}
+        Integer quota = productionConnection != null && productionConnection.success()
+                ? productionConnection.remainingQuota()
+                : null;
+        if (!hasProdCredentials) {
+            try {
+                quota = sepayEInvoiceClient.getRemainingQuota(s);
+            } catch (Exception ignored) {}
+        }
 
         String quotaStatus;
         String quotaDetails;
@@ -865,9 +1083,9 @@ public class AdminBillingController {
         items.add(new ReadinessCheckItem(
                 "HTTPS_SECURITY",
                 "Bảo mật truyền thông mạng (SSL/TLS HTTPS)",
-                "PASS",
-                "Kết nối SePay API bắt buộc qua HTTPS và hỗ trợ TLS 1.3",
-                null
+                "WARN",
+                "SePay API dùng HTTPS; chứng chỉ HTTPS của domain triển khai ứng dụng cần được kiểm tra tại hạ tầng/reverse proxy",
+                "Xác nhận domain Production chỉ phục vụ HTTPS hợp lệ trước khi Go-Live"
         ));
 
         int pass = (int) items.stream().filter(i -> "PASS".equals(i.status())).count();

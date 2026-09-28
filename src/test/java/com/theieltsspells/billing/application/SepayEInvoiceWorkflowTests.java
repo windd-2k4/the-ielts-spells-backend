@@ -1293,6 +1293,83 @@ class SepayEInvoiceWorkflowTests {
         assertThat(capturedOrder.getCustomerEmail()).isNotEqualTo(capturedOrder.getInvoiceEmail());
     }
 
+    @Test
+    @DisplayName("34. Không được hủy cục bộ hóa đơn đã phát hành trên SePay/CQT")
+    void issuedInvoiceCannotBeLocallyCancelled() {
+        UUID invoiceId = UUID.randomUUID();
+        ElectronicInvoice invoice = new ElectronicInvoice();
+        invoice.setId(invoiceId);
+        invoice.setStatus(InvoiceStatus.ISSUED);
+        invoice.setInvoiceNumber("0000123");
+        invoice.setCreateTrackingCode("TRK-CREATE-123");
+        when(invoiceRepository.findById(invoiceId)).thenReturn(Optional.of(invoice));
+
+        assertThatThrownBy(() -> realInvoiceService.cancelInvoice(invoiceId, "Sai thông tin"))
+                .isInstanceOf(BusinessRuleException.class)
+                .hasMessageContaining("điều chỉnh hoặc thay thế");
+
+        assertThat(invoice.getStatus()).isEqualTo(InvoiceStatus.ISSUED);
+        verify(invoiceRepository, never()).save(invoice);
+    }
+
+    @Test
+    @DisplayName("35. QR tĩnh trong Production Pilot chờ duyệt riêng và không gọi SePay")
+    void staticQrInvoiceWaitsForPilotApprovalWithoutCallingSepay() {
+        ElectronicInvoice invoice = new ElectronicInvoice();
+        invoice.setId(UUID.randomUUID());
+        invoice.setReferenceCode("INV-TX-STATIC-PILOT");
+        invoice.setStatus(InvoiceStatus.PENDING_ISSUE);
+
+        BillingSetting setting = new BillingSetting();
+        setting.setActivationState(ProductionActivationState.PRODUCTION_PILOT);
+        setting.setAutoInvoiceEnabled(true);
+        when(billingSettingRepository.findLatest()).thenReturn(Optional.of(setting));
+        when(invoiceRepository.save(any(ElectronicInvoice.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ElectronicInvoice result = realInvoiceService.executeCreateInvoice(invoice, null);
+
+        assertThat(result.getStatus()).isEqualTo(InvoiceStatus.PILOT_PENDING_APPROVAL);
+        assertThat(result.getPilotApproved()).isFalse();
+        verify(sepayEInvoiceClient, never()).getInvoiceDetail(any(), any());
+        verify(sepayEInvoiceClient, never()).createInvoice(any(), any());
+    }
+
+    @Test
+    @DisplayName("36. Admin duyệt hóa đơn QR tĩnh Pilot thì đưa lại vào hàng đợi phát hành")
+    void approvingStaticQrPilotInvoiceQueuesItForIssuance() {
+        UUID invoiceId = UUID.randomUUID();
+        ElectronicInvoice invoice = new ElectronicInvoice();
+        invoice.setId(invoiceId);
+        invoice.setStatus(InvoiceStatus.PILOT_PENDING_APPROVAL);
+        invoice.setPilotApproved(false);
+        when(invoiceRepository.findById(invoiceId)).thenReturn(Optional.of(invoice));
+        when(invoiceRepository.save(any(ElectronicInvoice.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        var approved = realInvoiceService.approvePilotInvoice(invoiceId);
+
+        assertThat(approved.pilotApproved()).isTrue();
+        assertThat(approved.status()).isEqualTo(InvoiceStatus.PENDING_ISSUE);
+        assertThat(invoice.getNextRetryAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("37. Production không bao giờ fallback sang credential hoặc mẫu số Sandbox")
+    void productionSettingsNeverFallbackToSandbox() {
+        BillingSetting setting = new BillingSetting();
+        setting.setActivationState(ProductionActivationState.PRODUCTION_CONFIGURED);
+        setting.setEinvoiceClientId("sandbox-client");
+        setting.setEinvoiceClientSecret("sandbox-secret");
+        setting.setEinvoiceProviderAccountId("sandbox-provider");
+        setting.setEinvoiceTemplateCode("2");
+        setting.setEinvoiceInvoiceSeries("C26SANDBOX");
+
+        assertThat(setting.getActiveClientId()).isNull();
+        assertThat(setting.getActiveClientSecret()).isNull();
+        assertThat(setting.getActiveProviderAccountId()).isNull();
+        assertThat(setting.getActiveTemplateCode()).isNull();
+        assertThat(setting.getActiveInvoiceSeries()).isNull();
+    }
+
     private Order createSampleOrder(String orderCode) {
         Order order = new Order();
         order.setId(UUID.randomUUID());

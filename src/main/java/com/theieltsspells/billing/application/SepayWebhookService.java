@@ -471,6 +471,7 @@ public class SepayWebhookService {
     }
 
     private ReconciliationDto toReconciliationDto(PaymentTransaction tx) {
+        ElectronicInvoice invoice = invoiceService.findByPaymentTransactionId(tx.getId()).orElse(null);
         return new ReconciliationDto(
                 tx.getId(),
                 tx.getGateway(),
@@ -484,6 +485,9 @@ public class SepayWebhookService {
                 tx.getBankBrandName(),
                 tx.getAccountNumber(),
                 tx.getStatus(),
+                invoice != null ? invoice.getId() : null,
+                invoice != null ? invoice.getStatus() : null,
+                invoice != null ? invoice.getPilotApproved() : null,
                 tx.getReconciliationNote(),
                 tx.getRawPayload(),
                 tx.getCreatedAt()

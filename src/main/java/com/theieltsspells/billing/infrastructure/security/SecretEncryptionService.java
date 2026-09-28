@@ -73,7 +73,13 @@ public class SecretEncryptionService {
 
         String envKey = explicitKey;
         if (envKey == null || envKey.isBlank()) {
-            envKey = System.getenv("SEPAY_MASTER_KEY");
+            envKey = environment != null ? environment.getProperty("SEPAY_MASTER_KEY") : null;
+            if (envKey == null || envKey.isBlank()) {
+                envKey = System.getenv("SEPAY_MASTER_KEY");
+            }
+            if (envKey == null || envKey.isBlank()) {
+                envKey = environment != null ? environment.getProperty("APP_ENCRYPTION_KEY") : null;
+            }
             if (envKey == null || envKey.isBlank()) {
                 envKey = System.getenv("APP_ENCRYPTION_KEY");
             }

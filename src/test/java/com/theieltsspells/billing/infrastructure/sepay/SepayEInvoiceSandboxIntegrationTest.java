@@ -7,12 +7,16 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.math.BigDecimal;
+import java.io.IOException;
+import java.io.Reader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Properties;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -25,23 +29,27 @@ import static org.assertj.core.api.Assertions.assertThat;
  * - Mutating tests: Active only when BOTH SEPAY_SANDBOX_INTEGRATION_TEST=true AND SEPAY_SANDBOX_MUTATING_TEST=true.
  * <p>
  * Credentials must be provided via environment variables:
- * - SEPAY_EINVOICE_CLIENT_ID
- * - SEPAY_EINVOICE_CLIENT_SECRET
+ * - SEPAY_EINVOICE_SANDBOX_CLIENT_ID (or legacy SEPAY_EINVOICE_CLIENT_ID)
+ * - SEPAY_EINVOICE_SANDBOX_CLIENT_SECRET (or legacy SEPAY_EINVOICE_CLIENT_SECRET)
  * <p>
  * Credentials and access tokens are NEVER logged or exposed.
  */
-@EnabledIfEnvironmentVariable(named = "SEPAY_SANDBOX_INTEGRATION_TEST", matches = "true")
 class SepayEInvoiceSandboxIntegrationTest {
 
     private static final Logger log = LoggerFactory.getLogger(SepayEInvoiceSandboxIntegrationTest.class);
 
     private SepayEInvoiceClient client;
     private BillingSetting setting;
+    private Properties dotenv;
 
     @BeforeEach
     void setUp() {
-        String clientId = System.getenv("SEPAY_EINVOICE_CLIENT_ID");
-        String clientSecret = System.getenv("SEPAY_EINVOICE_CLIENT_SECRET");
+        dotenv = loadDotenv();
+        Assumptions.assumeTrue(Boolean.parseBoolean(config("SEPAY_SANDBOX_INTEGRATION_TEST")),
+                "Skipping live Sandbox tests: SEPAY_SANDBOX_INTEGRATION_TEST is not true");
+
+        String clientId = firstConfigured("SEPAY_EINVOICE_SANDBOX_CLIENT_ID", "SEPAY_EINVOICE_CLIENT_ID");
+        String clientSecret = firstConfigured("SEPAY_EINVOICE_SANDBOX_CLIENT_SECRET", "SEPAY_EINVOICE_CLIENT_SECRET");
 
         Assumptions.assumeTrue(clientId != null && !clientId.isBlank(), "Skipping Sandbox test: SEPAY_EINVOICE_CLIENT_ID not set");
         Assumptions.assumeTrue(clientSecret != null && !clientSecret.isBlank(), "Skipping Sandbox test: SEPAY_EINVOICE_CLIENT_SECRET not set");
@@ -103,36 +111,36 @@ class SepayEInvoiceSandboxIntegrationTest {
 
     @Test
     @DisplayName("Sandbox Mutating: Full End-to-End Invoice Lifecycle (Create -> Detail -> 409 Conflict Reconcile)")
-    @EnabledIfEnvironmentVariable(named = "SEPAY_SANDBOX_MUTATING_TEST", matches = "true")
     void testLiveSandbox_MutatingFullLifecycle() {
+        Assumptions.assumeTrue(Boolean.parseBoolean(config("SEPAY_SANDBOX_MUTATING_TEST")),
+                "Skipping mutating Sandbox test: SEPAY_SANDBOX_MUTATING_TEST is not true");
+
         // 1. Lấy thông tin provider đầu tiên
         List<SepayEInvoiceClient.ProviderAccountDto> providers = client.getProviderAccounts(setting);
         assertThat(providers).isNotEmpty();
         SepayEInvoiceClient.ProviderAccountDto activeProvider = providers.stream()
                 .filter(SepayEInvoiceClient.ProviderAccountDto::active)
+                .filter(provider -> provider.templates() != null && !provider.templates().isEmpty())
                 .findFirst()
-                .orElse(providers.get(0));
+                .orElseThrow(() -> new AssertionError("Sandbox chưa có Provider active kèm mẫu số/ký hiệu"));
 
         setting.setEinvoiceProviderAccountId(activeProvider.id());
         if (activeProvider.templates() != null && !activeProvider.templates().isEmpty()) {
             setting.setEinvoiceTemplateCode(activeProvider.templates().get(0).templateCode());
             setting.setEinvoiceInvoiceSeries(activeProvider.templates().get(0).invoiceSeries());
-        } else {
-            setting.setEinvoiceTemplateCode("1");
-            setting.setEinvoiceInvoiceSeries("C26TSE");
         }
 
         String testRefCode = "TEST-" + UUID.randomUUID().toString().substring(0, 8);
         log.info("Running Mutating E2E test with reference_code: {}", testRefCode);
 
-        // 2. Tạo hóa đơn thử nghiệm
+        // 2. Tạo hóa đơn nháp thử nghiệm
         SepayEInvoiceClient.CreateInvoicePayload payload = new SepayEInvoiceClient.CreateInvoicePayload(
                 setting.getEinvoiceTemplateCode(),
                 setting.getEinvoiceInvoiceSeries(),
                 setting.getEinvoiceProviderAccountId(),
                 testRefCode,
                 "CK",
-                false,
+                true,
                 "PERSONAL",
                 "Khách Hàng Sandbox Test",
                 null,
@@ -142,7 +150,7 @@ class SepayEInvoiceSandboxIntegrationTest {
                 null,
                 testRefCode,
                 "IELTS-SANDBOX",
-                "Khóa học IELTS Test Sandbox",
+                "Đóng học phí đào tạo IELTS",
                 "Khóa",
                 1,
                 100000L,
@@ -151,17 +159,20 @@ class SepayEInvoiceSandboxIntegrationTest {
         );
 
         SepayEInvoiceClient.CreateResult createRes = client.createInvoice(setting, payload);
-        log.info("Create Invoice Result: success={}, trackingCode={}, errorCode={}, errorMsg={}",
-                createRes.success(), createRes.trackingCode(), createRes.errorCode(), createRes.errorMessage());
+        log.info("Create Draft Result: success={}, trackingCode={}, errorCode={}",
+                createRes.success(), createRes.trackingCode(), createRes.errorCode());
 
-        assertThat(createRes.success() || "EINVOICE_DOCUMENT_EXISTED".equalsIgnoreCase(createRes.errorCode()))
-                .as("Tạo hóa đơn trên SePay Sandbox phải thành công hoặc trả về 409 đã tồn tại")
-                .isTrue();
+        assertThat(createRes.success()).as("Tạo hóa đơn nháp trên SePay Sandbox phải thành công").isTrue();
+        assertThat(createRes.trackingCode()).isNotBlank();
+
+        SepayEInvoiceClient.CheckStatusResult createStatus = pollCreate(createRes.trackingCode());
+        assertThat(createStatus.success()).as("Tạo hóa đơn nháp phải hoàn tất thành công").isTrue();
+        assertThat(createStatus.isDraft()).as("Kết quả create phải là hóa đơn nháp").isTrue();
 
         // 3. Test tính bất biến và HTTP 409: Thử gửi lại đúng reference_code này
         SepayEInvoiceClient.CreateResult duplicateRes = client.createInvoice(setting, payload);
-        log.info("Duplicate Submission Result: errorCode={}, errorMsg={}",
-                duplicateRes.errorCode(), duplicateRes.errorMessage());
+        log.info("Duplicate Submission Result: success={}, errorCode={}",
+                duplicateRes.success(), duplicateRes.errorCode());
 
         // Phải trả về EINVOICE_DOCUMENT_EXISTED
         if (!duplicateRes.success()) {
@@ -170,13 +181,102 @@ class SepayEInvoiceSandboxIntegrationTest {
                     .isEqualToIgnoringCase("EINVOICE_DOCUMENT_EXISTED");
         }
 
-        // 4. Lấy chi tiết hóa đơn qua GET /v1/invoices/{reference_code}
+        // 4. Lấy chi tiết hóa đơn nháp qua GET /v1/invoices/{reference_code}
         SepayEInvoiceClient.InvoiceDetailResult detailRes = client.getInvoiceDetail(setting, testRefCode);
         log.info("Invoice Detail Result: success={}, notFound={}, status={}, invoiceNum={}",
                 detailRes.success(), detailRes.notFound(), detailRes.status(), detailRes.invoiceNumber());
 
-        assertThat(detailRes.success() || detailRes.notFound())
-                .as("Truy vấn chi tiết hóa đơn không được ném lỗi hệ thống không xác định")
-                .isTrue();
+        assertThat(detailRes.success()).as("Phải truy vấn được hóa đơn nháp vừa tạo").isTrue();
+
+        // 5. Phát hành hóa đơn nháp và poll đến trạng thái cuối
+        SepayEInvoiceClient.IssueDraftResult issueRes = client.issueDraft(setting, testRefCode);
+        log.info("Issue Draft Result: success={}, trackingCode={}, errorCode={}",
+                issueRes.success(), issueRes.trackingCode(), issueRes.errorCode());
+        assertThat(issueRes.success()).as("Lệnh phát hành hóa đơn nháp phải được SePay tiếp nhận").isTrue();
+        assertThat(issueRes.trackingCode()).isNotBlank();
+
+        SepayEInvoiceClient.CheckStatusResult issueStatus = pollIssue(issueRes.trackingCode());
+        assertThat(issueStatus.success()).as("Phát hành hóa đơn phải hoàn tất thành công").isTrue();
+        assertThat(issueStatus.isDraft()).isFalse();
+
+        // 6. Đồng bộ detail và kiểm tra tải được cả PDF/XML bằng Bearer token
+        SepayEInvoiceClient.InvoiceDetailResult issuedDetail = client.getInvoiceDetail(setting, testRefCode);
+        assertThat(issuedDetail.success()).isTrue();
+
+        SepayEInvoiceClient.DownloadResult pdf = downloadWithTrackingFallback(
+                issueRes.trackingCode(), createRes.trackingCode(), "pdf");
+        assertThat(pdf.success()).as("Tải PDF Sandbox phải thành công").isTrue();
+        assertThat(pdf.content()).isNotEmpty();
+        assertThat(new String(pdf.content(), 0, Math.min(4, pdf.content().length), StandardCharsets.US_ASCII))
+                .startsWith("%PDF");
+
+        SepayEInvoiceClient.DownloadResult xml = downloadWithTrackingFallback(
+                issueRes.trackingCode(), createRes.trackingCode(), "xml");
+        assertThat(xml.success()).as("Tải XML Sandbox phải thành công").isTrue();
+        assertThat(xml.content()).isNotEmpty();
+    }
+
+    private SepayEInvoiceClient.CheckStatusResult pollCreate(String trackingCode) {
+        SepayEInvoiceClient.CheckStatusResult result = null;
+        for (int attempt = 0; attempt < 30; attempt++) {
+            result = client.checkCreateStatus(setting, trackingCode);
+            if (!result.isPending()) return result;
+            sleepTwoSeconds();
+        }
+        throw new AssertionError("Timeout khi chờ SePay Sandbox tạo hóa đơn");
+    }
+
+    private SepayEInvoiceClient.CheckStatusResult pollIssue(String trackingCode) {
+        SepayEInvoiceClient.CheckStatusResult result = null;
+        for (int attempt = 0; attempt < 30; attempt++) {
+            result = client.checkIssueStatus(setting, trackingCode);
+            if (!result.isPending()) return result;
+            sleepTwoSeconds();
+        }
+        throw new AssertionError("Timeout khi chờ SePay Sandbox phát hành hóa đơn");
+    }
+
+    private SepayEInvoiceClient.DownloadResult downloadWithTrackingFallback(
+            String primaryTrackingCode,
+            String fallbackTrackingCode,
+            String type
+    ) {
+        SepayEInvoiceClient.DownloadResult result = client.downloadInvoiceFile(setting, primaryTrackingCode, type);
+        return result.success() ? result : client.downloadInvoiceFile(setting, fallbackTrackingCode, type);
+    }
+
+    private void sleepTwoSeconds() {
+        try {
+            Thread.sleep(2_000);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("Sandbox smoke test bị ngắt", ex);
+        }
+    }
+
+    private String firstConfigured(String preferred, String fallback) {
+        String value = config(preferred);
+        return value != null && !value.isBlank() ? value : config(fallback);
+    }
+
+    private String config(String key) {
+        String environmentValue = System.getenv(key);
+        if (environmentValue != null && !environmentValue.isBlank()) return environmentValue.trim();
+        String propertyValue = System.getProperty(key);
+        if (propertyValue != null && !propertyValue.isBlank()) return propertyValue.trim();
+        String dotenvValue = dotenv.getProperty(key);
+        return dotenvValue != null ? dotenvValue.trim() : null;
+    }
+
+    private Properties loadDotenv() {
+        Properties properties = new Properties();
+        Path path = Path.of(".env");
+        if (!Files.isRegularFile(path)) return properties;
+        try (Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+            properties.load(reader);
+            return properties;
+        } catch (IOException ex) {
+            throw new IllegalStateException("Không thể đọc file .env cho Sandbox smoke test", ex);
+        }
     }
 }

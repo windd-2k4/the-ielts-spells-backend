@@ -30,6 +30,7 @@ public record InvoiceAdminDto(
         String xmlUrl,
         InvoiceStatus status,
         Boolean isDraft,
+        Boolean pilotApproved,
         Integer retryCount,
         String createTrackingCode,
         String issueTrackingCode,

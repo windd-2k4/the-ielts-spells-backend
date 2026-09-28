@@ -6,4 +6,5 @@ target/
 logs/
 data/uploads/
 *.log
+/ielts-backend-staging.tar
 .DS_Store

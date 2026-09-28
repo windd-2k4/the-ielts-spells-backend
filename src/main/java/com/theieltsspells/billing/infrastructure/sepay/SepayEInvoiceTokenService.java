@@ -6,6 +6,7 @@ import com.theieltsspells.billing.domain.BillingSetting;
 import com.theieltsspells.billing.infrastructure.security.SecretEncryptionService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -32,6 +33,18 @@ public class SepayEInvoiceTokenService {
             .build();
 
     private final AtomicReference<CachedToken> tokenCache = new AtomicReference<>(null);
+
+    @Value("${SEPAY_EINVOICE_SANDBOX_CLIENT_ID:${SEPAY_EINVOICE_CLIENT_ID:}}")
+    private String sandboxClientId = "";
+
+    @Value("${SEPAY_EINVOICE_SANDBOX_CLIENT_SECRET:${SEPAY_EINVOICE_CLIENT_SECRET:}}")
+    private String sandboxClientSecret = "";
+
+    @Value("${SEPAY_EINVOICE_PRODUCTION_CLIENT_ID:}")
+    private String productionClientId = "";
+
+    @Value("${SEPAY_EINVOICE_PRODUCTION_CLIENT_SECRET:}")
+    private String productionClientSecret = "";
 
     @Autowired
     public SepayEInvoiceTokenService(ObjectMapper objectMapper, SecretEncryptionService secretEncryptionService) {
@@ -61,8 +74,9 @@ public class SepayEInvoiceTokenService {
      * Tự động cache token trong bộ nhớ (hiệu lực 24h) và trừ buffer an toàn 5 phút.
      */
     public synchronized String getAccessToken(BillingSetting settings) {
-        String clientId = settings.getActiveClientId();
-        String rawSecret = settings.getActiveClientSecret();
+        Credentials credentials = resolveCredentials(settings, settings.isProductionContext());
+        String clientId = credentials.clientId();
+        String rawSecret = credentials.clientSecret();
 
         if (clientId == null || clientId.isBlank() || rawSecret == null || rawSecret.isBlank()) {
             throw new IllegalStateException("Chưa cấu hình SePay eInvoice Client ID hoặc Client Secret trong cài đặt hệ thống");
@@ -87,8 +101,9 @@ public class SepayEInvoiceTokenService {
      * Dùng cho Production Readiness 15-point health check mà không làm ảnh hưởng trạng thái đang chạy.
      */
     public String verifyProductionHandshake(BillingSetting settings) {
-        String prodClientId = settings.getProdClientId();
-        String rawProdSecret = settings.getProdClientSecret();
+        Credentials credentials = resolveCredentials(settings, true);
+        String prodClientId = credentials.clientId();
+        String rawProdSecret = credentials.clientSecret();
 
         if (prodClientId == null || prodClientId.isBlank() || rawProdSecret == null || rawProdSecret.isBlank()) {
             throw new IllegalStateException("Chưa cấu hình SePay Production Client ID hoặc Client Secret");
@@ -98,6 +113,24 @@ public class SepayEInvoiceTokenService {
         String fingerprint = prodClientId.trim() + "@" + PRODUCTION_BASE_URL;
 
         return requestNewToken(prodClientId.trim(), prodClientSecret.trim(), PRODUCTION_BASE_URL, fingerprint);
+    }
+
+    public boolean hasProductionCredentials(BillingSetting settings) {
+        Credentials credentials = resolveCredentials(settings, true);
+        return hasText(credentials.clientId()) && hasText(credentials.clientSecret());
+    }
+
+    public boolean hasSandboxCredentials(BillingSetting settings) {
+        Credentials credentials = resolveCredentials(settings, false);
+        return hasText(credentials.clientId()) && hasText(credentials.clientSecret());
+    }
+
+    public boolean areProductionAndSandboxCredentialsSeparated(BillingSetting settings) {
+        Credentials production = resolveCredentials(settings, true);
+        Credentials sandbox = resolveCredentials(settings, false);
+        if (!hasText(production.clientId())) return false;
+        if (!hasText(sandbox.clientId())) return true;
+        return !production.clientId().trim().equalsIgnoreCase(sandbox.clientId().trim());
     }
 
     /**
@@ -127,7 +160,7 @@ public class SepayEInvoiceTokenService {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
-                log.error("Lỗi yêu cầu SePay eInvoice token (HTTP {}): {}", response.statusCode(), response.body());
+                log.error("Lỗi yêu cầu SePay eInvoice token (HTTP {}). Nội dung phản hồi đã được ẩn.", response.statusCode());
                 throw new IllegalStateException("Xác thực SePay eInvoice thất bại (HTTP " + response.statusCode() + "): Vui lòng kiểm tra Client ID & Client Secret");
             }
 
@@ -159,4 +192,21 @@ public class SepayEInvoiceTokenService {
         if (str == null || str.length() <= 8) return "****";
         return str.substring(0, 4) + "..." + str.substring(str.length() - 4);
     }
+
+    private Credentials resolveCredentials(BillingSetting settings, boolean production) {
+        String configuredId = production ? settings.getProdClientId() : settings.getEinvoiceClientId();
+        String configuredSecret = production ? settings.getProdClientSecret() : settings.getEinvoiceClientSecret();
+        String fallbackId = production ? productionClientId : sandboxClientId;
+        String fallbackSecret = production ? productionClientSecret : sandboxClientSecret;
+        return new Credentials(
+                hasText(configuredId) ? configuredId : fallbackId,
+                hasText(configuredSecret) ? configuredSecret : fallbackSecret
+        );
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private record Credentials(String clientId, String clientSecret) {}
 }

@@ -142,27 +142,22 @@ public class BillingSetting {
     }
 
     public String getActiveClientId() {
-        return isProductionContext() && prodClientId != null && !prodClientId.isBlank()
-                ? prodClientId : einvoiceClientId;
+        return isProductionContext() ? prodClientId : einvoiceClientId;
     }
 
     public String getActiveClientSecret() {
-        return isProductionContext() && prodClientSecret != null && !prodClientSecret.isBlank()
-                ? prodClientSecret : einvoiceClientSecret;
+        return isProductionContext() ? prodClientSecret : einvoiceClientSecret;
     }
 
     public String getActiveProviderAccountId() {
-        return isProductionContext() && prodProviderAccountId != null && !prodProviderAccountId.isBlank()
-                ? prodProviderAccountId : einvoiceProviderAccountId;
+        return isProductionContext() ? prodProviderAccountId : einvoiceProviderAccountId;
     }
 
     public String getActiveInvoiceSeries() {
-        return isProductionContext() && prodInvoiceSeries != null && !prodInvoiceSeries.isBlank()
-                ? prodInvoiceSeries : einvoiceInvoiceSeries;
+        return isProductionContext() ? prodInvoiceSeries : einvoiceInvoiceSeries;
     }
 
     public String getActiveTemplateCode() {
-        return isProductionContext() && prodTemplateCode != null && !prodTemplateCode.isBlank()
-                ? prodTemplateCode : einvoiceTemplateCode;
+        return isProductionContext() ? prodTemplateCode : einvoiceTemplateCode;
     }
 }
