@@ -208,14 +208,15 @@ public class StudentPracticeCatalogService {
                 rs.getObject("active_attempt_id", UUID.class),
                 rs.getObject("active_attempt_expires_at", java.time.OffsetDateTime.class),
                 rs.getBigDecimal("last_score"),
-                skill == SkillType.READING && rs.getInt("materialized_questions_count") > 0
+                (skill == SkillType.READING || skill == SkillType.LISTENING)
+                        && (rs.getInt("materialized_questions_count") > 0 || itemCount(skill, content, 0) > 0)
         );
     }
 
     private int sectionsCount(SkillType skill, Map<String, Object> content) {
         return switch (skill) {
             case READING -> maps(content.get("passages")).size();
-            case LISTENING -> maps(content.get("parts")).size();
+            case LISTENING -> maps(content.containsKey("parts") ? content.get("parts") : content.get("listeningParts")).size();
             case WRITING -> maps(content.containsKey("tasks") ? content.get("tasks") : content.get("writingTasks")).size();
             case SPEAKING -> maps(content.get("parts")).size();
             default -> 0;
@@ -223,14 +224,19 @@ public class StudentPracticeCatalogService {
     }
 
     private int itemCount(SkillType skill, Map<String, Object> content, int materializedQuestions) {
-        if (skill == SkillType.READING && materializedQuestions > 0) {
+        if ((skill == SkillType.READING || skill == SkillType.LISTENING) && materializedQuestions > 0) {
             return materializedQuestions;
         }
         if (skill == SkillType.WRITING) {
             return sectionsCount(skill, content);
         }
         int count = 0;
-        for (var section : maps(skill == SkillType.READING ? content.get("passages") : content.get("parts"))) {
+        List<Map<String, Object>> sections = switch (skill) {
+            case READING -> maps(content.get("passages"));
+            case LISTENING -> maps(content.containsKey("parts") ? content.get("parts") : content.get("listeningParts"));
+            default -> maps(content.get("parts"));
+        };
+        for (var section : sections) {
             if (skill == SkillType.SPEAKING) {
                 count += maps(section.get("questions")).size();
                 if (!text(section.get("cueCardPromptHtml"), "").isBlank()) count++;
