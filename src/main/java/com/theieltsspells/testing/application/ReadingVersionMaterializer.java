@@ -267,8 +267,11 @@ class ReadingVersionMaterializer {
         for (int index = 0; index < options.size(); index++) {
             var option = options.get(index);
             String optionKey = required(option, "id", "Lựa chọn");
-            String content = required(option, "text", "Lựa chọn");
-            String sanitizedContent = HtmlSanitizer.sanitize(content);
+            String rawContent = nullableText(option.get("text"));
+            if (rawContent == null) {
+                rawContent = nullableText(option.get("code")) != null ? nullableText(option.get("code")) : required(option, "text", "Lựa chọn");
+            }
+            String sanitizedContent = HtmlSanitizer.sanitize(rawContent);
             jdbc.update("""
                     insert into public.test_version_question_options(
                       test_version_id, group_id, question_id, option_key, option_code, content, display_order
