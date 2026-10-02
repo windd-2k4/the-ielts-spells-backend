@@ -3,7 +3,6 @@ package com.theieltsspells.billing.application;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.theieltsspells.academic.application.EnrollmentApplicationService;
-import com.theieltsspells.academic.application.dto.EnrollStudentRequest;
 import com.theieltsspells.billing.application.dto.ReconciliationDto;
 import com.theieltsspells.billing.application.dto.SepayWebhookPayload;
 import com.theieltsspells.billing.domain.*;
@@ -211,11 +210,11 @@ public class SepayWebhookService {
         String activationToken = null;
         if (newlyPaid && order.getUserId() != null) {
             // Existing user -> Enroll safely without rolling back payment transaction
-            enrollmentService.enrollSafely(new EnrollStudentRequest(
+            enrollmentService.enrollSafely(
                     order.getCourseId(),
                     order.getUserId(),
                     "Tự động ghi danh sau thanh toán SePay: " + order.getOrderCode()
-            ));
+            );
         } else if (newlyPaid) {
             // Guest user -> Generate one-time activation token
             activationToken = activationService.generateActivationToken(order);
@@ -276,11 +275,11 @@ public class SepayWebhookService {
         if (newlyPaid && order.getUserId() == null) {
             activationToken = activationService.generateActivationToken(order);
         } else if (newlyPaid) {
-            enrollmentService.enrollSafely(new EnrollStudentRequest(
+            enrollmentService.enrollSafely(
                     order.getCourseId(),
                     order.getUserId(),
                     "Kế toán khớp thủ công sau thanh toán: " + order.getOrderCode()
-            ));
+            );
         }
 
         BillingSetting settings = billingSettingRepository.findLatest().orElseGet(BillingSetting::new);
@@ -324,11 +323,11 @@ public class SepayWebhookService {
 
         String activationToken = null;
         if (order.getUserId() != null) {
-            enrollmentService.enrollSafely(new EnrollStudentRequest(
+            enrollmentService.enrollSafely(
                     order.getCourseId(),
                     order.getUserId(),
                     "Thu tiền mặt tại quầy: " + order.getOrderCode()
-            ));
+            );
         } else {
             activationToken = activationService.generateActivationToken(order);
         }

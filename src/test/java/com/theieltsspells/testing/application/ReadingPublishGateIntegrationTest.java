@@ -8,7 +8,6 @@ import com.theieltsspells.testing.application.dto.CreateTestAssignmentRequest;
 import com.theieltsspells.testing.application.dto.TestBankRequest;
 import com.theieltsspells.testing.application.dto.TestBankResponse;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -74,13 +73,6 @@ class ReadingPublishGateIntegrationTest {
             registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
         }
         registry.add("spring.flyway.enabled", () -> "true");
-    }
-
-    @AfterAll
-    static void stopManagedPostgres() {
-        if ((EXTERNAL_JDBC_URL == null || EXTERNAL_JDBC_URL.isBlank()) && POSTGRES.isRunning()) {
-            POSTGRES.stop();
-        }
     }
 
     @Autowired

@@ -26,9 +26,7 @@ public class SepayEInvoiceClient {
 
     private final ObjectMapper objectMapper;
     private final SepayEInvoiceTokenService tokenService;
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(12))
-            .build();
+    private HttpClient httpClient;
 
     @FunctionalInterface
     private interface RequestFactory {
@@ -188,7 +186,7 @@ public class SepayEInvoiceClient {
     private HttpResponse<String> sendWithAuth(BillingSetting settings, RequestFactory requestFactory) throws Exception {
         String token = tokenService.getAccessToken(settings);
         HttpRequest request = requestFactory.create(token);
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = httpClient().send(request, HttpResponse.BodyHandlers.ofString());
 
         // Nếu token hết hạn hoặc bị thu hồi (401), evict cache và thử lại đúng 1 lần với token mới
         if (response.statusCode() == 401) {
@@ -196,10 +194,19 @@ public class SepayEInvoiceClient {
             tokenService.evictToken();
             String freshToken = tokenService.getAccessToken(settings);
             HttpRequest retryRequest = requestFactory.create(freshToken);
-            return httpClient.send(retryRequest, HttpResponse.BodyHandlers.ofString());
+            return httpClient().send(retryRequest, HttpResponse.BodyHandlers.ofString());
         }
 
         return response;
+    }
+
+    private synchronized HttpClient httpClient() {
+        if (httpClient == null) {
+            httpClient = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(12))
+                    .build();
+        }
+        return httpClient;
     }
 
     /**

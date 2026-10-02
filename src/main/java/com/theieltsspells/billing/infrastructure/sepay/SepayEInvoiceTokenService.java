@@ -28,9 +28,7 @@ public class SepayEInvoiceTokenService {
 
     private final ObjectMapper objectMapper;
     private final SecretEncryptionService secretEncryptionService;
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
-            .build();
+    private HttpClient httpClient;
 
     private final AtomicReference<CachedToken> tokenCache = new AtomicReference<>(null);
 
@@ -157,7 +155,7 @@ public class SepayEInvoiceTokenService {
                     .POST(HttpRequest.BodyPublishers.noBody())
                     .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = httpClient().send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
                 log.error("Lỗi yêu cầu SePay eInvoice token (HTTP {}). Nội dung phản hồi đã được ẩn.", response.statusCode());
@@ -186,6 +184,15 @@ public class SepayEInvoiceTokenService {
             log.error("Không thể kết nối đến SePay eInvoice để lấy token: {}", ex.getMessage());
             throw new RuntimeException("Lỗi kết nối máy chủ SePay eInvoice: " + ex.getMessage(), ex);
         }
+    }
+
+    private synchronized HttpClient httpClient() {
+        if (httpClient == null) {
+            httpClient = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .build();
+        }
+        return httpClient;
     }
 
     private String mask(String str) {
