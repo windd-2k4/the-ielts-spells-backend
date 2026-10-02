@@ -300,9 +300,11 @@ public class TestBankApplicationService {
     private TestVersionResponse createPublishedVersion(TestBankResponse test, UUID actor) {
         int number = jdbc.queryForObject("select coalesce(max(version_number), 0) + 1 from public.test_versions where test_id=?", Integer.class, test.id());
         String label = "v" + number + ".0";
-        Map<String, Object> publishedContent = test.skill() == SkillType.READING
-                ? ReadingPublishedSnapshotSanitizer.sanitize(test.builderContent())
-                : test.builderContent();
+        Map<String, Object> publishedContent = switch (test.skill()) {
+            case READING -> ReadingPublishedSnapshotSanitizer.sanitize(test.builderContent());
+            case WRITING -> WritingPublishedSnapshotSanitizer.sanitize(test.builderContent());
+            default -> test.builderContent();
+        };
         UUID id = jdbc.queryForObject("""
                 insert into public.test_versions(
                   test_id, version_number, version_label, title, description, duration_minutes,
@@ -355,7 +357,7 @@ public class TestBankApplicationService {
         if (passages instanceof List<?> items) return Math.toIntExact(items.stream().filter(Map.class::isInstance).count());
         var listeningParts = content.get("listeningParts");
         if (listeningParts instanceof List<?> items) return Math.toIntExact(items.stream().filter(Map.class::isInstance).count());
-        var writingTasks = content.get("writingTasks");
+        var writingTasks = content.containsKey("tasks") ? content.get("tasks") : content.get("writingTasks");
         if (writingTasks instanceof List<?> items) return Math.toIntExact(items.stream().filter(Map.class::isInstance).count());
         var speakingParts = content.get("speakingParts");
         if (speakingParts instanceof List<?> items) return Math.toIntExact(items.stream().filter(Map.class::isInstance).count());
@@ -404,7 +406,8 @@ public class TestBankApplicationService {
         if (hasDraftQuestions(content)) return true;
         if (hasText(content.get("promptText")) || hasText(content.get("transcriptText")) || hasText(content.get("sampleAnswer")))
             return true;
-        return countNonEmptyTextSections(content.get("writingTasks"), "promptHtml") > 0
+        Object writingTasks = content.containsKey("tasks") ? content.get("tasks") : content.get("writingTasks");
+        return countNonEmptyTextSections(writingTasks, "promptHtml") > 0
                 || countNonEmptyTextSections(content.get("speakingParts"), "cueCardPromptHtml") > 0
                 || countNonEmptyTextSections(content.get("listeningParts"), "transcriptHtml") > 0;
     }

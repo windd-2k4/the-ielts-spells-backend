@@ -42,10 +42,12 @@ public class TestAssignmentApplicationService {
         }
 
         var version = loadVersion(request.testVersionId());
-        if (version.skill() != SkillType.READING) {
-            throw new BusinessRuleException("Reading delivery hiện chỉ hỗ trợ đề Reading đã xuất bản");
+        if (version.skill() != SkillType.READING && version.skill() != SkillType.WRITING) {
+            throw new BusinessRuleException("Giao đề hiện hỗ trợ Reading và Writing đã xuất bản");
         }
-        readingVersionMaterializer.ensureMaterialized(version.id(), version.builderContent());
+        if (version.skill() == SkillType.READING) {
+            readingVersionMaterializer.ensureMaterialized(version.id(), version.builderContent());
+        }
 
         Integer existing = jdbc.queryForObject("""
                 select count(*) from public.test_assignments

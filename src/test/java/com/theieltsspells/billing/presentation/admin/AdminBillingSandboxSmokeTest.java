@@ -21,6 +21,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -74,7 +76,10 @@ class AdminBillingSandboxSmokeTest {
         when(sepayEInvoiceClient.checkCreateStatus(setting, "create-track"))
                 .thenReturn(SepayEInvoiceClient.CheckStatusResult.successDraft(null, "C26TSE", null, null, null, null));
         when(sepayEInvoiceClient.getInvoiceDetail(eq(setting), any()))
-                .thenReturn(SepayEInvoiceClient.InvoiceDetailResult.ofDraft(null, "C26TSE", null));
+                .thenReturn(
+                        SepayEInvoiceClient.InvoiceDetailResult.ofDraft(null, "C26TSE", null),
+                        SepayEInvoiceClient.InvoiceDetailResult.ofSuccess("1", "C26TSE", null, null, null, null)
+                );
         when(sepayEInvoiceClient.issueDraft(eq(setting), any()))
                 .thenReturn(new SepayEInvoiceClient.IssueDraftResult(true, "issue-track", null, null));
         when(sepayEInvoiceClient.checkIssueStatus(setting, "issue-track"))
@@ -89,6 +94,9 @@ class AdminBillingSandboxSmokeTest {
         assertThat(result).isNotNull();
         assertThat(result.success()).isTrue();
         assertThat(result.steps()).extracting(AdminBillingController.SandboxSmokeStep::name)
-                .containsExactly("CONNECTION", "CREATE_DRAFT", "IDEMPOTENCY", "GET_DRAFT", "ISSUE", "DOWNLOAD");
+                .containsExactly("CONNECTION", "CREATE_DRAFT", "IDEMPOTENCY", "GET_DRAFT", "ISSUE", "GET_ISSUED", "DOWNLOAD");
+        verify(sepayEInvoiceClient).downloadInvoiceFile(setting, "issue-track", "pdf");
+        verify(sepayEInvoiceClient).downloadInvoiceFile(setting, "issue-track", "xml");
+        verify(sepayEInvoiceClient, never()).downloadInvoiceFile(eq(setting), eq("create-track"), any());
     }
 }

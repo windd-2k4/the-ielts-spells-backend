@@ -203,15 +203,13 @@ class SepayEInvoiceSandboxIntegrationTest {
         SepayEInvoiceClient.InvoiceDetailResult issuedDetail = client.getInvoiceDetail(setting, testRefCode);
         assertThat(issuedDetail.success()).isTrue();
 
-        SepayEInvoiceClient.DownloadResult pdf = downloadWithTrackingFallback(
-                issueRes.trackingCode(), createRes.trackingCode(), "pdf");
+        SepayEInvoiceClient.DownloadResult pdf = client.downloadInvoiceFile(setting, issueRes.trackingCode(), "pdf");
         assertThat(pdf.success()).as("Tải PDF Sandbox phải thành công").isTrue();
         assertThat(pdf.content()).isNotEmpty();
         assertThat(new String(pdf.content(), 0, Math.min(4, pdf.content().length), StandardCharsets.US_ASCII))
                 .startsWith("%PDF");
 
-        SepayEInvoiceClient.DownloadResult xml = downloadWithTrackingFallback(
-                issueRes.trackingCode(), createRes.trackingCode(), "xml");
+        SepayEInvoiceClient.DownloadResult xml = client.downloadInvoiceFile(setting, issueRes.trackingCode(), "xml");
         assertThat(xml.success()).as("Tải XML Sandbox phải thành công").isTrue();
         assertThat(xml.content()).isNotEmpty();
     }
@@ -234,15 +232,6 @@ class SepayEInvoiceSandboxIntegrationTest {
             sleepTwoSeconds();
         }
         throw new AssertionError("Timeout khi chờ SePay Sandbox phát hành hóa đơn");
-    }
-
-    private SepayEInvoiceClient.DownloadResult downloadWithTrackingFallback(
-            String primaryTrackingCode,
-            String fallbackTrackingCode,
-            String type
-    ) {
-        SepayEInvoiceClient.DownloadResult result = client.downloadInvoiceFile(setting, primaryTrackingCode, type);
-        return result.success() ? result : client.downloadInvoiceFile(setting, fallbackTrackingCode, type);
     }
 
     private void sleepTwoSeconds() {

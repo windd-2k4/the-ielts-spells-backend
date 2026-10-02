@@ -35,6 +35,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class LearningLibraryApplicationService {
+    private static final String MEDIA_CATEGORY = "MEDIA";
     private static final Set<String> STATUSES = Set.of("DRAFT", "PUBLISHED", "ARCHIVED");
     private static final Set<String> SCOPES = Set.of("GLOBAL", "COURSE");
     private static final Set<String> RESOURCE_TYPES = Set.of(
@@ -53,7 +54,7 @@ public class LearningLibraryApplicationService {
     public ContentHubSummaryResponse summary() {
         return jdbc.queryForObject("""
                 select
-                  (select count(*) from public.learning_resources where status <> 'ARCHIVED') resources,
+                  (select count(*) from public.learning_resources where status <> 'ARCHIVED' and category <> 'MEDIA') resources,
                   (select count(*) from public.tests where status <> 'ARCHIVED') tests,
                   (select count(*) from public.learning_resource_files where archived_at is null) media,
                   ((select count(*) from public.learning_resources where status = 'DRAFT')
@@ -79,7 +80,7 @@ public class LearningLibraryApplicationService {
         String payload = jdbc.queryForObject("""
                 select jsonb_build_object(
                   'summary', jsonb_build_object(
-                    'resources', (select count(*) from public.learning_resources where status <> 'ARCHIVED'),
+                    'resources', (select count(*) from public.learning_resources where status <> 'ARCHIVED' and category <> 'MEDIA'),
                     'tests', (select count(*) from public.tests where status <> 'ARCHIVED'),
                     'media', (select count(*) from public.learning_resource_files where archived_at is null),
                     'awaitingReview', (
@@ -108,7 +109,7 @@ public class LearningLibraryApplicationService {
                       select resource.id, resource.code, resource.title, resource.description,
                         resource.skill, resource.updated_at
                       from public.learning_resources resource
-                      where resource.status <> 'ARCHIVED'
+                      where resource.status <> 'ARCHIVED' and resource.category <> 'MEDIA'
                       order by resource.updated_at desc
                       limit 5
                     ) recent
@@ -158,7 +159,7 @@ public class LearningLibraryApplicationService {
     public Page<LearningResourceResponse> listResources(String query, SkillType skill, String category,
                                                         String scope, String status, UUID courseId,
                                                         boolean includeGlobal, Pageable pageable) {
-        Specification<LearningResource> spec = (root, ignored, cb) -> cb.conjunction();
+        Specification<LearningResource> spec = (root, ignored, cb) -> cb.notEqual(root.get("category"), MEDIA_CATEGORY);
         if (query != null && !query.isBlank()) {
             var keyword = "%" + query.trim().toLowerCase(Locale.ROOT) + "%";
             spec = spec.and((root, ignored, cb) -> cb.or(
@@ -298,7 +299,7 @@ public class LearningLibraryApplicationService {
         resource.setCreatedBy(actor);
         resource.setTitle(normalizedFilename(file.getOriginalFilename()));
         resource.setSkill(SkillType.GENERAL);
-        resource.setCategory("MEDIA");
+        resource.setCategory(MEDIA_CATEGORY);
         resource.setResourceType(resourceType(file.getContentType()));
         resource.setScope("GLOBAL");
         resource.setCourseId(null);

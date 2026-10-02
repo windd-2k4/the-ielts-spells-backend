@@ -208,7 +208,9 @@ public class StudentPracticeCatalogService {
                 rs.getObject("active_attempt_id", UUID.class),
                 rs.getObject("active_attempt_expires_at", java.time.OffsetDateTime.class),
                 rs.getBigDecimal("last_score"),
-                skill == SkillType.READING && rs.getInt("materialized_questions_count") > 0
+                skill == SkillType.READING
+                        ? rs.getInt("materialized_questions_count") > 0
+                        : skill == SkillType.WRITING && sectionsCount(skill, content) > 0
         );
     }
 

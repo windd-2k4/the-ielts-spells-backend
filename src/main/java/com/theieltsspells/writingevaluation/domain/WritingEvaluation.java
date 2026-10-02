@@ -4,6 +4,7 @@ import com.theieltsspells.shared.persistence.enums.*;
 import com.theieltsspells.assignment.domain.Submission;
 import com.theieltsspells.identity.domain.Profile;
 import com.theieltsspells.testing.domain.TestAnswer;
+import com.theieltsspells.testing.domain.TestAttemptResponse;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -37,6 +38,9 @@ public class WritingEvaluation {
     @Column(name = "test_answer_id")
     private UUID testAnswerId;
 
+    @Column(name = "test_attempt_response_id")
+    private UUID testAttemptResponseId;
+
     @Column(name = "task_type", nullable = false)
     private String taskType;
 
@@ -68,15 +72,15 @@ public class WritingEvaluation {
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "strengths", nullable = false)
-    private Map<String, Object> strengths;
+    private List<String> strengths;
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "improvements", nullable = false)
-    private Map<String, Object> improvements;
+    private List<String> improvements;
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "detected_errors", nullable = false)
-    private Map<String, Object> detectedErrors;
+    private List<String> detectedErrors;
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "raw_response")
@@ -113,6 +117,10 @@ public class WritingEvaluation {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "test_answer_id", insertable = false, updatable = false)
     private TestAnswer testAnswerRef;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "test_attempt_response_id", insertable = false, updatable = false)
+    private TestAttemptResponse testAttemptResponseRef;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "reviewed_by", insertable = false, updatable = false)

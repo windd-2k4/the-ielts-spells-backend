@@ -11,6 +11,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 
@@ -47,6 +48,14 @@ class GlobalExceptionHandler {
         log.warn("Access denied for {} {}", request.getMethod(), request.getRequestURI());
         return response(HttpStatus.FORBIDDEN, "ACCESS_DENIED",
                 "Bạn không có quyền thực hiện thao tác này", request);
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    ResponseEntity<ApiError> handleResponseStatus(ResponseStatusException exception, HttpServletRequest request) {
+        String message = exception.getReason() != null ? exception.getReason() : exception.getMessage();
+        return ResponseEntity.status(exception.getStatusCode()).body(
+                new ApiError("HTTP_" + exception.getStatusCode().value(), message,
+                        request.getRequestURI(), Instant.now()));
     }
 
     @ExceptionHandler(Exception.class)

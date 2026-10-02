@@ -639,8 +639,23 @@ public class AdminBillingController {
         }
         steps.add(new SandboxSmokeStep("ISSUE", "PASSED", "SePay đã phát hành hóa đơn Sandbox"));
 
-        SepayEInvoiceClient.DownloadResult pdf = downloadSandboxFile(setting, issued.trackingCode(), created.trackingCode(), "pdf");
-        SepayEInvoiceClient.DownloadResult xml = downloadSandboxFile(setting, issued.trackingCode(), created.trackingCode(), "xml");
+        SepayEInvoiceClient.InvoiceDetailResult issuedDetail = sepayEInvoiceClient.getInvoiceDetail(setting, referenceCode);
+        boolean issuedDetailReady = issuedDetail.success()
+                && ("issued".equalsIgnoreCase(issuedDetail.status())
+                || "signed".equalsIgnoreCase(issuedDetail.status())
+                || (issuedDetail.invoiceNumber() != null && !issuedDetail.invoiceNumber().isBlank()));
+        if (!issuedDetailReady) {
+            steps.add(new SandboxSmokeStep(
+                    "GET_ISSUED",
+                    "FAILED",
+                    smokeError(issuedDetail.errorCode(), issuedDetail.errorMessage())
+            ));
+            return ResponseEntity.ok(new SandboxSmokeResult(false, referenceCode, steps));
+        }
+        steps.add(new SandboxSmokeStep("GET_ISSUED", "PASSED", "Đã đọc lại hóa đơn đã phát hành theo reference_code"));
+
+        SepayEInvoiceClient.DownloadResult pdf = sepayEInvoiceClient.downloadInvoiceFile(setting, issued.trackingCode(), "pdf");
+        SepayEInvoiceClient.DownloadResult xml = sepayEInvoiceClient.downloadInvoiceFile(setting, issued.trackingCode(), "xml");
         boolean pdfSignatureValid = pdf.success()
                 && pdf.content() != null
                 && pdf.content().length >= 4
@@ -686,16 +701,6 @@ public class AdminBillingController {
             }
         }
         return SepayEInvoiceClient.CheckStatusResult.failed("TIMEOUT", "Quá thời gian chờ SePay Sandbox xử lý");
-    }
-
-    private SepayEInvoiceClient.DownloadResult downloadSandboxFile(
-            BillingSetting setting,
-            String primaryTrackingCode,
-            String fallbackTrackingCode,
-            String type
-    ) {
-        SepayEInvoiceClient.DownloadResult result = sepayEInvoiceClient.downloadInvoiceFile(setting, primaryTrackingCode, type);
-        return result.success() ? result : sepayEInvoiceClient.downloadInvoiceFile(setting, fallbackTrackingCode, type);
     }
 
     private String smokeError(String code, String message) {
@@ -1055,7 +1060,9 @@ public class AdminBillingController {
             pilotCheckStatus = "PASS";
             pilotDetails = "Đợt thử nghiệm Pilot phát hành hóa đơn thật đã hoàn thành xuất sắc (7/7 tiêu chí PASSED)";
         } else {
-            pilotCheckStatus = isProdContext ? "FAIL" : "WARN";
+            // Pilot is the next guarded step, so an unfinished pilot must not block entry into it.
+            // PRODUCTION_ACTIVE remains protected by ProductionActivationService and requires PASSED.
+            pilotCheckStatus = "WARN";
             if (pilotStatus == com.theieltsspells.billing.domain.PilotResultStatus.NOT_STARTED) {
                 pilotDetails = "Chưa thực hiện đợt thử nghiệm Pilot nào (PilotResult = NOT_STARTED)";
                 pilotRec = "Cần chạy thử nghiệm 1 đơn hàng Pilot thật trước khi kích hoạt PRODUCTION_ACTIVE";

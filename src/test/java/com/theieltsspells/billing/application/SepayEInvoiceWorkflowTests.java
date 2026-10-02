@@ -805,6 +805,29 @@ class SepayEInvoiceWorkflowTests {
     }
 
     @Test
+    @DisplayName("Readiness cho phép vào Pilot khi Pilot chưa được thực hiện")
+    void readinessBeforePilotReportsWarningInsteadOfBlockingFailure() {
+        BillingSetting setting = new BillingSetting();
+        setting.setActivationState(ProductionActivationState.PRODUCTION_READY);
+        setting.setPilotStatus(PilotResultStatus.NOT_STARTED);
+        when(billingSettingRepository.findFirstByOrderByUpdatedAtDesc()).thenReturn(Optional.of(setting));
+
+        AdminBillingController controller = new AdminBillingController(
+                orderApplicationService, realInvoiceService, webhookService,
+                billingSettingRepository, sepayEInvoiceClient, tokenService
+        );
+
+        AdminBillingController.ReadinessCheckItem pilotCheck = controller.checkGoLiveReadiness()
+                .getBody()
+                .checks().stream()
+                .filter(check -> "PILOT_EXECUTION_GATE".equals(check.id()))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(pilotCheck.status()).isEqualTo("WARN");
+    }
+
+    @Test
     @DisplayName("20. Recheck endpoint: Kiểm tra lại trạng thái thủ công với SePay cho hóa đơn UNKNOWN")
     void testRecheckInvoiceStatus_ManualReconciliation() {
         UUID invId = UUID.randomUUID();
