@@ -34,7 +34,7 @@ public class WritingCriterionScore {
     @Column(name = "criterion", nullable = false)
     private String criterion;
 
-    @Column(name = "ai_band", nullable = false)
+    @Column(name = "ai_band")
     private BigDecimal aiBand;
 
     @Column(name = "teacher_band")

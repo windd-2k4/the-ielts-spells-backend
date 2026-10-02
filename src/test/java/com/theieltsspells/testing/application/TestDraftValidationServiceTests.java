@@ -51,6 +51,56 @@ class TestDraftValidationServiceTests {
         assertTrue(result.issues().stream().anyMatch(issue -> issue.id().equals("speaking-2-cue-card")));
     }
 
+    @Test
+    void acceptsACompleteWritingFullTest() {
+        var content = Map.<String, Object>of("tasks", List.of(
+                Map.of("taskNo", 1, "promptHtml", "<p>Summarise the chart.</p>", "minWords", 150,
+                        "suggestedTimeMinutes", 20, "imageUrl", "/api/v1/admin/library/media/chart/content",
+                        "imageAltText", "Biểu đồ đường thể hiện số liệu theo thời gian"),
+                Map.of("taskNo", 2, "promptHtml", "<p>Discuss both views.</p>", "minWords", 250, "suggestedTimeMinutes", 40)
+        ));
+
+        var result = service.validate(test(SkillType.WRITING, "FULL_TEST", content));
+
+        assertTrue(result.publishable());
+        assertTrue(result.issues().isEmpty());
+    }
+
+    @Test
+    void rejectsWritingTaskOneWithoutImageOrAccessibleDescription() {
+        var missingImage = Map.<String, Object>of("tasks", List.of(
+                Map.of("taskNo", 1, "promptHtml", "<p>Summarise the chart.</p>", "minWords", 150,
+                        "suggestedTimeMinutes", 20)
+        ));
+        var missingDescription = Map.<String, Object>of("tasks", List.of(
+                Map.of("taskNo", 1, "promptHtml", "<p>Summarise the chart.</p>", "minWords", 150,
+                        "suggestedTimeMinutes", 20, "imageUrl", "/api/v1/admin/library/media/chart/content")
+        ));
+
+        var imageResult = service.validate(test(SkillType.WRITING, "SINGLE_SKILL", missingImage));
+        var descriptionResult = service.validate(test(SkillType.WRITING, "SINGLE_SKILL", missingDescription));
+
+        assertFalse(imageResult.publishable());
+        assertTrue(imageResult.issues().stream().anyMatch(issue -> issue.id().equals("writing-1-image")));
+        assertFalse(descriptionResult.publishable());
+        assertTrue(descriptionResult.issues().stream().anyMatch(issue -> issue.id().equals("writing-1-image-alt")));
+    }
+
+    @Test
+    void rejectsDuplicateWritingTasksAndNonIeltsWordMinimum() {
+        var content = Map.<String, Object>of("tasks", List.of(
+                Map.of("taskNo", 1, "promptHtml", "<p>First chart.</p>", "minWords", 100, "suggestedTimeMinutes", 20),
+                Map.of("taskNo", 1, "promptHtml", "<p>Second chart.</p>", "minWords", 150, "suggestedTimeMinutes", 20)
+        ));
+
+        var result = service.validate(test(SkillType.WRITING, "FULL_TEST", content));
+
+        assertFalse(result.publishable());
+        assertTrue(result.issues().stream().anyMatch(issue -> issue.id().contains("task-number")));
+        assertTrue(result.issues().stream().anyMatch(issue -> issue.id().contains("minimum-standard")));
+        assertTrue(result.issues().stream().anyMatch(issue -> issue.id().equals("writing-full-task-numbers")));
+    }
+
     private TestBankResponse test(SkillType skill, String testType, Map<String, Object> content) {
         return new TestBankResponse(
                 UUID.randomUUID(), "TST-0001", "Valid title", null, skill, testType,

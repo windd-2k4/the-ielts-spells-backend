@@ -1,5 +1,7 @@
 package com.theieltsspells.learninglibrary.application;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.theieltsspells.learninglibrary.application.dto.*;
 import com.theieltsspells.learninglibrary.domain.ExerciseTemplate;
 import com.theieltsspells.learninglibrary.domain.LearningResource;
@@ -18,6 +20,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStream;
@@ -32,6 +35,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class LearningLibraryApplicationService {
+    private static final String MEDIA_CATEGORY = "MEDIA";
     private static final Set<String> STATUSES = Set.of("DRAFT", "PUBLISHED", "ARCHIVED");
     private static final Set<String> SCOPES = Set.of("GLOBAL", "COURSE");
     private static final Set<String> RESOURCE_TYPES = Set.of(
@@ -44,25 +48,118 @@ public class LearningLibraryApplicationService {
     private final LearningResourceFileRepository resourceFiles;
     private final FileStorageService fileStorage;
     private final EntityManager entityManager;
+    private final JdbcTemplate jdbc;
+    private final ObjectMapper objectMapper;
 
     public ContentHubSummaryResponse summary() {
-        return new ContentHubSummaryResponse(
-                count("select count(*) from public.learning_resources where status <> 'ARCHIVED'"),
-                count("select count(*) from public.tests where status <> 'ARCHIVED'"),
-                count("select count(*) from public.learning_resource_files where archived_at is null"),
-                count("select (select count(*) from public.learning_resources where status = 'DRAFT') + "
-                        + "(select count(*) from public.exercise_templates where status = 'DRAFT') + "
-                        + "(select count(*) from public.tests where status = 'SCHEDULED')"),
-                count("select count(distinct coalesce(source_resource_id, source_exercise_template_id)) "
-                        + "from public.course_session_items where source_resource_id is not null "
-                        + "or source_exercise_template_id is not null")
-        );
+        return jdbc.queryForObject("""
+                select
+                  (select count(*) from public.learning_resources where status <> 'ARCHIVED' and category <> 'MEDIA') resources,
+                  (select count(*) from public.tests where status <> 'ARCHIVED') tests,
+                  (select count(*) from public.learning_resource_files where archived_at is null) media,
+                  ((select count(*) from public.learning_resources where status = 'DRAFT')
+                    + (select count(*) from public.exercise_templates where status = 'DRAFT')
+                    + (select count(*) from public.tests where status = 'SCHEDULED')) awaiting_review,
+                  (select count(*) from (
+                    select source_resource_id id, 'RESOURCE' source_type
+                    from public.course_session_items where source_resource_id is not null
+                    union
+                    select source_exercise_template_id id, 'EXERCISE' source_type
+                    from public.course_session_items where source_exercise_template_id is not null
+                  ) used_content) in_use
+                """, (rs, ignored) -> new ContentHubSummaryResponse(
+                rs.getLong("resources"),
+                rs.getLong("tests"),
+                rs.getLong("media"),
+                rs.getLong("awaiting_review"),
+                rs.getLong("in_use")
+        ));
+    }
+
+    public ContentHubDashboardResponse dashboard() {
+        String payload = jdbc.queryForObject("""
+                select jsonb_build_object(
+                  'summary', jsonb_build_object(
+                    'resources', (select count(*) from public.learning_resources where status <> 'ARCHIVED' and category <> 'MEDIA'),
+                    'tests', (select count(*) from public.tests where status <> 'ARCHIVED'),
+                    'media', (select count(*) from public.learning_resource_files where archived_at is null),
+                    'awaitingReview', (
+                      (select count(*) from public.learning_resources where status = 'DRAFT')
+                      + (select count(*) from public.exercise_templates where status = 'DRAFT')
+                      + (select count(*) from public.tests where status = 'SCHEDULED')
+                    ),
+                    'inUse', (select count(*) from (
+                      select source_resource_id id, 'RESOURCE' source_type
+                      from public.course_session_items where source_resource_id is not null
+                      union
+                      select source_exercise_template_id id, 'EXERCISE' source_type
+                      from public.course_session_items where source_exercise_template_id is not null
+                    ) used_content)
+                  ),
+                  'recentResources', coalesce((
+                    select jsonb_agg(jsonb_build_object(
+                      'id', recent.id,
+                      'code', recent.code,
+                      'title', recent.title,
+                      'description', recent.description,
+                      'skill', recent.skill,
+                      'updatedAt', recent.updated_at
+                    ) order by recent.updated_at desc)
+                    from (
+                      select resource.id, resource.code, resource.title, resource.description,
+                        resource.skill, resource.updated_at
+                      from public.learning_resources resource
+                      where resource.status <> 'ARCHIVED' and resource.category <> 'MEDIA'
+                      order by resource.updated_at desc
+                      limit 5
+                    ) recent
+                  ), '[]'::jsonb),
+                  'draftTests', coalesce((
+                    select jsonb_agg(jsonb_build_object(
+                      'id', draft.id,
+                      'code', draft.code,
+                      'title', draft.title,
+                      'skill', draft.primary_skill,
+                      'totalQuestions', draft.total_questions,
+                      'updatedAt', draft.updated_at
+                    ) order by draft.updated_at desc)
+                    from (
+                      select test.id, test.code, test.title, test.primary_skill, test.updated_at,
+                        coalesce(
+                          nullif((select count(*)
+                            from public.questions question
+                            join public.test_sections section on section.id = question.section_id
+                            where section.test_id = test.id), 0),
+                          nullif((select sum(jsonb_array_length(question_array.value))
+                            from jsonb_path_query(test.builder_content,
+                              '$.passages[*].questionGroups[*].questions') question_array(value)), 0),
+                          nullif((select sum(jsonb_array_length(question_array.value))
+                            from jsonb_path_query(test.builder_content,
+                              '$.listeningParts[*].questionGroups[*].questions') question_array(value)), 0),
+                          (select sum(jsonb_array_length(question_array.value))
+                            from jsonb_path_query(test.builder_content,
+                              '$.questionGroups[*].questions') question_array(value)),
+                          0
+                        ) total_questions
+                      from public.tests test
+                      where test.status = 'DRAFT'
+                      order by test.updated_at desc
+                      limit 5
+                    ) draft
+                  ), '[]'::jsonb)
+                )::text
+                """, String.class);
+        try {
+            return objectMapper.readValue(payload, ContentHubDashboardResponse.class);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Không thể đọc dữ liệu tổng quan Content Hub", exception);
+        }
     }
 
     public Page<LearningResourceResponse> listResources(String query, SkillType skill, String category,
                                                         String scope, String status, UUID courseId,
                                                         boolean includeGlobal, Pageable pageable) {
-        Specification<LearningResource> spec = (root, ignored, cb) -> cb.conjunction();
+        Specification<LearningResource> spec = (root, ignored, cb) -> cb.notEqual(root.get("category"), MEDIA_CATEGORY);
         if (query != null && !query.isBlank()) {
             var keyword = "%" + query.trim().toLowerCase(Locale.ROOT) + "%";
             spec = spec.and((root, ignored, cb) -> cb.or(
@@ -142,6 +239,10 @@ public class LearningLibraryApplicationService {
                                                             UUID actor, boolean canManageAny) {
         var resource = findResource(resourceId);
         assertCanMutateResource(resource, resource.getStatus(), actor, canManageAny);
+        return fileResponse(storeResourceFile(resourceId, fileRole, file, actor));
+    }
+
+    private LearningResourceFile storeResourceFile(UUID resourceId, String fileRole, MultipartFile file, UUID actor) {
         var originalFilename = normalizedFilename(file.getOriginalFilename());
         var objectPath = "resources/" + resourceId + "/" + UUID.randomUUID() + "-" + originalFilename;
         var stored = fileStorage.store(objectPath, file);
@@ -156,7 +257,9 @@ public class LearningLibraryApplicationService {
                 ? "application/octet-stream" : file.getContentType());
         value.setSizeBytes(file.getSize());
         value.setUploadedBy(actor);
-        return fileResponse(resourceFiles.save(value));
+        value = resourceFiles.saveAndFlush(value);
+        entityManager.refresh(value);
+        return value;
     }
 
     @Transactional
@@ -202,7 +305,7 @@ public class LearningLibraryApplicationService {
         resource.setCreatedBy(actor);
         resource.setTitle(normalizedFilename(file.getOriginalFilename()));
         resource.setSkill(SkillType.GENERAL);
-        resource.setCategory("MEDIA");
+        resource.setCategory(MEDIA_CATEGORY);
         resource.setResourceType(resourceType(file.getContentType()));
         resource.setScope("GLOBAL");
         resource.setCourseId(null);
@@ -211,8 +314,7 @@ public class LearningLibraryApplicationService {
         resource.setStatus("PUBLISHED");
         resource = resources.saveAndFlush(resource);
         entityManager.refresh(resource);
-        uploadResourceFile(resource.getId(), "MAIN", file, actor, false);
-        var stored = resourceFiles.findByResourceIdAndArchivedAtIsNullOrderByCreatedAtAsc(resource.getId()).getFirst();
+        var stored = storeResourceFile(resource.getId(), "MAIN", file, actor);
         return mediaResponse(stored);
     }
 
@@ -224,7 +326,9 @@ public class LearningLibraryApplicationService {
         var count = entityManager.createNativeQuery("select count(*) from public.course_session_items where source_resource_id=:id")
                 .setParameter("id", file.getResourceId()).getSingleResult();
         if (((Number) count).longValue() > 0) throw new BusinessRuleException("File đang được gắn vào buổi học; hãy gỡ liên kết trước khi xóa");
-        deleteResourceFile(file.getResourceId(), fileId, actor, canManageAny);
+        fileStorage.delete(file);
+        resourceFiles.delete(file);
+        resources.delete(resource);
     }
 
     @Transactional
@@ -416,10 +520,6 @@ public class LearningLibraryApplicationService {
         var source = originalFilename == null || originalFilename.isBlank() ? "untitled-file" : originalFilename;
         var normalized = source.replaceAll("[^a-zA-Z0-9._-]", "-").replaceAll("-+", "-");
         return normalized.length() > 180 ? normalized.substring(normalized.length() - 180) : normalized;
-    }
-
-    private long count(String sql) {
-        return ((Number) entityManager.createNativeQuery(sql).getSingleResult()).longValue();
     }
 
     public record FileContent(String originalFilename, String mimeType, long sizeBytes, InputStream inputStream) {}

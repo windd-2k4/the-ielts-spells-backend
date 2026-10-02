@@ -9,14 +9,17 @@ import com.theieltsspells.shared.application.ConflictException;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
 import com.theieltsspells.shared.persistence.enums.EnrollmentStatus;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.*;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -55,6 +58,25 @@ public class EnrollmentApplicationService {
         value.setStatus(EnrollmentStatus.PENDING);
         value.setNotes(request.notes());
         return AcademicMapper.toResponse(enrollments.save(value));
+    }
+
+    /**
+     * Ghi danh an toàn cho quy trình thanh toán/kích hoạt:
+     * Chạy trong transaction riêng biệt (REQUIRES_NEW) để nếu học viên đã được ghi danh hoặc
+     * có lỗi nghiệp vụ thì không gây đánh dấu rollback cho toàn bộ transaction thanh toán (SePay/Order).
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Optional<EnrollmentResponse> enrollSafely(EnrollStudentRequest request) {
+        try {
+            if (enrollments.existsByCourseIdAndStudentId(request.courseId(), request.studentId())) {
+                log.info("Học viên {} đã được ghi danh vào khóa học {} từ trước. Bỏ qua ghi danh trùng.", request.studentId(), request.courseId());
+                return Optional.empty();
+            }
+            return Optional.of(enroll(request));
+        } catch (Exception ex) {
+            log.warn("Lỗi khi tự động ghi danh học viên {}: {}", request.studentId(), ex.getMessage());
+            return Optional.empty();
+        }
     }
 
     public EnrollmentResponse get(UUID id) { return AcademicMapper.toResponse(find(id)); }
@@ -102,6 +124,11 @@ public class EnrollmentApplicationService {
         value.setTargetNote(request.targetNote() == null || request.targetNote().isBlank()
                 ? null : request.targetNote().trim());
         return AcademicMapper.toResponse(enrollments.save(value));
+    }
+
+    public boolean isStudentEnrolledActive(UUID courseId, UUID studentId) {
+        if (courseId == null || studentId == null) return false;
+        return enrollments.existsByCourseIdAndStudentIdAndStatus(courseId, studentId, EnrollmentStatus.ACTIVE);
     }
 
     private Enrollment find(UUID id) {

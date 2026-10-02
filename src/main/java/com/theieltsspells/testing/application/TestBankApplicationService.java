@@ -79,12 +79,12 @@ public class TestBankApplicationService {
     @Transactional
     public TestBankResponse create(TestBankRequest request, UUID actor) {
         validate(request);
-        UUID id = jdbc.queryForObject("""
-                insert into public.tests(title, description, duration_minutes, status, created_by,
+        UUID id = UUID.randomUUID();
+        jdbc.update("""
+                insert into public.tests(id, title, description, duration_minutes, status, created_by,
                   primary_skill, test_type, version, tags, builder_content)
-                values (?, ?, ?, 'DRAFT', ?, cast(? as public.skill_type), ?, ?, cast(? as jsonb), cast(? as jsonb))
-                returning id
-                """, UUID.class, request.title().trim(), blank(request.description()), duration(request), actor,
+                values (?, ?, ?, ?, 'DRAFT', ?, cast(? as public.skill_type), ?, ?, cast(? as jsonb), cast(? as jsonb))
+                """, id, request.title().trim(), blank(request.description()), duration(request), actor,
                 request.skill().name(), allowed(request.testType(), TYPES), blankOr(request.version(), "v1.0"),
                 json(request.tags() == null ? List.of() : request.tags()),
                 json(request.builderContent() == null ? Map.of() : request.builderContent()));
@@ -300,6 +300,11 @@ public class TestBankApplicationService {
     private TestVersionResponse createPublishedVersion(TestBankResponse test, UUID actor) {
         int number = jdbc.queryForObject("select coalesce(max(version_number), 0) + 1 from public.test_versions where test_id=?", Integer.class, test.id());
         String label = "v" + number + ".0";
+        Map<String, Object> publishedContent = switch (test.skill()) {
+            case READING -> ReadingPublishedSnapshotSanitizer.sanitize(test.builderContent());
+            case WRITING -> WritingPublishedSnapshotSanitizer.sanitize(test.builderContent());
+            default -> test.builderContent();
+        };
         UUID id = jdbc.queryForObject("""
                 insert into public.test_versions(
                   test_id, version_number, version_label, title, description, duration_minutes,
@@ -307,9 +312,9 @@ public class TestBankApplicationService {
                 ) values (?, ?, ?, ?, ?, ?, cast(? as public.skill_type), ?, cast(? as jsonb), cast(? as jsonb), ?)
                 returning id
                 """, UUID.class, test.id(), number, label, test.title(), test.description(), test.durationMinutes(),
-                test.skill().name(), test.testType(), json(test.tags()), json(test.builderContent()), actor);
-        if (test.skill() == SkillType.READING) {
-            readingVersionMaterializer.materialize(id, test.builderContent());
+                test.skill().name(), test.testType(), json(test.tags()), json(publishedContent), actor);
+        if (test.skill() == SkillType.READING || test.skill() == SkillType.LISTENING) {
+            readingVersionMaterializer.materialize(id, publishedContent);
         }
         return new TestVersionResponse(id, number, label, java.time.OffsetDateTime.now(), "");
     }
@@ -350,11 +355,11 @@ public class TestBankApplicationService {
     private int draftSectionCount(Map<String, Object> content) {
         var passages = content.get("passages");
         if (passages instanceof List<?> items) return Math.toIntExact(items.stream().filter(Map.class::isInstance).count());
-        var listeningParts = content.get("listeningParts");
+        var listeningParts = content.containsKey("parts") ? content.get("parts") : content.get("listeningParts");
         if (listeningParts instanceof List<?> items) return Math.toIntExact(items.stream().filter(Map.class::isInstance).count());
-        var writingTasks = content.get("writingTasks");
+        var writingTasks = content.containsKey("tasks") ? content.get("tasks") : content.get("writingTasks");
         if (writingTasks instanceof List<?> items) return Math.toIntExact(items.stream().filter(Map.class::isInstance).count());
-        var speakingParts = content.get("speakingParts");
+        var speakingParts = content.containsKey("speakingParts") ? content.get("speakingParts") : content.get("parts");
         if (speakingParts instanceof List<?> items) return Math.toIntExact(items.stream().filter(Map.class::isInstance).count());
         var passageContent = content.get("passageContent");
         if (passageContent instanceof Map<?, ?> values) {
@@ -370,7 +375,8 @@ public class TestBankApplicationService {
     private int draftQuestionCount(Map<String, Object> content) {
         int fromPassages = countQuestionsInSections(content.get("passages"));
         if (fromPassages > 0) return fromPassages;
-        int fromListening = countQuestionsInSections(content.get("listeningParts"));
+        var listeningParts = content.containsKey("parts") ? content.get("parts") : content.get("listeningParts");
+        int fromListening = countQuestionsInSections(listeningParts);
         if (fromListening > 0) return fromListening;
         return countQuestionsInGroups(content.get("questionGroups"));
     }
@@ -401,7 +407,8 @@ public class TestBankApplicationService {
         if (hasDraftQuestions(content)) return true;
         if (hasText(content.get("promptText")) || hasText(content.get("transcriptText")) || hasText(content.get("sampleAnswer")))
             return true;
-        return countNonEmptyTextSections(content.get("writingTasks"), "promptHtml") > 0
+        Object writingTasks = content.containsKey("tasks") ? content.get("tasks") : content.get("writingTasks");
+        return countNonEmptyTextSections(writingTasks, "promptHtml") > 0
                 || countNonEmptyTextSections(content.get("speakingParts"), "cueCardPromptHtml") > 0
                 || countNonEmptyTextSections(content.get("listeningParts"), "transcriptHtml") > 0;
     }

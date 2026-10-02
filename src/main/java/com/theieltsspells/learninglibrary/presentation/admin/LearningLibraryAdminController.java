@@ -41,6 +41,10 @@ public class LearningLibraryAdminController {
     @PreAuthorize("@permissionPolicy.canAccessLibraryAdministration(authentication)")
     public ContentHubSummaryResponse summary() { return service.summary(); }
 
+    @GetMapping("/dashboard")
+    @PreAuthorize("@permissionPolicy.canAccessLibraryAdministration(authentication)")
+    public ContentHubDashboardResponse dashboard() { return service.dashboard(); }
+
     @GetMapping("/resources")
     @PreAuthorize("@permissionPolicy.canAccessLibraryAdministration(authentication)")
     public PageResponse<LearningResourceResponse> resources(
@@ -76,7 +80,7 @@ public class LearningLibraryAdminController {
         service.deleteResourceFile(resourceId, fileId, actor(jwt), canManageAny(authentication)); return ResponseEntity.noContent().build();
     }
     @GetMapping("/files/{fileId}/content")
-    @PreAuthorize("@permissionPolicy.canAccessLibraryAdministration(authentication)")
+    @PreAuthorize("@permissionPolicy.canAccessLibraryAdministration(authentication) or @permissionPolicy.has(authentication, 'assessment.attempt') or @permissionPolicy.has(authentication, 'library.published.read')")
     public ResponseEntity<InputStreamResource> resourceFileContent(@PathVariable UUID fileId) {
         var content = service.openResourceFile(fileId);
         MediaType mediaType;

@@ -30,6 +30,7 @@ class SecurityConfig {
                         .requestMatchers("/actuator/health", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/public/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/public/leads").permitAll()
+                        .requestMatchers("/api/v1/webhooks/**").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth -> oauth.jwt(jwt ->
                         jwt.jwtAuthenticationConverter(jwtAuthenticationConverter)))

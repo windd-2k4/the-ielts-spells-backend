@@ -7,6 +7,7 @@ import com.theieltsspells.testing.application.dto.TestValidationResponse;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -42,11 +43,7 @@ class TestDraftValidationService {
     }
 
     private void validateReading(TestBankResponse test, List<TestValidationIssueResponse> issues) {
-        try {
-            ReadingDraftValidator.validate(test.builderContent(), "FULL_TEST".equals(test.testType()));
-        } catch (RuntimeException exception) {
-            error(issues, "reading-draft", "Reading", null, exception.getMessage(), "reading-question-panel");
-        }
+        ReadingDraftValidator.validate(test, issues);
     }
 
     private void validateListening(TestBankResponse test, List<TestValidationIssueResponse> issues) {
@@ -83,10 +80,15 @@ class TestDraftValidationService {
             error(issues, "writing-full-tasks", "Cấu trúc Writing", null,
                     "Full Writing cần có đúng Task 1 và Task 2.", "test-builder-workspace");
         }
+        var taskNumbers = new HashSet<Integer>();
         for (int index = 0; index < tasks.size(); index++) {
             var task = tasks.get(index);
             int taskNo = number(task.get("taskNo"), index + 1);
             String title = "Writing Task " + taskNo;
+            if ((taskNo != 1 && taskNo != 2) || !taskNumbers.add(taskNo)) {
+                error(issues, "writing-" + index + "-task-number", title, null,
+                        "Mỗi đề chỉ được có một Task 1 và một Task 2 hợp lệ.", "test-builder-workspace");
+            }
             if (isBlank(stripHtml(text(task.get("promptHtml"))))) {
                 error(issues, "writing-" + taskNo + "-prompt", title, null,
                         "Chưa nhập đề bài.", "test-builder-workspace");
@@ -95,10 +97,29 @@ class TestDraftValidationService {
                 error(issues, "writing-" + taskNo + "-min-words", title, null,
                         "Số từ tối thiểu phải lớn hơn 0.", "test-builder-workspace");
             }
+            int expectedMinimum = taskNo == 1 ? 150 : 250;
+            if (number(task.get("minWords"), 0) < expectedMinimum) {
+                error(issues, "writing-" + taskNo + "-minimum-standard", title, null,
+                        "Số từ tối thiểu của Task " + taskNo + " phải từ " + expectedMinimum + " từ.",
+                        "test-builder-workspace");
+            }
             if (number(task.get("suggestedTimeMinutes"), 0) <= 0) {
                 error(issues, "writing-" + taskNo + "-time", title, null,
                         "Thời gian gợi ý phải lớn hơn 0.", "test-builder-workspace");
             }
+            if (taskNo == 1 && isBlank(text(task.get("imageUrl")))) {
+                error(issues, "writing-1-image", title, null,
+                        "Chưa tải biểu đồ, bản đồ hoặc hình quy trình của đề bài.", "test-builder-workspace");
+            }
+            if (taskNo == 1 && !isBlank(text(task.get("imageUrl")))
+                    && isBlank(text(task.get("imageAltText")))) {
+                error(issues, "writing-1-image-alt", title, null,
+                        "Chưa nhập mô tả cho hình đề bài.", "test-builder-workspace");
+            }
+        }
+        if ("FULL_TEST".equals(test.testType()) && !taskNumbers.equals(java.util.Set.of(1, 2))) {
+            error(issues, "writing-full-task-numbers", "Cấu trúc Writing", null,
+                    "Full Writing phải gồm đúng Task 1 và Task 2.", "test-builder-workspace");
         }
     }
 

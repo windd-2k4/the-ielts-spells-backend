@@ -19,6 +19,7 @@ public record StudentReadingAttemptResponse(
         boolean allowResultAfterSubmit,
         List<Map<String, Object>> sections,
         List<SavedReadingResponse> responses,
+        List<ReadingAnnotationResponse> annotations,
         BigDecimal autoScore,
         BigDecimal finalScore
 ) {

@@ -10,6 +10,9 @@ import com.theieltsspells.testing.application.dto.TestRevisionRequest;
 import com.theieltsspells.testing.application.dto.TestStatusRequest;
 import com.theieltsspells.testing.application.dto.TestValidationResponse;
 import com.theieltsspells.testing.application.dto.TestVersionResponse;
+import com.theieltsspells.testing.application.AiTestParserService;
+import com.theieltsspells.testing.application.dto.AiTestParseRequest;
+import com.theieltsspells.testing.application.dto.AiTestParseResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -30,6 +33,7 @@ import java.util.UUID;
 @SecurityRequirement(name = "bearerAuth")
 public class TestBankAdminController {
     private final TestBankApplicationService service;
+    private final AiTestParserService aiParserService;
     private final PermissionPolicy permissionPolicy;
 
     @GetMapping
@@ -48,6 +52,11 @@ public class TestBankAdminController {
             @AuthenticationPrincipal Jwt jwt) {
         var result = service.create(request, UUID.fromString(jwt.getSubject()));
         return ResponseEntity.created(URI.create("/api/v1/admin/test-bank/" + result.id())).body(result);
+    }
+    @PostMapping("/ai-parse")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'test.draft.create')")
+    public AiTestParseResponse aiParse(@Valid @RequestBody AiTestParseRequest request) {
+        return aiParserService.parse(request);
     }
     @PutMapping("/{id}")
     @PreAuthorize("@permissionPolicy.has(authentication, 'test.draft.update_own')")
