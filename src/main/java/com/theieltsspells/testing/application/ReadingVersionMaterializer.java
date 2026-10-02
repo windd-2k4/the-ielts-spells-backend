@@ -42,7 +42,7 @@ class ReadingVersionMaterializer {
 
         var passages = passages(content);
         if (passages.isEmpty()) {
-            throw new BusinessRuleException("Phiên bản Reading chưa có passage để xuất bản");
+            throw new BusinessRuleException("Phiên bản đề thi chưa có phần nội dung để xuất bản");
         }
 
         for (int passageIndex = 0; passageIndex < passages.size(); passageIndex++) {
@@ -50,7 +50,7 @@ class ReadingVersionMaterializer {
             var sectionId = insertSection(testVersionId, passage, passageIndex);
             var groups = maps(passage.get("questionGroups"));
             if (groups.isEmpty()) {
-                throw new BusinessRuleException("Reading passage " + (passageIndex + 1) + " chưa có Question Group");
+                throw new BusinessRuleException("Phần " + (passageIndex + 1) + " chưa có Question Group");
             }
             for (int groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
                 materializeGroup(testVersionId, sectionId, groups.get(groupIndex), groupIndex);
@@ -70,17 +70,18 @@ class ReadingVersionMaterializer {
     }
 
     private UUID insertSection(UUID testVersionId, Map<String, Object> passage, int displayOrder) {
-        String sectionKey = required(passage, "id", "Passage");
-        int sectionNo = number(passage.get("passageNo"), displayOrder + 1);
-        String rawContent = text(passage.get("content"), "");
+        String sectionKey = required(passage, "id", "Phần đề thi");
+        int sectionNo = number(passage.containsKey("partNo") ? passage.get("partNo") : passage.get("passageNo"), displayOrder + 1);
+        String rawContent = text(passage.containsKey("content") ? passage.get("content") : passage.get("transcriptHtml"), "");
         String sanitizedContent = HtmlSanitizer.sanitize(rawContent);
         UUID id = UUID.randomUUID();
+        String defaultTitle = passage.containsKey("partNo") ? "Listening Part " + sectionNo : "Reading Passage " + sectionNo;
         jdbc.update("""
                 insert into public.test_version_sections(
                   id, test_version_id, section_key, section_no, title, content_html, display_order
                 ) values (?, ?, ?, ?, ?, ?, ?)
                 """, id, testVersionId, sectionKey, sectionNo,
-                text(passage.get("title"), "Reading Passage " + sectionNo),
+                text(passage.get("title"), defaultTitle),
                 sanitizedContent, displayOrder);
         return id;
     }
@@ -266,8 +267,11 @@ class ReadingVersionMaterializer {
         for (int index = 0; index < options.size(); index++) {
             var option = options.get(index);
             String optionKey = required(option, "id", "Lựa chọn");
-            String content = required(option, "text", "Lựa chọn");
-            String sanitizedContent = HtmlSanitizer.sanitize(content);
+            String rawContent = nullableText(option.get("text"));
+            if (rawContent == null) {
+                rawContent = nullableText(option.get("code")) != null ? nullableText(option.get("code")) : required(option, "text", "Lựa chọn");
+            }
+            String sanitizedContent = HtmlSanitizer.sanitize(rawContent);
             jdbc.update("""
                     insert into public.test_version_question_options(
                       test_version_id, group_id, question_id, option_key, option_code, content, display_order
@@ -283,6 +287,10 @@ class ReadingVersionMaterializer {
         var passages = maps(content.get("passages"));
         if (!passages.isEmpty()) {
             return passages;
+        }
+        var parts = maps(content.containsKey("parts") ? content.get("parts") : content.get("listeningParts"));
+        if (!parts.isEmpty()) {
+            return parts;
         }
 
         var rootGroups = maps(content.get("questionGroups"));
@@ -315,6 +323,7 @@ class ReadingVersionMaterializer {
         copy(group, config, "gapFillTemplate");
         copy(group, config, "gapFillLayout");
         copy(group, config, "illustration");
+        copy(group, config, "linkedAudioTimestamp");
         return config;
     }
 

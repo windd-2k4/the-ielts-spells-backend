@@ -239,6 +239,10 @@ public class LearningLibraryApplicationService {
                                                             UUID actor, boolean canManageAny) {
         var resource = findResource(resourceId);
         assertCanMutateResource(resource, resource.getStatus(), actor, canManageAny);
+        return fileResponse(storeResourceFile(resourceId, fileRole, file, actor));
+    }
+
+    private LearningResourceFile storeResourceFile(UUID resourceId, String fileRole, MultipartFile file, UUID actor) {
         var originalFilename = normalizedFilename(file.getOriginalFilename());
         var objectPath = "resources/" + resourceId + "/" + UUID.randomUUID() + "-" + originalFilename;
         var stored = fileStorage.store(objectPath, file);
@@ -253,7 +257,9 @@ public class LearningLibraryApplicationService {
                 ? "application/octet-stream" : file.getContentType());
         value.setSizeBytes(file.getSize());
         value.setUploadedBy(actor);
-        return fileResponse(resourceFiles.save(value));
+        value = resourceFiles.saveAndFlush(value);
+        entityManager.refresh(value);
+        return value;
     }
 
     @Transactional
@@ -308,8 +314,7 @@ public class LearningLibraryApplicationService {
         resource.setStatus("PUBLISHED");
         resource = resources.saveAndFlush(resource);
         entityManager.refresh(resource);
-        uploadResourceFile(resource.getId(), "MAIN", file, actor, false);
-        var stored = resourceFiles.findByResourceIdAndArchivedAtIsNullOrderByCreatedAtAsc(resource.getId()).getFirst();
+        var stored = storeResourceFile(resource.getId(), "MAIN", file, actor);
         return mediaResponse(stored);
     }
 
@@ -321,7 +326,9 @@ public class LearningLibraryApplicationService {
         var count = entityManager.createNativeQuery("select count(*) from public.course_session_items where source_resource_id=:id")
                 .setParameter("id", file.getResourceId()).getSingleResult();
         if (((Number) count).longValue() > 0) throw new BusinessRuleException("File đang được gắn vào buổi học; hãy gỡ liên kết trước khi xóa");
-        deleteResourceFile(file.getResourceId(), fileId, actor, canManageAny);
+        fileStorage.delete(file);
+        resourceFiles.delete(file);
+        resources.delete(resource);
     }
 
     @Transactional

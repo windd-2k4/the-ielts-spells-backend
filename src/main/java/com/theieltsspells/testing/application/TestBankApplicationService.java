@@ -313,7 +313,7 @@ public class TestBankApplicationService {
                 returning id
                 """, UUID.class, test.id(), number, label, test.title(), test.description(), test.durationMinutes(),
                 test.skill().name(), test.testType(), json(test.tags()), json(publishedContent), actor);
-        if (test.skill() == SkillType.READING) {
+        if (test.skill() == SkillType.READING || test.skill() == SkillType.LISTENING) {
             readingVersionMaterializer.materialize(id, publishedContent);
         }
         return new TestVersionResponse(id, number, label, java.time.OffsetDateTime.now(), "");
@@ -355,11 +355,11 @@ public class TestBankApplicationService {
     private int draftSectionCount(Map<String, Object> content) {
         var passages = content.get("passages");
         if (passages instanceof List<?> items) return Math.toIntExact(items.stream().filter(Map.class::isInstance).count());
-        var listeningParts = content.get("listeningParts");
+        var listeningParts = content.containsKey("parts") ? content.get("parts") : content.get("listeningParts");
         if (listeningParts instanceof List<?> items) return Math.toIntExact(items.stream().filter(Map.class::isInstance).count());
         var writingTasks = content.containsKey("tasks") ? content.get("tasks") : content.get("writingTasks");
         if (writingTasks instanceof List<?> items) return Math.toIntExact(items.stream().filter(Map.class::isInstance).count());
-        var speakingParts = content.get("speakingParts");
+        var speakingParts = content.containsKey("speakingParts") ? content.get("speakingParts") : content.get("parts");
         if (speakingParts instanceof List<?> items) return Math.toIntExact(items.stream().filter(Map.class::isInstance).count());
         var passageContent = content.get("passageContent");
         if (passageContent instanceof Map<?, ?> values) {
@@ -375,7 +375,8 @@ public class TestBankApplicationService {
     private int draftQuestionCount(Map<String, Object> content) {
         int fromPassages = countQuestionsInSections(content.get("passages"));
         if (fromPassages > 0) return fromPassages;
-        int fromListening = countQuestionsInSections(content.get("listeningParts"));
+        var listeningParts = content.containsKey("parts") ? content.get("parts") : content.get("listeningParts");
+        int fromListening = countQuestionsInSections(listeningParts);
         if (fromListening > 0) return fromListening;
         return countQuestionsInGroups(content.get("questionGroups"));
     }

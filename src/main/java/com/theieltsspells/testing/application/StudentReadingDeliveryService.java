@@ -43,6 +43,7 @@ public class StudentReadingDeliveryService {
     private final JdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
     private final AcademicMembershipService memberships;
+    private final ReadingVersionMaterializer readingVersionMaterializer;
     private final ReadingAutoGrader grader = new ReadingAutoGrader();
 
     public List<StudentReadingAssignmentResponse> listAssignments(UUID studentId) {
@@ -164,18 +165,21 @@ public class StudentReadingDeliveryService {
     public StudentReadingAttemptResponse startOrResumeSelfPractice(UUID testVersionId, UUID studentId) {
         var versions = jdbc.query("""
                 select version.id test_version_id, version.title, version.description,
-                  version.duration_minutes, version.primary_skill
+                  version.duration_minutes, version.primary_skill, version.builder_content::text builder_content
                 from public.tests test
                 join public.test_versions version on version.id = test.current_published_version_id
                 where version.id = ? and test.status = 'PUBLISHED'
                 for update of test
                 """, (rs, ignored) -> new SelfPracticeVersion(
                 rs.getObject("test_version_id", UUID.class), rs.getString("title"),
-                rs.getString("description"), rs.getInt("duration_minutes"), rs.getString("primary_skill")
+                rs.getString("description"), rs.getInt("duration_minutes"), rs.getString("primary_skill"),
+                rs.getString("builder_content")
         ), testVersionId);
-        if (versions.isEmpty() || !"READING".equals(versions.getFirst().skill())) {
-            throw new ResourceNotFoundException("Không tìm thấy đề Reading đã xuất bản");
+        if (versions.isEmpty() || (!"READING".equals(versions.getFirst().skill()) && !"LISTENING".equals(versions.getFirst().skill()))) {
+            throw new ResourceNotFoundException("Không tìm thấy đề tự luyện đã xuất bản");
         }
+        var version = versions.getFirst();
+        readingVersionMaterializer.ensureMaterialized(version.id(), readMap(version.builderContent()));
 
         var active = jdbc.query("""
                 select id from public.test_attempts
@@ -192,7 +196,6 @@ public class StudentReadingDeliveryService {
                 where test_version_id = ? and student_id = ? and attempt_origin = 'SELF_PRACTICE'
                 """, Integer.class, testVersionId, studentId);
         var now = now();
-        var version = versions.getFirst();
         var expiresAt = now.plusMinutes(Math.max(1, version.durationMinutes()));
         short attemptNo = (short) Math.min(Short.MAX_VALUE, (used == null ? 0 : used) + 1);
         UUID attemptId = jdbc.queryForObject("""
@@ -547,8 +550,55 @@ public class StudentReadingDeliveryService {
             }
         }, versionId);
 
+        String rawBuilderContent = jdbc.query(
+                "select builder_content::text from public.test_versions where id = ?",
+                rs -> rs.next() ? rs.getString(1) : null,
+                versionId
+        );
+        if (rawBuilderContent != null && !rawBuilderContent.isBlank()) {
+            try {
+                Map<String, Object> builderMap = readMap(rawBuilderContent);
+                List<Map<String, Object>> parts = builderMap.containsKey("parts") ? maps(builderMap.get("parts"))
+                        : (builderMap.containsKey("listeningParts") ? maps(builderMap.get("listeningParts")) : List.of());
+                var partByNo = new LinkedHashMap<Integer, Map<String, Object>>();
+                for (var part : parts) {
+                    int pNo = number(part.get("partNo"), 0);
+                    if (pNo > 0) {
+                        partByNo.put(pNo, part);
+                    }
+                }
+                for (var sec : sections) {
+                    int sNo = (int) sec.get("sectionNo");
+                    var part = partByNo.get(sNo);
+                    if (part != null) {
+                        if (part.get("audioUrl") != null) sec.put("audioUrl", part.get("audioUrl"));
+                        if (part.get("audioFilename") != null) sec.put("audioFilename", part.get("audioFilename"));
+                        if (part.get("audioDurationSeconds") != null) sec.put("audioDurationSeconds", part.get("audioDurationSeconds"));
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
+
         sections.forEach(this::removeInternalId);
         return sections;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> maps(Object value) {
+        if (!(value instanceof List<?> list)) return List.of();
+        return list.stream()
+                .filter(item -> item instanceof Map)
+                .map(item -> (Map<String, Object>) item)
+                .toList();
+    }
+
+    private int number(Object value, int fallback) {
+        if (value instanceof Number n) return n.intValue();
+        if (value instanceof String s) {
+            try { return Integer.parseInt(s.trim()); } catch (NumberFormatException ignored) {}
+        }
+        return fallback;
     }
 
     private Map<String, Object> section(java.sql.ResultSet rs) throws java.sql.SQLException {
@@ -851,8 +901,8 @@ public class StudentReadingDeliveryService {
     }
 
     private void assertReadingAssignment(AssignmentContextView assignment) {
-        if (!"READING".equals(assignment.skill())) {
-            throw new BusinessRuleException("Lượt làm này không phải đề Reading");
+        if (!"READING".equals(assignment.skill()) && !"LISTENING".equals(assignment.skill())) {
+            throw new BusinessRuleException("Lượt làm này không phải đề Reading hoặc Listening");
         }
     }
 
@@ -979,7 +1029,8 @@ public class StudentReadingDeliveryService {
             String title,
             String description,
             int durationMinutes,
-            String skill
+            String skill,
+            String builderContent
     ) {
     }
 

@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -56,6 +57,24 @@ public class AiTestParserService {
     );
     private static final Pattern WORD_LIMIT_PATTERN = Pattern.compile(
             "(?i)(NO\\s+MORE\\s+THAN\\s+[^.\\n]+|ONE\\s+WORD\\s+ONLY)"
+    );
+    private static final Pattern ANSWER_HEADER_PATTERN = Pattern.compile(
+            "(?ium)^\\s*(?:[đĐ]áp án(?: đúng)?|dap an(?: dung)?|answer(?: key)?|correct answer|key)\\s*[:：\\-]\\s*(.+)$"
+    );
+    private static final Pattern EXPLANATION_HEADER_PATTERN = Pattern.compile(
+            "(?ium)^\\s*(?:giải thích(?: chi tiết(?: đáp án)?)?|giai thich(?: chi tiet(?: dap an)?)?|[lL]ời giải|loi giai|hướng dẫn giải|explanation|detailed explanation|solution|rationale)\\s*[:：\\-]?(.*)$"
+    );
+    private static final Pattern EVIDENCE_HEADER_PATTERN = Pattern.compile(
+            "(?ium)^\\s*(?:trích đoạn(?: chứa đáp án)?|trich doan(?: chua dap an)?|[bB]ằng chứng(?: trích dẫn)?|bang chung(?: trich dan)?|[đĐ]oạn trích|doan trich|evidence(?: quote)?|quote(?: from passage)?)\\s*[:：\\-]?(.*)$"
+    );
+    private static final Pattern KEYWORDS_HEADER_PATTERN = Pattern.compile(
+            "(?ium)^\\s*(?:keywords?|từ khóa(?: & paraphrase)?|tu khoa(?: & paraphrase)?|từ vựng(?: và paraphrase)?|tu vung(?: va paraphrase)?|vocabulary(?: notes?)?|vocab)\\s*[:：\\-]?(.*)$"
+    );
+    private static final Pattern TRAP_HEADER_PATTERN = Pattern.compile(
+            "(?ium)^\\s*(?:phân tích bẫy(?: đáp án)?|phan tich bay(?: dap an)?|bẫy đáp án|bay dap an|trap analysis|distractor analysis)\\s*[:：\\-]?(.*)$"
+    );
+    private static final Pattern REASONING_HEADER_PATTERN = Pattern.compile(
+            "(?ium)^\\s*(?:các bước suy luận|cac buoc suy luan|bước suy luận|buoc suy luan|reasoning steps?|steps)\\s*[:：\\-]?(.*)$"
     );
 
     private final ObjectMapper objectMapper;
@@ -198,9 +217,12 @@ public class AiTestParserService {
             passage.put("id", id("passage"));
             passage.put("passageNo", passageNo);
             passage.put("title", fallback(text(source.get("title")), "Reading Passage " + passageNo));
-            passage.put("content", ensureHtml(fallback(text(source.get("content")), index == 0 ? rawText : "")));
+            String passageHtml = ensureHtml(fallback(text(source.get("content")), index == 0 ? rawText : ""));
+            passage.put("content", passageHtml);
             passage.put("teacherAnnotations", List.of());
-            passage.put("questionGroups", normalizeQuestionGroups(source.get("questionGroups"), nextQuestion, warnings));
+            List<Map<String, Object>> groups = normalizeQuestionGroups(source.get("questionGroups"), nextQuestion, warnings);
+            resolveEvidenceOffsetsInPassage(passageHtml, groups);
+            passage.put("questionGroups", groups);
             passages.add(passage);
             index++;
         }
@@ -327,10 +349,16 @@ public class AiTestParserService {
     private Map<String, Object> normalizeQuestion(Map<?, ?> source, int number, String type,
                                                    List<Map<String, Object>> sharedOptions) {
         List<Map<String, Object>> options = normalizeQuestionOptions(source.get("options"));
-        List<String> answers = strings(source.get("correctAnswers"));
+        List<String> answers = strings(firstPresent(source, "correctAnswers", "answer", "correctAnswer", "answers"));
         if (!options.isEmpty()) answers = remapAnswers(answers, options, "label");
         if (!sharedOptions.isEmpty()) answers = remapAnswers(answers, sharedOptions, "code");
         String prompt = text(firstPresent(source, "prompt", "question", "text"));
+        String explanation = text(firstPresent(source, "explanation", "solution", "detailedExplanation", "giaiThich", "loiGiai", "rationale"));
+        String vocabularyNotes = text(firstPresent(source, "vocabularyNotes", "vocabulary", "keywords", "tuKhoa", "keyWords", "vocab"));
+        String trapAnalysis = text(firstPresent(source, "trapAnalysis", "distractorAnalysis", "bayDapAn", "trap"));
+        List<String> reasoningSteps = extractReasoningSteps(firstPresent(source, "reasoningSteps", "reasoning", "steps", "cacBuocSuyLuan"));
+        List<Map<String, Object>> evidenceSpans = normalizeQuestionEvidenceSpans(source);
+
         Map<String, Object> question = new LinkedHashMap<>();
         question.put("id", id("question"));
         question.put("number", number);
@@ -339,8 +367,21 @@ public class AiTestParserService {
         question.put("options", options);
         question.put("correctAnswers", answers);
         question.put("acceptableAnswers", strings(source.get("acceptableAnswers")));
-        question.put("explanation", text(source.get("explanation")));
-        question.put("teacherNote", "");
+        question.put("explanation", explanation);
+        if (!vocabularyNotes.isBlank()) question.put("vocabularyNotes", vocabularyNotes);
+        if (!trapAnalysis.isBlank()) question.put("trapAnalysis", trapAnalysis);
+        if (!reasoningSteps.isEmpty()) question.put("reasoningSteps", reasoningSteps);
+        if (!evidenceSpans.isEmpty()) {
+            question.put("evidenceSpans", evidenceSpans);
+            if (evidenceSpans.size() == 1 && evidenceSpans.getFirst().get("start") != null && evidenceSpans.getFirst().get("end") != null) {
+                question.put("passageSpan", Map.of(
+                        "start", evidenceSpans.getFirst().get("start"),
+                        "end", evidenceSpans.getFirst().get("end"),
+                        "quote", evidenceSpans.getFirst().get("quote")
+                ));
+            }
+        }
+        question.put("teacherNote", text(source.get("teacherNote")));
         question.put("isComplete", !prompt.isBlank() && !answers.isEmpty());
         question.put("hasError", prompt.isBlank() || answers.isEmpty());
         if (prompt.isBlank()) question.put("errorMessage", "Chưa có nội dung câu hỏi.");
@@ -387,9 +428,12 @@ public class AiTestParserService {
             passage.put("id", id("passage"));
             passage.put("passageNo", section.number());
             passage.put("title", extractTitle(split.content(), null, SkillType.READING, "PASSAGE_" + section.number()));
-            passage.put("content", ensureHtml(split.content()));
+            String passageHtml = ensureHtml(split.content());
+            passage.put("content", passageHtml);
             passage.put("teacherAnnotations", List.of());
-            passage.put("questionGroups", parseQuestionGroups(split.questions(), nextQuestion, warnings));
+            List<Map<String, Object>> groups = parseQuestionGroups(split.questions(), nextQuestion, warnings);
+            resolveEvidenceOffsetsInPassage(passageHtml, groups);
+            passage.put("questionGroups", groups);
             passages.add(passage);
         }
         content.put("passages", passages);
@@ -482,21 +526,28 @@ public class AiTestParserService {
                 int segmentEnd = index + 1 < matches.size() ? matches.get(index + 1).start() : block.length();
                 String continuation = block.substring(current.end(), segmentEnd);
                 List<Map<String, Object>> options = parseQuestionOptions(continuation);
+                ParsedQuestionDetails details = parseQuestionDetails(current.firstLine(), continuation, options, sharedOptions, type);
                 int number = current.number() >= nextQuestion[0] ? current.number() : nextQuestion[0];
                 nextQuestion[0] = number + 1;
                 Map<String, Object> question = new LinkedHashMap<>();
                 question.put("id", id("question"));
                 question.put("number", number);
                 question.put("typeFormat", type);
-                question.put("prompt", joinPrompt(current.firstLine(), continuation, !options.isEmpty()));
+                question.put("prompt", details.prompt());
                 question.put("options", options);
-                question.put("correctAnswers", List.of());
+                question.put("correctAnswers", details.correctAnswers());
                 question.put("acceptableAnswers", List.of());
-                question.put("explanation", "");
+                question.put("explanation", details.explanation());
+                if (!details.vocabularyNotes().isBlank()) question.put("vocabularyNotes", details.vocabularyNotes());
+                if (!details.trapAnalysis().isBlank()) question.put("trapAnalysis", details.trapAnalysis());
+                if (!details.reasoningSteps().isEmpty()) question.put("reasoningSteps", details.reasoningSteps());
+                if (!details.evidenceSpans().isEmpty()) question.put("evidenceSpans", details.evidenceSpans());
                 question.put("teacherNote", "");
-                question.put("isComplete", false);
-                question.put("hasError", true);
-                question.put("errorMessage", "Chưa có đáp án đúng.");
+                boolean isComplete = !details.prompt().isBlank() && !details.correctAnswers().isEmpty();
+                question.put("isComplete", isComplete);
+                question.put("hasError", !isComplete);
+                if (details.prompt().isBlank()) question.put("errorMessage", "Chưa có nội dung câu hỏi.");
+                else if (details.correctAnswers().isEmpty()) question.put("errorMessage", "Chưa có đáp án đúng.");
                 questions.add(question);
             }
             int start = intValue(questions.getFirst().get("number"), 1);
@@ -575,13 +626,23 @@ public class AiTestParserService {
                 Paragraph lookup is MATCHING_INFORMATION. People/categories are MATCHING_FEATURES.
                 Each group must include title, startQuestionNo, endQuestionNo, typeFormat, instructions, wordLimitRule,
                 answerSource, requiredAnswerCount, sharedOptions [{code,text}], and questions.
-                Each question must include number, typeFormat, prompt, options [{label,text}], correctAnswers, acceptableAnswers.
+                Each question must include number, typeFormat, prompt, options [{label,text}], correctAnswers, acceptableAnswers,
+                explanation, evidenceQuote, vocabularyNotes, reasoningSteps, trapAnalysis.
                 Multiple-choice answers use labels such as A; matching answers use shared-option codes.
+                When the source contains answers, explanations, passage evidence/quotes, or keywords/vocabulary
+                (e.g., under headers like "Đáp án", "Giải thích", "Trích đoạn chứa đáp án", "Bằng chứng", "Evidence", "Keywords", "Từ khóa"):
+                - Put the answer in correctAnswers (e.g., ["B"]).
+                - Put the explanation in explanation (e.g., "Thông tin nằm ở câu thứ hai của đoạn 1...").
+                - Put the verbatim passage quote in evidenceQuote (e.g., "Unlike incandescence, which produces light through heat, bioluminescence is a form of 'cold light'...").
+                - Put keywords, paraphrases, or vocabulary notes in vocabularyNotes (e.g., "heatless illumination, chemical reaction, oxidation").
+                - If reasoning steps are broken down, put them in reasoningSteps (array of strings).
+                - If distractor/trap analysis is provided, put it in trapAnalysis.
+                Never place the explanation, evidence quote, or keywords inside the question prompt or options.
                 """;
         String skillPrompt = switch (skill) {
             case READING -> common + """
                     Parse IELTS Reading (%s). Return {"title":"...","passages":[{"passageNo":1,"title":"...",
-                    "content":"<p>...</p>","questionGroups":[...]}]}. Passage content excludes questions and answer keys.
+                    "content":"<p>...</p>","questionGroups":[...]}]}. Passage content excludes questions, answer keys, explanations, and metadata.
                     """.formatted(format);
             case LISTENING -> common + """
                     Parse IELTS Listening (%s). Return {"title":"...","parts":[{"partNo":1,"title":"...",
@@ -945,12 +1006,352 @@ public class AiTestParserService {
     }
 
     private List<String> strings(Object value) {
-        List<String> result = new ArrayList<>();
-        for (Object item : list(value)) {
-            String string = text(item);
-            if (!string.isBlank()) result.add(string);
+        if (value == null) return List.of();
+        if (value instanceof List<?> list) {
+            List<String> result = new ArrayList<>();
+            for (Object item : list) {
+                String string = text(item);
+                if (!string.isBlank()) result.add(string);
+            }
+            return result;
         }
+        String single = text(value);
+        if (single.isBlank()) return List.of();
+        if (single.contains(",") && !single.contains(" ")) {
+            return Arrays.stream(single.split(",")).map(String::trim).filter(s -> !s.isBlank()).toList();
+        }
+        return List.of(single);
+    }
+
+    private List<Map<String, Object>> normalizeQuestionEvidenceSpans(Map<?, ?> source) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        Object rawSpans = source.get("evidenceSpans");
+        if (rawSpans instanceof List<?> list && !list.isEmpty()) {
+            for (Object item : list) {
+                if (item instanceof Map<?, ?> itemMap) {
+                    Map<String, Object> span = new LinkedHashMap<>();
+                    span.put("id", fallback(text(itemMap.get("id")), id("evidence")));
+                    span.put("start", nullableInteger(itemMap.get("start")));
+                    span.put("end", nullableInteger(itemMap.get("end")));
+                    span.put("quote", cleanEvidenceQuote(text(itemMap.get("quote"))));
+                    span.put("label", fallback(text(itemMap.get("label")), "Trích đoạn đáp án"));
+                    String mode = text(itemMap.get("mode"));
+                    span.put("mode", mode.equalsIgnoreCase("NO_DIRECT_EVIDENCE") || mode.equalsIgnoreCase("WHOLE_PARAGRAPH") ? mode.toUpperCase(Locale.ROOT) : "DIRECT_QUOTE");
+                    result.add(span);
+                }
+            }
+            if (!result.isEmpty()) return result;
+        }
+
+        String quote = cleanEvidenceQuote(text(firstPresent(source, "evidenceQuote", "quote", "evidence", "passageQuote", "trichDoan", "bangChung")));
+        if (!quote.isBlank()) {
+            Map<String, Object> span = new LinkedHashMap<>();
+            span.put("id", id("evidence"));
+            span.put("start", null);
+            span.put("end", null);
+            span.put("quote", quote);
+            span.put("label", "Trích đoạn đáp án");
+            span.put("mode", "DIRECT_QUOTE");
+            result.add(span);
+            return result;
+        }
+
+        Map<?, ?> legacy = map(source.get("passageSpan"));
+        if (!legacy.isEmpty()) {
+            String legacyQuote = cleanEvidenceQuote(text(legacy.get("quote")));
+            Integer start = nullableInteger(legacy.get("start"));
+            Integer end = nullableInteger(legacy.get("end"));
+            Map<String, Object> span = new LinkedHashMap<>();
+            span.put("id", id("evidence"));
+            span.put("start", start);
+            span.put("end", end);
+            span.put("quote", legacyQuote);
+            span.put("label", "Trích đoạn đáp án");
+            span.put("mode", "DIRECT_QUOTE");
+            result.add(span);
+        }
+
         return result;
+    }
+
+    private String cleanEvidenceQuote(String quote) {
+        if (quote == null) return "";
+        String trimmed = quote.trim();
+        while ((trimmed.startsWith("\"") && trimmed.endsWith("\"") && trimmed.length() >= 2)
+                || (trimmed.startsWith("“") && trimmed.endsWith("”") && trimmed.length() >= 2)
+                || (trimmed.startsWith("‘") && trimmed.endsWith("’") && trimmed.length() >= 2)
+                || (trimmed.startsWith("'") && trimmed.endsWith("'") && trimmed.length() >= 2)) {
+            trimmed = trimmed.substring(1, trimmed.length() - 1).trim();
+        }
+        return trimmed;
+    }
+
+    private List<String> extractReasoningSteps(Object value) {
+        if (value == null) return List.of();
+        if (value instanceof List<?> list) {
+            return list.stream().map(this::text).filter(s -> !s.isBlank()).toList();
+        }
+        String single = text(value);
+        if (single.isBlank()) return List.of();
+        return Arrays.stream(single.split("\\R")).map(String::trim).filter(s -> !s.isBlank()).toList();
+    }
+
+    private Integer nullableInteger(Object value) {
+        if (value instanceof Number number) return number.intValue();
+        if (value == null) return null;
+        try {
+            return Integer.parseInt(value.toString().trim());
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private void resolveEvidenceOffsetsInPassage(String passageHtml, List<Map<String, Object>> questionGroups) {
+        if (passageHtml == null || passageHtml.isBlank() || questionGroups == null || questionGroups.isEmpty()) return;
+        String plainText = htmlToPlainText(passageHtml);
+        if (plainText.isBlank()) return;
+
+        String normalizedSource = normalizeForMatching(plainText);
+        for (Map<String, Object> group : questionGroups) {
+            Object rawQuestions = group.get("questions");
+            if (!(rawQuestions instanceof List<?> questions)) continue;
+            for (Object q : questions) {
+                if (!(q instanceof Map<?, ?> qMap)) continue;
+                @SuppressWarnings("unchecked")
+                Map<String, Object> question = (Map<String, Object>) qMap;
+                Object rawSpans = question.get("evidenceSpans");
+                if (!(rawSpans instanceof List<?> spans)) continue;
+                for (Object s : spans) {
+                    if (!(s instanceof Map<?, ?> sMap)) continue;
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> span = (Map<String, Object>) sMap;
+                    if (span.get("start") != null && span.get("end") != null) continue;
+                    String quote = text(span.get("quote"));
+                    if (quote.isBlank()) continue;
+                    int[] range = findQuoteOffsets(plainText, normalizedSource, quote);
+                    if (range != null) {
+                        span.put("start", range[0]);
+                        span.put("end", range[1]);
+                        if (question.get("passageSpan") == null) {
+                            question.put("passageSpan", Map.of(
+                                    "start", range[0],
+                                    "end", range[1],
+                                    "quote", quote
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private String htmlToPlainText(String html) {
+        if (html == null) return "";
+        return html.replaceAll("(?i)<br\\s*/?>", "\n")
+                .replaceAll("(?i)</p>", "\n\n")
+                .replaceAll("<[^>]+>", "")
+                .replace("&nbsp;", " ")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&");
+    }
+
+    private String normalizeForMatching(String text) {
+        return text.replaceAll("[\\u00AD\\u200B\\u200C\\u200D\\u2060\\uFEFF]", "")
+                .replaceAll("[\\s\\u00A0\\u202F]+", " ")
+                .trim()
+                .toLowerCase(Locale.ROOT);
+    }
+
+    private int[] findQuoteOffsets(String plainText, String normalizedSource, String quote) {
+        String normalizedQuote = normalizeForMatching(quote);
+        if (normalizedQuote.isBlank()) return null;
+        int normIdx = normalizedSource.indexOf(normalizedQuote);
+        if (normIdx < 0 && normalizedQuote.length() > 50) {
+            normIdx = normalizedSource.indexOf(normalizedQuote.substring(0, 50));
+        }
+        if (normIdx < 0) return null;
+
+        int normCursor = 0;
+        int sourceStart = -1;
+        int sourceEnd = -1;
+        boolean inWhitespace = false;
+        int matchedNormCount = 0;
+        int targetNormLength = Math.min(normalizedQuote.length(), normalizedSource.length() - normIdx);
+
+        for (int i = 0; i < plainText.length(); i++) {
+            char c = plainText.charAt(i);
+            if (c == '\u00AD' || c == '\u200B' || c == '\u200C' || c == '\u200D' || c == '\u2060' || c == '\uFEFF') {
+                continue;
+            }
+            boolean isSpace = Character.isWhitespace(c) || c == '\u00A0' || c == '\u202F';
+            if (isSpace) {
+                if (!inWhitespace) {
+                    if (normCursor == normIdx && sourceStart < 0) {
+                        sourceStart = i;
+                    }
+                    if (normCursor >= normIdx && matchedNormCount < targetNormLength) {
+                        matchedNormCount++;
+                        sourceEnd = i + 1;
+                    }
+                    normCursor++;
+                    inWhitespace = true;
+                }
+            } else {
+                inWhitespace = false;
+                if (normCursor == normIdx && sourceStart < 0) {
+                    sourceStart = i;
+                }
+                if (normCursor >= normIdx && matchedNormCount < targetNormLength) {
+                    matchedNormCount++;
+                    sourceEnd = i + 1;
+                }
+                normCursor++;
+            }
+            if (matchedNormCount >= targetNormLength) break;
+        }
+
+        if (sourceStart >= 0 && sourceEnd > sourceStart) {
+            return new int[]{sourceStart, sourceEnd};
+        }
+        return null;
+    }
+
+    private record ParsedQuestionDetails(
+            String prompt,
+            List<String> correctAnswers,
+            String explanation,
+            String vocabularyNotes,
+            String trapAnalysis,
+            List<String> reasoningSteps,
+            List<Map<String, Object>> evidenceSpans
+    ) {}
+
+    private ParsedQuestionDetails parseQuestionDetails(String firstLine, String continuation,
+                                                       List<Map<String, Object>> options,
+                                                       List<Map<String, Object>> sharedOptions,
+                                                       String type) {
+        List<String> rawAnswers = new ArrayList<>();
+        StringBuilder promptExtra = new StringBuilder();
+        StringBuilder explanation = new StringBuilder();
+        StringBuilder evidence = new StringBuilder();
+        StringBuilder keywords = new StringBuilder();
+        StringBuilder trap = new StringBuilder();
+        List<String> reasoning = new ArrayList<>();
+
+        enum Section { PROMPT_EXTRA, OPTIONS, EXPLANATION, EVIDENCE, KEYWORDS, TRAP, REASONING }
+        Section currentSection = Section.PROMPT_EXTRA;
+
+        for (String rawLine : continuation.lines().toList()) {
+            String line = rawLine.trim();
+            if (line.isBlank()) continue;
+
+            Matcher ansMatcher = ANSWER_HEADER_PATTERN.matcher(line);
+            if (ansMatcher.matches()) {
+                String ansText = ansMatcher.group(1).trim();
+                for (String part : ansText.split("[,;/]")) {
+                    String clean = part.trim();
+                    if (!clean.isBlank()) rawAnswers.add(clean);
+                }
+                currentSection = Section.OPTIONS;
+                continue;
+            }
+
+            Matcher expMatcher = EXPLANATION_HEADER_PATTERN.matcher(line);
+            if (expMatcher.matches()) {
+                currentSection = Section.EXPLANATION;
+                String rest = expMatcher.group(1).trim();
+                if (!rest.isBlank()) explanation.append(rest).append("\n");
+                continue;
+            }
+
+            Matcher eviMatcher = EVIDENCE_HEADER_PATTERN.matcher(line);
+            if (eviMatcher.matches()) {
+                currentSection = Section.EVIDENCE;
+                String rest = eviMatcher.group(1).trim();
+                if (!rest.isBlank()) evidence.append(rest).append("\n");
+                continue;
+            }
+
+            Matcher keyMatcher = KEYWORDS_HEADER_PATTERN.matcher(line);
+            if (keyMatcher.matches()) {
+                currentSection = Section.KEYWORDS;
+                String rest = keyMatcher.group(1).trim();
+                if (!rest.isBlank()) keywords.append(rest).append("\n");
+                continue;
+            }
+
+            Matcher trMatcher = TRAP_HEADER_PATTERN.matcher(line);
+            if (trMatcher.matches()) {
+                currentSection = Section.TRAP;
+                String rest = trMatcher.group(1).trim();
+                if (!rest.isBlank()) trap.append(rest).append("\n");
+                continue;
+            }
+
+            Matcher reMatcher = REASONING_HEADER_PATTERN.matcher(line);
+            if (reMatcher.matches()) {
+                currentSection = Section.REASONING;
+                String rest = reMatcher.group(1).trim();
+                if (!rest.isBlank()) reasoning.add(rest);
+                continue;
+            }
+
+            if (OPTION_LINE_PATTERN.matcher(line).matches()) {
+                currentSection = Section.OPTIONS;
+                continue;
+            }
+
+            switch (currentSection) {
+                case PROMPT_EXTRA -> {
+                    if (promptExtra.length() > 0) promptExtra.append(" ");
+                    promptExtra.append(line);
+                }
+                case EXPLANATION -> explanation.append(line).append("\n");
+                case EVIDENCE -> evidence.append(line).append("\n");
+                case KEYWORDS -> keywords.append(line).append("\n");
+                case TRAP -> trap.append(line).append("\n");
+                case REASONING -> reasoning.add(line);
+                case OPTIONS -> {
+                    explanation.append(line).append("\n");
+                }
+            }
+        }
+
+        String joinedPrompt = firstLine.trim();
+        if (options.isEmpty() && promptExtra.length() > 0) {
+            joinedPrompt = joinedPrompt.isBlank() ? promptExtra.toString().trim()
+                    : joinedPrompt + " " + promptExtra.toString().trim();
+        }
+
+        List<String> remappedAnswers = rawAnswers;
+        if (!options.isEmpty()) remappedAnswers = remapAnswers(remappedAnswers, options, "label");
+        if (!sharedOptions.isEmpty()) remappedAnswers = remapAnswers(remappedAnswers, sharedOptions, "code");
+
+        List<Map<String, Object>> evidenceSpans = new ArrayList<>();
+        String cleanedEvidenceQuote = cleanEvidenceQuote(evidence.toString().trim());
+        if (!cleanedEvidenceQuote.isBlank()) {
+            Map<String, Object> span = new LinkedHashMap<>();
+            span.put("id", id("evidence"));
+            span.put("start", null);
+            span.put("end", null);
+            span.put("quote", cleanedEvidenceQuote);
+            span.put("label", "Trích đoạn đáp án");
+            span.put("mode", "DIRECT_QUOTE");
+            evidenceSpans.add(span);
+        }
+
+        return new ParsedQuestionDetails(
+                joinedPrompt,
+                remappedAnswers,
+                explanation.toString().trim(),
+                keywords.toString().trim(),
+                trap.toString().trim(),
+                reasoning,
+                evidenceSpans
+        );
     }
 
     private record ContentAndQuestions(String content, String questions) { }

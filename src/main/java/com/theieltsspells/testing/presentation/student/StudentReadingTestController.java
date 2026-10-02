@@ -30,7 +30,7 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/student/reading")
+@RequestMapping({"/api/v1/student/reading", "/api/v1/student/listening"})
 @RequiredArgsConstructor
 @Tag(name = "Student - Reading tests")
 @SecurityRequirement(name = "bearerAuth")
