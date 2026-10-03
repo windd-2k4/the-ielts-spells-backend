@@ -324,6 +324,8 @@ class ReadingVersionMaterializer {
         copy(group, config, "gapFillLayout");
         copy(group, config, "illustration");
         copy(group, config, "linkedAudioTimestamp");
+        copy(group, config, "questionTimestamps");
+        copy(group, config, "questionEvidenceQuotes");
         return config;
     }
 
