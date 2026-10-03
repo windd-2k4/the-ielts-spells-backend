@@ -238,7 +238,8 @@ public class TestBankApplicationService {
                     order by case when task.value ->> 'taskNo' = '1' then 0 else 1 end,
                              task.position
                     limit 1) writing_task_image,
-                  jsonb_path_query_array(t.builder_content, '$.**.questionType')::text question_types,
+                  (jsonb_path_query_array(t.builder_content, '$.**.questionType') ||
+                   jsonb_path_query_array(t.builder_content, '$.**.typeFormat'))::text question_types,
                   case
                     when (select count(*) from public.test_sections s where s.test_id=t.id) > 0
                       then (select count(*) from public.test_sections s where s.test_id=t.id)
