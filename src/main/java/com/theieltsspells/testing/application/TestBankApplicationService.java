@@ -238,8 +238,11 @@ public class TestBankApplicationService {
                     order by case when task.value ->> 'taskNo' = '1' then 0 else 1 end,
                              task.position
                     limit 1) writing_task_image,
-                  (jsonb_path_query_array(t.builder_content, '$.**.questionType') ||
-                   jsonb_path_query_array(t.builder_content, '$.**.typeFormat'))::text question_types,
+                  (select coalesce(jsonb_agg(distinct question_type), '[]'::jsonb)
+                     from jsonb_array_elements(
+                       jsonb_path_query_array(t.builder_content, 'strict $.**.questionType') ||
+                       jsonb_path_query_array(t.builder_content, 'strict $.**.typeFormat')
+                     ) question_type)::text question_types,
                   case
                     when (select count(*) from public.test_sections s where s.test_id=t.id) > 0
                       then (select count(*) from public.test_sections s where s.test_id=t.id)
@@ -263,7 +266,7 @@ public class TestBankApplicationService {
                           join public.test_sections s on s.id=q.section_id where s.test_id=t.id) > 0
                       then (select count(*) from public.questions q
                             join public.test_sections s on s.id=q.section_id where s.test_id=t.id)
-                    else jsonb_array_length(jsonb_path_query_array(t.builder_content, '$.**.questions[*]'))
+                    else jsonb_array_length(jsonb_path_query_array(t.builder_content, 'strict $.**.questions[*]'))
                   end question_count,
                   (select count(distinct ta.course_id) from public.test_assignments ta where ta.test_id=t.id) course_count,
                   coalesce(p.full_name, p.email, 'Không xác định') creator_name,
