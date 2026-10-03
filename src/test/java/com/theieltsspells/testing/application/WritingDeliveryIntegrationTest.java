@@ -7,7 +7,6 @@ import com.theieltsspells.testing.application.dto.SaveWritingResponsesRequest;
 import com.theieltsspells.testing.application.dto.TestBankRequest;
 import com.theieltsspells.writingevaluation.application.WritingEvaluationApplicationService;
 import com.theieltsspells.writingevaluation.application.dto.ReviewWritingEvaluationRequest;
-import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -59,13 +58,6 @@ class WritingDeliveryIntegrationTest {
         registry.add("spring.flyway.enabled", () -> "true");
     }
 
-    @AfterAll
-    static void stopManagedPostgres() {
-        if ((EXTERNAL_JDBC_URL == null || EXTERNAL_JDBC_URL.isBlank()) && POSTGRES.isRunning()) {
-            POSTGRES.stop();
-        }
-    }
-
     @Autowired TestBankApplicationService testBankService;
     @Autowired StudentWritingDeliveryService writingDeliveryService;
     @Autowired WritingEvaluationApplicationService evaluationService;
@@ -85,6 +77,8 @@ class WritingDeliveryIntegrationTest {
         task.put("taskNo", 1);
         task.put("title", "Academic Writing Task 1");
         task.put("promptHtml", "<p>Summarise the information shown in the chart.</p><script>alert('x')</script>");
+        task.put("imageUrl", "https://example.test/writing-task-1-chart.png");
+        task.put("imageAltText", "Line chart used for the Writing Task 1 prompt");
         task.put("minWords", 150);
         task.put("suggestedTimeMinutes", 20);
         task.put("responseMode", "FREEFORM");

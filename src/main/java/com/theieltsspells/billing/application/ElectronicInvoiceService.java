@@ -1,7 +1,7 @@
 package com.theieltsspells.billing.application;
 
-import com.theieltsspells.academic.domain.Course;
-import com.theieltsspells.academic.infrastructure.persistence.CourseRepository;
+import com.theieltsspells.academic.application.BillingCourseQueryService;
+import com.theieltsspells.academic.application.BillingCourseView;
 import com.theieltsspells.billing.application.dto.InvoiceAdminDto;
 import com.theieltsspells.billing.application.dto.InvoiceStatsDto;
 import com.theieltsspells.billing.domain.*;
@@ -44,7 +44,7 @@ public class ElectronicInvoiceService {
     private final OrderRepository orderRepository;
     private final BillingSettingRepository billingSettingRepository;
     private final SepayEInvoiceClient sepayEInvoiceClient;
-    private final CourseRepository courseRepository;
+    private final BillingCourseQueryService courses;
     private final EmailBillingNotificationService emailService;
     private final InvoiceAuditLogRepository auditLogRepository;
 
@@ -279,7 +279,7 @@ public class ElectronicInvoiceService {
         recordAudit(invoice.getId(), "CREATE_SENT", "SYSTEM", "Bắt đầu gửi lệnh tạo HĐĐT tới SePay", null);
 
         try {
-            Course course = order != null ? courseRepository.findById(order.getCourseId()).orElse(null) : null;
+            BillingCourseView course = order != null ? courses.findById(order.getCourseId()).orElse(null) : null;
 
             // Tìm Provider Account ID nếu chưa cấu hình
             String providerAccountId = settings.getActiveProviderAccountId();
@@ -342,7 +342,7 @@ public class ElectronicInvoiceService {
                     invoice.getBuyerEmail(),
                     invoice.getBuyerPhone(),
                     order != null ? order.getOrderCode() : invoice.getReferenceCode(),
-                    course != null ? course.getCode() : "IELTS-TUITION",
+                    course != null ? course.code() : "IELTS-TUITION",
                     invoice.getProductName() != null ? invoice.getProductName() : "Đóng học phí đào tạo IELTS",
                     "Khóa",
                     1,

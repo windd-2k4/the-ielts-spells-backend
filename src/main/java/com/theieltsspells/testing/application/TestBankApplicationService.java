@@ -10,6 +10,7 @@ import com.theieltsspells.shared.persistence.enums.SkillType;
 import com.theieltsspells.shared.web.PageResponse;
 import com.theieltsspells.testing.application.dto.TestBankRequest;
 import com.theieltsspells.testing.application.dto.TestBankResponse;
+import com.theieltsspells.testing.application.dto.TestBankSummaryResponse;
 import com.theieltsspells.testing.application.dto.TestValidationResponse;
 import com.theieltsspells.testing.application.dto.TestVersionResponse;
 import lombok.RequiredArgsConstructor;
@@ -37,9 +38,9 @@ public class TestBankApplicationService {
     private final TestDraftValidationService validationService;
     private final ReadingVersionMaterializer readingVersionMaterializer;
 
-    public PageResponse<TestBankResponse> list(String query, SkillType skill, String status,
+    public PageResponse<TestBankSummaryResponse> list(String query, SkillType skill, String status,
                                                String testType, String format, int page, int size) {
-        int safeSize = Math.min(Math.max(size, 1), 100);
+        int safeSize = Math.min(Math.max(size, 1), 24);
         int safePage = Math.max(page, 0);
         var where = new StringBuilder(" where 1=1");
         var args = new ArrayList<Object>();
@@ -64,7 +65,7 @@ public class TestBankApplicationService {
         } else where.append(" and t.status <> 'ARCHIVED'");
         var total = jdbc.queryForObject("select count(*) from public.tests t" + where, Long.class, args.toArray());
         var dataArgs = new ArrayList<>(args); dataArgs.add(safeSize); dataArgs.add(safePage * safeSize);
-        var content = jdbc.query(selectSql() + where + " order by t.updated_at desc limit ? offset ?", this::map, dataArgs.toArray());
+        var content = jdbc.query(summarySelectSql() + where + " order by t.updated_at desc limit ? offset ?", this::mapSummary, dataArgs.toArray());
         long count = total == null ? 0 : total;
         int totalPages = (int) Math.ceil((double) count / safeSize);
         return new PageResponse<>(content, safePage, safeSize, count, totalPages, safePage == 0, safePage + 1 >= totalPages);
@@ -216,6 +217,82 @@ public class TestBankApplicationService {
                 left join public.test_versions published on published.id=t.current_published_version_id
                 left join public.profiles publisher on publisher.id=published.published_by
                 """;
+    }
+
+    private String summarySelectSql() {
+        return """
+                select t.id, t.code, t.title, t.description, t.primary_skill, t.test_type,
+                  t.duration_minutes, t.version, t.status, t.tags::text tags, t.created_at,
+                  t.updated_at, t.draft_revision,
+                  coalesce(nullif(t.builder_content ->> 'sectionsPreset', ''),
+                           nullif(t.builder_content ->> 'format', '')) format,
+                  t.builder_content -> 'coverImage' cover_image,
+                  (select jsonb_strip_nulls(jsonb_build_object(
+                            'fileUrl', task.value ->> 'imageUrl',
+                            'altText', task.value ->> 'imageAltText'))
+                     from jsonb_array_elements(case
+                       when jsonb_typeof(t.builder_content -> 'tasks') = 'array'
+                         then t.builder_content -> 'tasks' else '[]'::jsonb end)
+                       with ordinality task(value, position)
+                    where coalesce(task.value ->> 'imageUrl', '') <> ''
+                    order by case when task.value ->> 'taskNo' = '1' then 0 else 1 end,
+                             task.position
+                    limit 1) writing_task_image,
+                  (select coalesce(jsonb_agg(distinct question_type), '[]'::jsonb)
+                     from jsonb_array_elements(
+                       jsonb_path_query_array(t.builder_content, 'strict $.**.questionType') ||
+                       jsonb_path_query_array(t.builder_content, 'strict $.**.typeFormat')
+                     ) question_type)::text question_types,
+                  case
+                    when (select count(*) from public.test_sections s where s.test_id=t.id) > 0
+                      then (select count(*) from public.test_sections s where s.test_id=t.id)
+                    when jsonb_typeof(t.builder_content -> 'passages') = 'array'
+                      then jsonb_array_length(t.builder_content -> 'passages')
+                    when jsonb_typeof(t.builder_content -> 'listeningParts') = 'array'
+                      then jsonb_array_length(t.builder_content -> 'listeningParts')
+                    when jsonb_typeof(t.builder_content -> 'parts') = 'array'
+                      then jsonb_array_length(t.builder_content -> 'parts')
+                    when jsonb_typeof(t.builder_content -> 'tasks') = 'array'
+                      then jsonb_array_length(t.builder_content -> 'tasks')
+                    when jsonb_typeof(t.builder_content -> 'writingTasks') = 'array'
+                      then jsonb_array_length(t.builder_content -> 'writingTasks')
+                    when jsonb_typeof(t.builder_content -> 'speakingParts') = 'array'
+                      then jsonb_array_length(t.builder_content -> 'speakingParts')
+                    when jsonb_typeof(t.builder_content -> 'sourceTestIds') = 'array'
+                      then jsonb_array_length(t.builder_content -> 'sourceTestIds')
+                    else 0 end section_count,
+                  case
+                    when (select count(*) from public.questions q
+                          join public.test_sections s on s.id=q.section_id where s.test_id=t.id) > 0
+                      then (select count(*) from public.questions q
+                            join public.test_sections s on s.id=q.section_id where s.test_id=t.id)
+                    else jsonb_array_length(jsonb_path_query_array(t.builder_content, 'strict $.**.questions[*]'))
+                  end question_count,
+                  (select count(distinct ta.course_id) from public.test_assignments ta where ta.test_id=t.id) course_count,
+                  coalesce(p.full_name, p.email, 'Không xác định') creator_name,
+                  published.id published_version_id, published.version_number published_version_number,
+                  published.version_label published_version_label, published.published_at published_at_version,
+                  coalesce(publisher.full_name, publisher.email, 'Không xác định') published_by
+                from public.tests t
+                left join public.profiles p on p.id=t.created_by
+                left join public.test_versions published on published.id=t.current_published_version_id
+                left join public.profiles publisher on publisher.id=published.published_by
+                """;
+    }
+
+    private TestBankSummaryResponse mapSummary(ResultSet rs, int ignored) throws SQLException {
+        var status = rs.getString("status");
+        return new TestBankSummaryResponse(
+                rs.getObject("id", UUID.class), rs.getString("code"), rs.getString("title"),
+                rs.getString("description"), SkillType.valueOf(rs.getString("primary_skill")),
+                rs.getString("test_type"), rs.getString("format"), rs.getInt("section_count"),
+                rs.getInt("question_count"), rs.getInt("duration_minutes"), rs.getString("version"),
+                "SCHEDULED".equals(status) ? "IN_REVIEW" : status, readList(rs.getString("tags")),
+                readList(rs.getString("question_types")), readMap(rs.getString("cover_image")),
+                readMap(rs.getString("writing_task_image")), rs.getInt("course_count"),
+                rs.getString("creator_name"), rs.getObject("created_at", java.time.OffsetDateTime.class),
+                rs.getObject("updated_at", java.time.OffsetDateTime.class), rs.getInt("draft_revision"),
+                publishedVersion(rs));
     }
 
     private TestBankResponse map(ResultSet rs, int ignored) throws SQLException {

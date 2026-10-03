@@ -5,6 +5,7 @@ import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.storage.FileStorage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
@@ -17,7 +18,10 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.Locale;
+import java.util.Map;
 
 @Service
 public class FileStorageService implements FileStorage {
@@ -48,6 +52,27 @@ public class FileStorageService implements FileStorage {
 
     public InputStream open(LearningResourceFile file) {
         return open(file.getStorageProvider(), file.getBucketName(), file.getObjectPath());
+    }
+
+    public SignedFileUrl createSignedUrl(LearningResourceFile file, Duration lifetime) {
+        if (!"SUPABASE".equalsIgnoreCase(file.getStorageProvider())) {
+            throw new BusinessRuleException("Signed URL chỉ áp dụng cho tệp trên Supabase Storage");
+        }
+        var key = requireSupabaseKey();
+        var response = httpClient.post()
+                .uri(signUri(file.getBucketName(), file.getObjectPath()))
+                .header("Authorization", "Bearer " + key)
+                .header("apikey", key)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("expiresIn", lifetime.toSeconds()))
+                .retrieve()
+                .body(new ParameterizedTypeReference<Map<String, Object>>() {});
+        var rawUrl = response == null ? null : response.get("signedURL");
+        if (rawUrl == null && response != null) rawUrl = response.get("signedUrl");
+        if (rawUrl == null || rawUrl.toString().isBlank()) {
+            throw new BusinessRuleException("Supabase Storage không trả về signed URL");
+        }
+        return new SignedFileUrl(absoluteSupabaseUrl(rawUrl.toString()), OffsetDateTime.now().plus(lifetime));
     }
 
     @Override
@@ -160,6 +185,18 @@ public class FileStorageService implements FileStorage {
         return URI.create(supabaseUrl.replaceAll("/$", "") + "/storage/v1/object/" + bucket + "/" + objectPath);
     }
 
+    private URI signUri(String bucket, String objectPath) {
+        if (supabaseUrl == null || supabaseUrl.isBlank()) throw new BusinessRuleException("Chưa cấu hình SUPABASE_URL cho Storage");
+        return URI.create(supabaseUrl.replaceAll("/$", "") + "/storage/v1/object/sign/" + bucket + "/" + objectPath);
+    }
+
+    private String absoluteSupabaseUrl(String value) {
+        if (value.startsWith("http://") || value.startsWith("https://")) return value;
+        var base = supabaseUrl.replaceAll("/$", "");
+        if (value.startsWith("/storage/v1/")) return base + value;
+        return base + "/storage/v1" + (value.startsWith("/") ? value : "/" + value);
+    }
+
     private String requireSupabaseKey() {
         if (supabaseServiceRoleKey == null || supabaseServiceRoleKey.isBlank()) {
             throw new BusinessRuleException("Chưa cấu hình SUPABASE_SERVICE_ROLE_KEY cho Storage");
@@ -171,5 +208,7 @@ public class FileStorageService implements FileStorage {
         return file.getContentType() == null || file.getContentType().isBlank()
                 ? "application/octet-stream" : file.getContentType();
     }
+
+    public record SignedFileUrl(String url, OffsetDateTime expiresAt) {}
 
 }

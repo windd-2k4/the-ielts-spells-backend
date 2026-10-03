@@ -1,14 +1,13 @@
 package com.theieltsspells.billing.application;
 
-import com.theieltsspells.academic.domain.Course;
-import com.theieltsspells.academic.infrastructure.persistence.CourseRepository;
+import com.theieltsspells.academic.application.BillingCourseQueryService;
+import com.theieltsspells.academic.application.BillingCourseView;
 import com.theieltsspells.billing.application.dto.*;
 import com.theieltsspells.billing.domain.*;
 import com.theieltsspells.billing.infrastructure.persistence.BillingSettingRepository;
 import com.theieltsspells.billing.infrastructure.persistence.ElectronicInvoiceRepository;
 import com.theieltsspells.billing.infrastructure.persistence.OrderRepository;
-import com.theieltsspells.identity.domain.Profile;
-import com.theieltsspells.identity.infrastructure.persistence.ProfileRepository;
+import com.theieltsspells.identity.application.StudentAccountApplicationService;
 import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -44,28 +43,28 @@ import java.util.concurrent.ThreadLocalRandom;
 public class OrderApplicationService {
 
     private final OrderRepository orderRepository;
-    private final CourseRepository courseRepository;
-    private final ProfileRepository profileRepository;
+    private final BillingCourseQueryService courses;
+    private final StudentAccountApplicationService studentAccounts;
     private final BillingSettingRepository billingSettingRepository;
     private final ElectronicInvoiceRepository invoiceRepository;
 
     @Transactional
     public CheckoutResponse checkout(CheckoutRequest request) {
-        Course course = courseRepository.findById(request.courseId())
+        BillingCourseView course = courses.findById(request.courseId())
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy khóa học với id: " + request.courseId()));
 
-        if (!Boolean.TRUE.equals(course.getIsActive())) {
+        if (!course.active()) {
             throw new BusinessRuleException("Khóa học hiện không mở đăng ký");
         }
 
-        BigDecimal amount = course.getTuitionAmount() != null ? course.getTuitionAmount() : BigDecimal.ZERO;
+        BigDecimal amount = course.tuitionAmount() != null ? course.tuitionAmount() : BigDecimal.ZERO;
         if (amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BusinessRuleException("Khóa học chưa được cấu hình học phí hợp lệ");
         }
 
         // Check if an existing profile matches this email
         String normalizedEmail = request.email().trim().toLowerCase(Locale.ROOT);
-        Optional<Profile> existingProfile = profileRepository.findFirstByEmailIgnoreCaseOrderByCreatedAtDesc(normalizedEmail);
+        Optional<UUID> existingUserId = studentAccounts.findUserIdByEmail(normalizedEmail);
 
         // Generate unique order code: KH + yyMMdd + 4 random digits
         String orderCode = generateOrderCode();
@@ -75,8 +74,8 @@ public class OrderApplicationService {
 
         Order order = new Order();
         order.setOrderCode(orderCode);
-        order.setCourseId(course.getId());
-        existingProfile.ifPresent(profile -> order.setUserId(profile.getId()));
+        order.setCourseId(course.id());
+        existingUserId.ifPresent(order::setUserId);
         order.setCustomerName(request.fullName().trim());
         order.setCustomerEmail(normalizedEmail);
         order.setCustomerPhone(request.phone() != null ? request.phone().trim() : null);
@@ -114,8 +113,8 @@ public class OrderApplicationService {
         return new CheckoutResponse(
                 saved.getId(),
                 saved.getOrderCode(),
-                course.getId(),
-                course.getName(),
+                course.id(),
+                course.name(),
                 saved.getAmount(),
                 saved.getStatus(),
                 qrCodeUrl,
@@ -129,22 +128,22 @@ public class OrderApplicationService {
 
     @Transactional
     public CheckoutResponse createAdminOrder(AdminCreateOrderRequest request) {
-        Course course = courseRepository.findById(request.courseId())
+        BillingCourseView course = courses.findById(request.courseId())
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy khóa học với id: " + request.courseId()));
 
-        if (!Boolean.TRUE.equals(course.getIsActive())) {
+        if (!course.active()) {
             throw new BusinessRuleException("Khóa học hiện không mở đăng ký");
         }
 
         BigDecimal amount = (request.amount() != null && request.amount().compareTo(BigDecimal.ZERO) > 0)
                 ? request.amount()
-                : (course.getTuitionAmount() != null ? course.getTuitionAmount() : BigDecimal.ZERO);
+                : (course.tuitionAmount() != null ? course.tuitionAmount() : BigDecimal.ZERO);
         if (amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BusinessRuleException("Số tiền học phí phải lớn hơn 0");
         }
 
         String normalizedEmail = request.email().trim().toLowerCase(Locale.ROOT);
-        Optional<Profile> existingProfile = profileRepository.findFirstByEmailIgnoreCaseOrderByCreatedAtDesc(normalizedEmail);
+        Optional<UUID> existingUserId = studentAccounts.findUserIdByEmail(normalizedEmail);
 
         String orderCode = generateOrderCode();
         OffsetDateTime now = OffsetDateTime.now();
@@ -153,8 +152,8 @@ public class OrderApplicationService {
 
         Order order = new Order();
         order.setOrderCode(orderCode);
-        order.setCourseId(course.getId());
-        existingProfile.ifPresent(profile -> order.setUserId(profile.getId()));
+        order.setCourseId(course.id());
+        existingUserId.ifPresent(order::setUserId);
         order.setCustomerName(request.fullName().trim());
         order.setCustomerEmail(normalizedEmail);
         order.setCustomerPhone(request.phone() != null ? request.phone().trim() : null);
@@ -188,8 +187,8 @@ public class OrderApplicationService {
         return new CheckoutResponse(
                 saved.getId(),
                 saved.getOrderCode(),
-                course.getId(),
-                course.getName(),
+                course.id(),
+                course.name(),
                 saved.getAmount(),
                 saved.getStatus(),
                 qrCodeUrl,
@@ -202,14 +201,13 @@ public class OrderApplicationService {
     }
 
     public List<CourseSummaryDto> getActiveCoursesSummary() {
-        return courseRepository.findAll().stream()
-                .filter(c -> Boolean.TRUE.equals(c.getIsActive()))
+        return courses.findActive().stream()
                 .map(c -> new CourseSummaryDto(
-                        c.getId(),
-                        c.getCode(),
-                        c.getName(),
-                        c.getTuitionAmount(),
-                        c.getLevel()
+                        c.id(),
+                        c.code(),
+                        c.name(),
+                        c.tuitionAmount(),
+                        c.level()
                 ))
                 .toList();
     }
@@ -244,8 +242,8 @@ public class OrderApplicationService {
             order.setStatus(OrderStatus.EXPIRED);
         }
 
-        Course course = courseRepository.findById(order.getCourseId()).orElse(null);
-        String courseTitle = course != null ? course.getName() : "Khóa học IELTS";
+        BillingCourseView course = courses.findById(order.getCourseId()).orElse(null);
+        String courseTitle = course != null ? course.name() : "Khóa học IELTS";
 
         ElectronicInvoice invoice = invoiceRepository.findFirstByOrderIdOrderByCreatedAtDesc(order.getId()).orElse(null);
 
@@ -442,14 +440,14 @@ public class OrderApplicationService {
     }
 
     private OrderAdminDto toAdminDto(Order order) {
-        Course course = courseRepository.findById(order.getCourseId()).orElse(null);
+        BillingCourseView course = courses.findById(order.getCourseId()).orElse(null);
         ElectronicInvoice invoice = invoiceRepository.findFirstByOrderIdOrderByCreatedAtDesc(order.getId()).orElse(null);
 
         return new OrderAdminDto(
                 order.getId(),
                 order.getOrderCode(),
                 order.getCourseId(),
-                course != null ? course.getName() : "Khóa học",
+                course != null ? course.name() : "Khóa học",
                 order.getUserId(),
                 order.getCustomerName(),
                 order.getCustomerEmail(),

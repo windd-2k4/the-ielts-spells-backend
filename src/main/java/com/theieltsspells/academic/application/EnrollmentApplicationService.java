@@ -79,6 +79,10 @@ public class EnrollmentApplicationService {
         }
     }
 
+    public Optional<EnrollmentResponse> enrollSafely(UUID courseId, UUID studentId, String notes) {
+        return enrollSafely(new EnrollStudentRequest(courseId, studentId, notes));
+    }
+
     public EnrollmentResponse get(UUID id) { return AcademicMapper.toResponse(find(id)); }
 
     public Page<EnrollmentResponse> list(Pageable pageable) {

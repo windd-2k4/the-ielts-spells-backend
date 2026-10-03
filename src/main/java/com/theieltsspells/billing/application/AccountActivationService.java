@@ -1,9 +1,8 @@
 package com.theieltsspells.billing.application;
 
+import com.theieltsspells.academic.application.BillingCourseQueryService;
+import com.theieltsspells.academic.application.BillingCourseView;
 import com.theieltsspells.academic.application.EnrollmentApplicationService;
-import com.theieltsspells.academic.application.dto.EnrollStudentRequest;
-import com.theieltsspells.academic.domain.Course;
-import com.theieltsspells.academic.infrastructure.persistence.CourseRepository;
 import com.theieltsspells.billing.application.dto.ActivateAccountRequest;
 import com.theieltsspells.billing.application.dto.ActivateAccountResponse;
 import com.theieltsspells.billing.application.dto.VerifyActivationTokenResponse;
@@ -11,17 +10,11 @@ import com.theieltsspells.billing.domain.AccountActivationToken;
 import com.theieltsspells.billing.domain.Order;
 import com.theieltsspells.billing.infrastructure.persistence.AccountActivationTokenRepository;
 import com.theieltsspells.billing.infrastructure.persistence.OrderRepository;
-import com.theieltsspells.identity.domain.Profile;
-import com.theieltsspells.identity.domain.UserRole;
-import com.theieltsspells.identity.infrastructure.persistence.ProfileRepository;
-import com.theieltsspells.identity.infrastructure.persistence.StudentProfileRepository;
-import com.theieltsspells.identity.infrastructure.persistence.UserRoleRepository;
+import com.theieltsspells.identity.application.StudentAccountApplicationService;
 import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
-import com.theieltsspells.shared.persistence.enums.AppRole;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,12 +31,9 @@ public class AccountActivationService {
 
     private final AccountActivationTokenRepository tokenRepository;
     private final OrderRepository orderRepository;
-    private final CourseRepository courseRepository;
-    private final ProfileRepository profileRepository;
-    private final StudentProfileRepository studentProfileRepository;
-    private final UserRoleRepository userRoleRepository;
+    private final BillingCourseQueryService courses;
+    private final StudentAccountApplicationService studentAccounts;
     private final EnrollmentApplicationService enrollmentService;
-    private final JdbcTemplate jdbc;
 
     @Transactional
     public String generateActivationToken(Order order) {
@@ -83,8 +73,9 @@ public class AccountActivationService {
         }
 
         Order order = orderRepository.findById(token.getOrderId()).orElse(null);
-        Course course = order != null ? courseRepository.findById(order.getCourseId()).orElse(null) : null;
-        String courseTitle = course != null ? course.getName() : "Khóa học IELTS";
+        String courseTitle = order == null ? "Khóa học IELTS" : courses.findById(order.getCourseId())
+                .map(BillingCourseView::name)
+                .orElse("Khóa học IELTS");
 
         return new VerifyActivationTokenResponse(
                 true,
@@ -119,41 +110,9 @@ public class AccountActivationService {
         String normalizedEmail = token.getCustomerEmail().trim().toLowerCase(Locale.ROOT);
         OffsetDateTime now = OffsetDateTime.now();
 
-        // 1. Ensure User / Profile exists
-        Profile profile = profileRepository.findFirstByEmailIgnoreCaseOrderByCreatedAtDesc(normalizedEmail).orElse(null);
-        UUID userId;
-
-        if (profile == null) {
-            userId = UUID.randomUUID();
-
-            // Insert into auth.users (compatibility with local or supabase auth)
-            jdbc.update("insert into auth.users (id) values (?) on conflict (id) do nothing", userId);
-
-            profile = new Profile();
-            profile.setId(userId);
-            profile.setFullName(token.getCustomerName());
-            profile.setEmail(normalizedEmail);
-            profile.setIsActive(true);
-            profile.setCreatedAt(now);
-            profile.setUpdatedAt(now);
-            profileRepository.save(profile);
-
-            // Assign STUDENT role
-            UserRole studentRole = new UserRole();
-            studentRole.setUserId(userId);
-            studentRole.setRole(AppRole.STUDENT);
-            studentRole.setAssignedAt(now);
-            userRoleRepository.save(studentRole);
-
-            // Ensure Student Profile
-            String studentCode = "HV" + System.currentTimeMillis() % 1000000;
-            studentProfileRepository.ensureProfile(userId, studentCode);
-        } else {
-            userId = profile.getId();
-            profile.setIsActive(true);
-            profile.setUpdatedAt(now);
-            profileRepository.save(profile);
-        }
+        // 1. Ensure the identity module owns user/profile/role persistence.
+        var account = studentAccounts.activateOrCreate(normalizedEmail, token.getCustomerName());
+        UUID userId = account.userId();
 
         // 2. Mark token as used
         token.setUsedAt(now);
@@ -165,20 +124,18 @@ public class AccountActivationService {
         orderRepository.save(order);
 
         // 4. Enroll student into the course safely
-        enrollmentService.enrollSafely(new EnrollStudentRequest(
+        enrollmentService.enrollSafely(
                 order.getCourseId(),
                 userId,
                 "Kích hoạt tự động sau thanh toán đơn hàng " + order.getOrderCode()
-        ));
-
-        Course course = courseRepository.findById(order.getCourseId()).orElse(null);
+        );
 
         return new ActivateAccountResponse(
                 true,
                 "Kích hoạt tài khoản thành công! Khóa học đã sẵn sàng.",
                 userId,
                 normalizedEmail,
-                profile.getFullName(),
+                account.fullName(),
                 order.getCourseId(),
                 "/student/courses/" + order.getCourseId()
         );

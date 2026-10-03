@@ -69,13 +69,6 @@ class ReadingQuestionTypeCompatibilityIntegrationTest {
         registry.add("spring.flyway.enabled", () -> "true");
     }
 
-    @org.junit.jupiter.api.AfterAll
-    static void stopManagedPostgres() {
-        if ((EXTERNAL_JDBC_URL == null || EXTERNAL_JDBC_URL.isBlank()) && POSTGRES.isRunning()) {
-            POSTGRES.stop();
-        }
-    }
-
     @Autowired
     private TestBankApplicationService testBankService;
 

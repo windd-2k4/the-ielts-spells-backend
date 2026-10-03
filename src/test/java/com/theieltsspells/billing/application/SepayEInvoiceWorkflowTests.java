@@ -1,13 +1,13 @@
 package com.theieltsspells.billing.application;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.theieltsspells.academic.application.BillingCourseQueryService;
+import com.theieltsspells.academic.application.BillingCourseView;
 import com.theieltsspells.academic.application.EnrollmentApplicationService;
-import com.theieltsspells.academic.domain.Course;
-import com.theieltsspells.academic.infrastructure.persistence.CourseRepository;
 import com.theieltsspells.billing.application.dto.AdminCreateOrderRequest;
 import com.theieltsspells.billing.application.dto.CheckoutResponse;
 import com.theieltsspells.billing.application.dto.SepayWebhookPayload;
-import com.theieltsspells.identity.infrastructure.persistence.ProfileRepository;
+import com.theieltsspells.identity.application.StudentAccountApplicationService;
 import com.theieltsspells.billing.domain.*;
 import com.theieltsspells.billing.infrastructure.persistence.BillingSettingRepository;
 import com.theieltsspells.billing.infrastructure.persistence.ElectronicInvoiceRepository;
@@ -66,10 +66,10 @@ class SepayEInvoiceWorkflowTests {
     private ElectronicInvoiceRepository invoiceRepository;
 
     @Mock
-    private CourseRepository courseRepository;
+    private BillingCourseQueryService courses;
 
     @Mock
-    private ProfileRepository profileRepository;
+    private StudentAccountApplicationService studentAccounts;
 
     @Mock
     private SepayEInvoiceClient sepayEInvoiceClient;
@@ -141,15 +141,15 @@ class SepayEInvoiceWorkflowTests {
                 orderRepository,
                 billingSettingRepository,
                 sepayEInvoiceClient,
-                courseRepository,
+                courses,
                 emailService,
                 auditLogRepository
         );
 
         realOrderApplicationService = new OrderApplicationService(
                 orderRepository,
-                courseRepository,
-                profileRepository,
+                courses,
+                studentAccounts,
                 billingSettingRepository,
                 invoiceRepository
         );
@@ -1152,12 +1152,9 @@ class SepayEInvoiceWorkflowTests {
     @DisplayName("31. Tạo đơn hàng (Admin/User): Chỉ sinh Order PENDING_PAYMENT và VietQR, TUYỆT ĐỐI KHÔNG tạo ElectronicInvoice hay gọi SePay eInvoice")
     void testCreatingOrderDoesNotIssueInvoice() {
         UUID courseId = UUID.randomUUID();
-        Course course = new Course();
-        course.setId(courseId);
-        course.setName("IELTS Intensive 7.5+");
-        course.setIsActive(true);
-        course.setTuitionAmount(BigDecimal.valueOf(6500000));
-        when(courseRepository.findById(courseId)).thenReturn(Optional.of(course));
+        var course = new BillingCourseView(courseId, "IELTS-INTENSIVE", "IELTS Intensive 7.5+",
+                BigDecimal.valueOf(6500000), "7.5+", true);
+        when(courses.findById(courseId)).thenReturn(Optional.of(course));
 
         BillingSetting setting = new BillingSetting();
         setting.setSepayBankName("MBBank");
@@ -1225,12 +1222,9 @@ class SepayEInvoiceWorkflowTests {
     @DisplayName("32. Order Lifecycle: Trạng thái khởi đầu luôn là PENDING_PAYMENT kèm VietQR Napas247 chính xác")
     void testCreatingOrderProducesPendingPayment() {
         UUID courseId = UUID.randomUUID();
-        Course course = new Course();
-        course.setId(courseId);
-        course.setName("IELTS Foundation");
-        course.setIsActive(true);
-        course.setTuitionAmount(BigDecimal.valueOf(3500000));
-        when(courseRepository.findById(courseId)).thenReturn(Optional.of(course));
+        var course = new BillingCourseView(courseId, "IELTS-FOUNDATION", "IELTS Foundation",
+                BigDecimal.valueOf(3500000), "Foundation", true);
+        when(courses.findById(courseId)).thenReturn(Optional.of(course));
 
         when(orderRepository.save(any(Order.class))).thenAnswer(inv -> {
             Order o = inv.getArgument(0);
@@ -1265,12 +1259,9 @@ class SepayEInvoiceWorkflowTests {
     @DisplayName("33. Phân tách B2B & Học viên: Thông tin công ty xuất HĐ không được ghi đè thông tin tài khoản học viên")
     void testB2bBuyerDataDoesNotOverwriteStudentData() {
         UUID courseId = UUID.randomUUID();
-        Course course = new Course();
-        course.setId(courseId);
-        course.setName("IELTS Master Class");
-        course.setIsActive(true);
-        course.setTuitionAmount(BigDecimal.valueOf(12000000));
-        when(courseRepository.findById(courseId)).thenReturn(Optional.of(course));
+        var course = new BillingCourseView(courseId, "IELTS-MASTER", "IELTS Master Class",
+                BigDecimal.valueOf(12000000), "Master", true);
+        when(courses.findById(courseId)).thenReturn(Optional.of(course));
 
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
         when(orderRepository.save(orderCaptor.capture())).thenAnswer(inv -> {

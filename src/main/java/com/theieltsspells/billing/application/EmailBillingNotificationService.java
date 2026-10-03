@@ -1,7 +1,7 @@
 package com.theieltsspells.billing.application;
 
-import com.theieltsspells.academic.domain.Course;
-import com.theieltsspells.academic.infrastructure.persistence.CourseRepository;
+import com.theieltsspells.academic.application.BillingCourseQueryService;
+import com.theieltsspells.academic.application.BillingCourseView;
 import com.theieltsspells.billing.domain.ElectronicInvoice;
 import com.theieltsspells.billing.domain.Order;
 import jakarta.mail.internet.MimeMessage;
@@ -23,8 +23,11 @@ public class EmailBillingNotificationService {
     @Autowired(required = false)
     private JavaMailSender mailSender;
 
-    @Autowired
-    private CourseRepository courseRepository;
+    private final BillingCourseQueryService courses;
+
+    public EmailBillingNotificationService(BillingCourseQueryService courses) {
+        this.courses = courses;
+    }
 
     @Value("${app.frontend.url:http://localhost:3000}")
     private String frontendUrl;
@@ -37,8 +40,9 @@ public class EmailBillingNotificationService {
      */
     @Async
     public void sendPaymentSuccessEmail(Order order, String activationToken) {
-        Course course = courseRepository.findById(order.getCourseId()).orElse(null);
-        String courseTitle = course != null ? course.getName() : "Khóa học IELTS";
+        String courseTitle = courses.findById(order.getCourseId())
+                .map(BillingCourseView::name)
+                .orElse("Khóa học IELTS");
         NumberFormat currencyFormat = NumberFormat.getCurrencyInstance(new Locale("vi", "VN"));
         String formattedAmount = currencyFormat.format(order.getAmount());
 
@@ -90,8 +94,9 @@ public class EmailBillingNotificationService {
             return;
         }
 
-        Course course = courseRepository.findById(order.getCourseId()).orElse(null);
-        String courseTitle = course != null ? course.getName() : "Khóa học IELTS";
+        String courseTitle = courses.findById(order.getCourseId())
+                .map(BillingCourseView::name)
+                .orElse("Khóa học IELTS");
 
         String targetEmail = (order.getInvoiceEmail() != null && !order.getInvoiceEmail().isBlank())
                 ? order.getInvoiceEmail()
