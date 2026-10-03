@@ -6,6 +6,7 @@ import com.theieltsspells.shared.web.PageResponse;
 import com.theieltsspells.testing.application.TestBankApplicationService;
 import com.theieltsspells.testing.application.dto.TestBankRequest;
 import com.theieltsspells.testing.application.dto.TestBankResponse;
+import com.theieltsspells.testing.application.dto.TestBankSummaryResponse;
 import com.theieltsspells.testing.application.dto.TestRevisionRequest;
 import com.theieltsspells.testing.application.dto.TestStatusRequest;
 import com.theieltsspells.testing.application.dto.TestValidationResponse;
@@ -38,7 +39,7 @@ public class TestBankAdminController {
 
     @GetMapping
     @PreAuthorize("@permissionPolicy.canViewTestBank(authentication)")
-    public PageResponse<TestBankResponse> list(@RequestParam(required = false) String query,
+    public PageResponse<TestBankSummaryResponse> list(@RequestParam(required = false) String query,
             @RequestParam(required = false) SkillType skill,
             @RequestParam(required = false) String status, @RequestParam(required = false) String testType,
             @RequestParam(required = false) String format, @RequestParam(defaultValue = "0") int page,

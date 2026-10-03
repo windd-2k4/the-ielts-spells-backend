@@ -94,6 +94,14 @@ public class LearningLibraryAdminController {
                 .body(new InputStreamResource(content.inputStream()));
     }
 
+    @GetMapping("/files/{fileId}/signed-url")
+    @PreAuthorize("@permissionPolicy.canAccessLibraryAdministration(authentication) or @permissionPolicy.has(authentication, 'assessment.attempt') or @permissionPolicy.has(authentication, 'library.published.read')")
+    public ResponseEntity<FileAccessUrlResponse> resourceFileAccessUrl(@PathVariable UUID fileId) {
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CACHE_CONTROL, "private, max-age=300")
+                .body(service.createResourceFileAccessUrl(fileId));
+    }
+
     @GetMapping("/media")
     @PreAuthorize("@permissionPolicy.canAccessLibraryAdministration(authentication)")
     public PageResponse<MediaAssetResponse> media(@RequestParam(required = false) String query,

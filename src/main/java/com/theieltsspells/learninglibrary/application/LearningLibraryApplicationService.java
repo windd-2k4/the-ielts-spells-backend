@@ -278,6 +278,13 @@ public class LearningLibraryApplicationService {
         return new FileContent(file.getOriginalFilename(), file.getMimeType(), file.getSizeBytes(), fileStorage.open(file));
     }
 
+    public FileAccessUrlResponse createResourceFileAccessUrl(UUID fileId) {
+        var file = findFile(fileId);
+        if (file.getArchivedAt() != null) throw new ResourceNotFoundException("Tệp đã bị lưu trữ");
+        var signed = fileStorage.createSignedUrl(file, java.time.Duration.ofHours(1));
+        return new FileAccessUrlResponse(signed.url(), signed.expiresAt());
+    }
+
     public Page<MediaAssetResponse> listMedia(String query, String type, Pageable pageable) {
         Specification<LearningResourceFile> spec = (root, ignored, cb) -> cb.isNull(root.get("archivedAt"));
         if (query != null && !query.isBlank()) {

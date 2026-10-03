@@ -57,6 +57,7 @@ class SecurityConfig {
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Request-Id"));
         configuration.setExposedHeaders(List.of("X-Request-Id"));
         configuration.setAllowCredentials(true);
+        configuration.setMaxAge(3600L);
 
         var source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
