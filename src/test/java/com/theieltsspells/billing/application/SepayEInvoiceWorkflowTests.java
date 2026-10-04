@@ -833,6 +833,45 @@ class SepayEInvoiceWorkflowTests {
     }
 
     @Test
+    @DisplayName("Readiness chấp nhận ngày Thuế duyệt đã đối chiếu khi SePay API không trả trường ngày")
+    void readinessUsesConfiguredProductionApprovalDateWhenProviderApiOmitsIt() {
+        BillingSetting setting = new BillingSetting();
+        setting.setActivationState(ProductionActivationState.PRODUCTION_READY);
+        setting.setProdClientId("EINV-LIVE-TEST");
+        setting.setProdClientSecret(secretEncryptionService.encrypt("prod-secret"));
+        setting.setProdProviderAccountId("provider-prod");
+        setting.setProdTemplateCode("2");
+        setting.setProdInvoiceSeries("C26TIS");
+        setting.setProdTaxAuthorityApprovedDate("2026-09-30");
+
+        when(billingSettingRepository.findFirstByOrderByUpdatedAtDesc()).thenReturn(Optional.of(setting));
+        when(tokenService.hasProductionCredentials(setting)).thenReturn(true);
+        when(tokenService.areProductionAndSandboxCredentialsSeparated(setting)).thenReturn(true);
+        when(tokenService.verifyProductionHandshake(setting)).thenReturn("token");
+        when(sepayEInvoiceClient.testConnection(any(BillingSetting.class))).thenReturn(
+                new SepayEInvoiceClient.ConnectionTestResult(
+                        true, "OK", "matbao", "provider-prod", "C26TIS", "2", null, 3000
+                )
+        );
+
+        AdminBillingController controller = new AdminBillingController(
+                orderApplicationService, null, realInvoiceService, invoiceRepository,
+                webhookService, billingSettingRepository, sepayEInvoiceClient, tokenService,
+                secretEncryptionService
+        );
+
+        AdminBillingController.ReadinessCheckItem taxApprovalCheck = controller.checkGoLiveReadiness()
+                .getBody()
+                .checks().stream()
+                .filter(check -> "PROD_TAX_AUTHORITY_APPROVED".equals(check.id()))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(taxApprovalCheck.status()).isEqualTo("PASS");
+        assertThat(taxApprovalCheck.details()).contains("SePay Dashboard", "2026-09-30");
+    }
+
+    @Test
     @DisplayName("20. Recheck endpoint: Kiểm tra lại trạng thái thủ công với SePay cho hóa đơn UNKNOWN")
     void testRecheckInvoiceStatus_ManualReconciliation() {
         UUID invId = UUID.randomUUID();
