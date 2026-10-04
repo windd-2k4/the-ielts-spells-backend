@@ -30,6 +30,8 @@ class SecurityConfig {
                         .requestMatchers("/actuator/health", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/public/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/public/leads").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/orders/checkout", "/api/v1/auth/activate-account").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/orders/*/status", "/api/v1/auth/verify-activation-token").permitAll()
                         .requestMatchers("/api/v1/webhooks/**").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth -> oauth.jwt(jwt ->

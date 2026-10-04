@@ -32,6 +32,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -571,6 +572,15 @@ class ReadingPublishGateIntegrationTest {
         assertEquals("SELF_PRACTICE", jdbc.queryForObject(
                 "select attempt_origin from public.test_attempts where id = ?", String.class, first.attemptId()));
         assertEquals(1, jdbc.queryForObject("""
+                select count(*) from public.test_attempts
+                where student_id = ? and test_version_id = ? and attempt_origin = 'SELF_PRACTICE'
+                """, Integer.class, studentId, item.testVersionId()));
+
+        var restarted = studentDeliveryService.startOrResumeSelfPractice(item.testVersionId(), studentId, true);
+        assertNotEquals(first.attemptId(), restarted.attemptId());
+        assertEquals("EXPIRED", jdbc.queryForObject(
+                "select status::text from public.test_attempts where id = ?", String.class, first.attemptId()));
+        assertEquals(2, jdbc.queryForObject("""
                 select count(*) from public.test_attempts
                 where student_id = ? and test_version_id = ? and attempt_origin = 'SELF_PRACTICE'
                 """, Integer.class, studentId, item.testVersionId()));

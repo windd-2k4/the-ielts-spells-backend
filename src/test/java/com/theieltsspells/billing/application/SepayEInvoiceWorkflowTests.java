@@ -14,6 +14,7 @@ import com.theieltsspells.billing.infrastructure.persistence.ElectronicInvoiceRe
 import com.theieltsspells.billing.infrastructure.persistence.InvoiceAuditLogRepository;
 import com.theieltsspells.billing.infrastructure.persistence.OrderRepository;
 import com.theieltsspells.billing.infrastructure.persistence.PaymentTransactionRepository;
+import com.theieltsspells.billing.infrastructure.persistence.AccountActivationTokenRepository;
 import com.theieltsspells.billing.infrastructure.security.SecretEncryptionService;
 import com.theieltsspells.billing.infrastructure.sepay.SepayEInvoiceClient;
 import com.theieltsspells.billing.infrastructure.sepay.SepayEInvoiceTokenService;
@@ -64,6 +65,9 @@ class SepayEInvoiceWorkflowTests {
 
     @Mock
     private ElectronicInvoiceRepository invoiceRepository;
+
+    @Mock
+    private AccountActivationTokenRepository activationTokenRepository;
 
     @Mock
     private BillingCourseQueryService courses;
@@ -151,7 +155,8 @@ class SepayEInvoiceWorkflowTests {
                 courses,
                 studentAccounts,
                 billingSettingRepository,
-                invoiceRepository
+                invoiceRepository,
+                activationTokenRepository
         );
     }
 
@@ -920,7 +925,7 @@ class SepayEInvoiceWorkflowTests {
         when(orderRepository.findByOrderCodeForUpdate("KH2609228563")).thenReturn(Optional.of(order));
         when(transactionRepository.sumCapturedAmountByOrderIdExcluding(eq(order.getId()), any()))
                 .thenReturn(BigDecimal.valueOf(3000000));
-        when(activationService.generateActivationToken(order)).thenReturn("activation-token");
+        when(activationService.preparePendingActivation(order)).thenReturn("activation-token");
 
         SepayWebhookPayload payload = new SepayWebhookPayload(
                 123460L, "MBBank", "2026-09-23 19:00:00", "0987654321",
@@ -933,7 +938,7 @@ class SepayEInvoiceWorkflowTests {
         assertThat(response.get("status")).isEqualTo("SUCCESS");
         assertThat(response.get("accumulatedAmount")).isEqualTo(BigDecimal.valueOf(5000000));
         assertThat(order.getStatus()).isEqualTo(OrderStatus.PAID);
-        verify(activationService).generateActivationToken(order);
+        verify(activationService).preparePendingActivation(order);
         verify(emailService).sendPaymentSuccessEmail(order, "activation-token");
         verify(mockInvoiceService).initOrGetInvoice(any(PaymentTransaction.class), eq(order));
     }
@@ -972,7 +977,7 @@ class SepayEInvoiceWorkflowTests {
         order.setInvoiceRequired(true);
 
         when(orderRepository.findByOrderCodeForUpdate("KH2609228563")).thenReturn(Optional.of(order));
-        when(activationService.generateActivationToken(order)).thenReturn("token-abc-123");
+        when(activationService.preparePendingActivation(order)).thenReturn("token-abc-123");
 
         SepayWebhookPayload payload = new SepayWebhookPayload(
                 123458L, "MBBank", "2026-09-22 10:00:00", "0987654321",

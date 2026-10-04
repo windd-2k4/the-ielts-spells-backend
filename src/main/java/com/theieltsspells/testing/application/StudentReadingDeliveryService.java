@@ -163,6 +163,12 @@ public class StudentReadingDeliveryService {
 
     @Transactional
     public StudentReadingAttemptResponse startOrResumeSelfPractice(UUID testVersionId, UUID studentId) {
+        return startOrResumeSelfPractice(testVersionId, studentId, false);
+    }
+
+    @Transactional
+    public StudentReadingAttemptResponse startOrResumeSelfPractice(UUID testVersionId, UUID studentId,
+                                                                   boolean restart) {
         var versions = jdbc.query("""
                 select version.id test_version_id, version.title, version.description,
                   version.duration_minutes, version.primary_skill, version.builder_content::text builder_content
@@ -188,7 +194,10 @@ public class StudentReadingDeliveryService {
                 order by started_at desc limit 1
                 """, (rs, ignored) -> rs.getObject("id", UUID.class), testVersionId, studentId);
         if (!active.isEmpty()) {
-            return attemptPayload(loadAttempt(active.getFirst(), studentId, false));
+            if (!restart) {
+                return attemptPayload(loadAttempt(active.getFirst(), studentId, false));
+            }
+            finalizeAttempt(loadAttempt(active.getFirst(), studentId, true), "EXPIRED");
         }
 
         Integer used = jdbc.queryForObject("""

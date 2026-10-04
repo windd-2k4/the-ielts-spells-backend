@@ -31,20 +31,57 @@ public class SupabaseAdminClient {
     public UUID findOrInvite(String email, String name) {
         requireConfiguration();
         try {
-            JsonNode result = client.get()
-                    .uri(uri -> uri.path("/auth/v1/admin/users")
-                            .queryParam("page", 1).queryParam("per_page", 1000).build())
-                    .headers(this::authorize)
-                    .retrieve().body(JsonNode.class);
-            if (result != null) {
-                for (JsonNode user : result.path("users")) {
-                    if (email.equalsIgnoreCase(user.path("email").asText()))
-                        return UUID.fromString(user.path("id").asText());
-                }
-            }
+            UUID existingUserId = findUserIdByEmail(email);
+            if (existingUserId != null) return existingUserId;
             return invite(email, name);
         } catch (RestClientResponseException exception) {
             throw new BusinessRuleException("Supabase Auth từ chối yêu cầu quản trị (HTTP "
+                    + exception.getStatusCode().value() + ")");
+        }
+    }
+
+    public UUID reserveStudentAccount(String email, String name) {
+        requireConfiguration();
+        try {
+            UUID existingUserId = findUserIdByEmail(email);
+            if (existingUserId != null) return existingUserId;
+
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("email", email);
+            body.put("email_confirm", true);
+            body.put("user_metadata", Map.of("full_name", name));
+            return createUser(body);
+        } catch (RestClientResponseException exception) {
+            throw new BusinessRuleException("Không thể tạo tài khoản học viên chờ kích hoạt trên Supabase (HTTP "
+                    + exception.getStatusCode().value() + ")");
+        }
+    }
+
+    public UUID activateStudentAccount(String email, String name, String password) {
+        requireConfiguration();
+        try {
+            UUID userId = findUserIdByEmail(email);
+            if (userId == null) {
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("email", email);
+                body.put("password", password);
+                body.put("email_confirm", true);
+                body.put("user_metadata", Map.of("full_name", name));
+                return createUser(body);
+            }
+
+            client.put().uri("/auth/v1/admin/users/{id}", userId)
+                    .headers(this::authorize)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of(
+                            "password", password,
+                            "email_confirm", true,
+                            "user_metadata", Map.of("full_name", name)))
+                    .retrieve()
+                    .toBodilessEntity();
+            return userId;
+        } catch (RestClientResponseException exception) {
+            throw new BusinessRuleException("Không thể kích hoạt tài khoản học viên trên Supabase (HTTP "
                     + exception.getStatusCode().value() + ")");
         }
     }
@@ -162,6 +199,35 @@ public class SupabaseAdminClient {
                 .retrieve().body(JsonNode.class);
         if (body == null || body.path("id").isMissingNode())
             throw new BusinessRuleException("Supabase không trả về người dùng sau khi gửi lời mời");
+        return UUID.fromString(body.path("id").asText());
+    }
+
+    private UUID findUserIdByEmail(String email) {
+        JsonNode result = client.get()
+                .uri(uri -> uri.path("/auth/v1/admin/users")
+                        .queryParam("page", 1).queryParam("per_page", 1000).build())
+                .headers(this::authorize)
+                .retrieve().body(JsonNode.class);
+        if (result == null) return null;
+        for (JsonNode user : result.path("users")) {
+            if (email.equalsIgnoreCase(user.path("email").asText())) {
+                return UUID.fromString(user.path("id").asText());
+            }
+        }
+        return null;
+    }
+
+    private UUID createUser(Map<String, Object> request) {
+        JsonNode body = client.post()
+                .uri("/auth/v1/admin/users")
+                .headers(this::authorize)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(request)
+                .retrieve()
+                .body(JsonNode.class);
+        if (body == null || body.path("id").isMissingNode()) {
+            throw new BusinessRuleException("Supabase không trả về người dùng vừa tạo");
+        }
         return UUID.fromString(body.path("id").asText());
     }
 

@@ -13,18 +13,33 @@ import java.util.UUID;
 public interface LeadRepository extends JpaRepository<Lead, UUID> {
     @Query(value = """
             select lead from Lead lead
-            where (:status is null or lead.status = :status)
+            where (:query = '' or lower(lead.fullName) like lower(concat('%', :query, '%'))
+                   or lower(coalesce(lead.email, '')) like lower(concat('%', :query, '%'))
+                   or replace(replace(replace(coalesce(lead.phone, ''), ' ', ''), '.', ''), '-', '') like concat('%', :phoneQuery, '%'))
+            """, countQuery = """
+            select count(lead) from Lead lead
+            where (:query = '' or lower(lead.fullName) like lower(concat('%', :query, '%'))
+                   or lower(coalesce(lead.email, '')) like lower(concat('%', :query, '%'))
+                   or replace(replace(replace(coalesce(lead.phone, ''), ' ', ''), '.', ''), '-', '') like concat('%', :phoneQuery, '%'))
+            """)
+    Page<Lead> search(@Param("query") String query,
+                      @Param("phoneQuery") String phoneQuery,
+                      Pageable pageable);
+
+    @Query(value = """
+            select lead from Lead lead
+            where lead.status = :status
               and (:query = '' or lower(lead.fullName) like lower(concat('%', :query, '%'))
                    or lower(coalesce(lead.email, '')) like lower(concat('%', :query, '%'))
                    or replace(replace(replace(coalesce(lead.phone, ''), ' ', ''), '.', ''), '-', '') like concat('%', :phoneQuery, '%'))
             """, countQuery = """
             select count(lead) from Lead lead
-            where (:status is null or lead.status = :status)
+            where lead.status = :status
               and (:query = '' or lower(lead.fullName) like lower(concat('%', :query, '%'))
                    or lower(coalesce(lead.email, '')) like lower(concat('%', :query, '%'))
                    or replace(replace(replace(coalesce(lead.phone, ''), ' ', ''), '.', ''), '-', '') like concat('%', :phoneQuery, '%'))
             """)
-    Page<Lead> search(@Param("query") String query,
+    Page<Lead> searchByStatus(@Param("query") String query,
                       @Param("phoneQuery") String phoneQuery,
                       @Param("status") LeadStatus status,
                       Pageable pageable);

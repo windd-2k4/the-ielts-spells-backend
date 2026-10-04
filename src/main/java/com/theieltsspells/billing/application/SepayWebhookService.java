@@ -210,14 +210,14 @@ public class SepayWebhookService {
         String activationToken = null;
         if (newlyPaid && order.getUserId() != null) {
             // Existing user -> Enroll safely without rolling back payment transaction
-            enrollmentService.enrollSafely(
+            enrollmentService.grantPaidAccessSafely(
                     order.getCourseId(),
                     order.getUserId(),
                     "Tự động ghi danh sau thanh toán SePay: " + order.getOrderCode()
             );
         } else if (newlyPaid) {
             // Guest user -> Generate one-time activation token
-            activationToken = activationService.generateActivationToken(order);
+            activationToken = activationService.preparePendingActivation(order);
         }
 
         if (newlyPaid) {
@@ -273,9 +273,9 @@ public class SepayWebhookService {
 
         String activationToken = null;
         if (newlyPaid && order.getUserId() == null) {
-            activationToken = activationService.generateActivationToken(order);
+            activationToken = activationService.preparePendingActivation(order);
         } else if (newlyPaid) {
-            enrollmentService.enrollSafely(
+            enrollmentService.grantPaidAccessSafely(
                     order.getCourseId(),
                     order.getUserId(),
                     "Kế toán khớp thủ công sau thanh toán: " + order.getOrderCode()
@@ -323,13 +323,13 @@ public class SepayWebhookService {
 
         String activationToken = null;
         if (order.getUserId() != null) {
-            enrollmentService.enrollSafely(
+            enrollmentService.grantPaidAccessSafely(
                     order.getCourseId(),
                     order.getUserId(),
                     "Thu tiền mặt tại quầy: " + order.getOrderCode()
             );
         } else {
-            activationToken = activationService.generateActivationToken(order);
+            activationToken = activationService.preparePendingActivation(order);
         }
 
         BillingSetting settings = billingSettingRepository.findLatest().orElseGet(BillingSetting::new);

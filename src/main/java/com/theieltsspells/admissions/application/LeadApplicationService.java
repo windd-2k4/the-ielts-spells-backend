@@ -37,7 +37,10 @@ public class LeadApplicationService {
     public Page<LeadResponse> list(String rawQuery, LeadStatus status, Pageable pageable) {
         String query = rawQuery == null ? "" : rawQuery.trim();
         String phoneQuery = query.replaceAll("[^0-9+]", "");
-        return leads.search(query, phoneQuery, status, pageable).map(this::toResponse);
+        Page<Lead> page = status == null
+                ? leads.search(query, phoneQuery, pageable)
+                : leads.searchByStatus(query, phoneQuery, status, pageable);
+        return page.map(this::toResponse);
     }
 
     @Transactional

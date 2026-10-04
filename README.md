@@ -258,6 +258,7 @@ Supabase Dashboard > Authentication > Hooks. Endpoint xác thực
 | Biến | Ý nghĩa |
 | --- | --- |
 | `MANAGEMENT_APP_URL` | URL web quản trị dùng trong invitation link |
+| `STUDENT_APP_URL` | URL Main Web dùng trong link kích hoạt sau thanh toán |
 | `ADMIN_APPROVAL_EMAIL` | Email quản trị gốc |
 | `MAIL_HOST`, `MAIL_PORT` | SMTP server |
 | `MAIL_USERNAME`, `MAIL_PASSWORD` | Tài khoản SMTP hoặc app password |

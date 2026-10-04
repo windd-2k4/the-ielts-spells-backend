@@ -83,6 +83,50 @@ public class EnrollmentApplicationService {
         return enrollSafely(new EnrollStudentRequest(courseId, studentId, notes));
     }
 
+    @Transactional
+    public EnrollmentResponse grantPaidAccess(UUID courseId, UUID studentId, String notes) {
+        Enrollment existing = enrollments.findByCourseIdAndStudentId(courseId, studentId).orElse(null);
+        if (existing != null) {
+            if (existing.getStatus() == EnrollmentStatus.ACTIVE) return AcademicMapper.toResponse(existing);
+            if (existing.getStatus() != EnrollmentStatus.PENDING && existing.getStatus() != EnrollmentStatus.PAUSED) {
+                throw new BusinessRuleException("Không thể kích hoạt lượt ghi danh ở trạng thái " + existing.getStatus());
+            }
+            existing.setStatus(EnrollmentStatus.ACTIVE);
+            if (existing.getStartedOn() == null) existing.setStartedOn(LocalDate.now());
+            existing.setNotes(notes);
+            return AcademicMapper.toResponse(enrollments.save(existing));
+        }
+
+        var targetCourse = courses.findById(courseId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy khóa học: " + courseId));
+        if (!Boolean.TRUE.equals(targetCourse.getIsActive())
+                || targetCourse.getStatus() == com.theieltsspells.shared.persistence.enums.ClassStatus.COMPLETED
+                || targetCourse.getStatus() == com.theieltsspells.shared.persistence.enums.ClassStatus.CANCELLED) {
+            throw new BusinessRuleException("Khóa học không còn nhận ghi danh");
+        }
+        if (enrollments.countByCourseIdAndStatusIn(courseId, CAPACITY_STATUSES) >= targetCourse.getCapacity()) {
+            throw new BusinessRuleException("Khóa học đã đủ số lượng học viên");
+        }
+
+        var enrollment = new Enrollment();
+        enrollment.setCourseId(courseId);
+        enrollment.setStudentId(studentId);
+        enrollment.setStatus(EnrollmentStatus.ACTIVE);
+        enrollment.setStartedOn(LocalDate.now());
+        enrollment.setNotes(notes);
+        return AcademicMapper.toResponse(enrollments.save(enrollment));
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Optional<EnrollmentResponse> grantPaidAccessSafely(UUID courseId, UUID studentId, String notes) {
+        try {
+            return Optional.of(grantPaidAccess(courseId, studentId, notes));
+        } catch (Exception ex) {
+            log.warn("Lỗi khi cấp quyền học sau thanh toán cho học viên {}: {}", studentId, ex.getMessage());
+            return Optional.empty();
+        }
+    }
+
     public EnrollmentResponse get(UUID id) { return AcademicMapper.toResponse(find(id)); }
 
     public Page<EnrollmentResponse> list(Pageable pageable) {

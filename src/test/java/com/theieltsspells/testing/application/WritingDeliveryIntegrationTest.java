@@ -27,6 +27,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest(properties = "spring.task.scheduling.enabled=false")
@@ -95,7 +96,14 @@ class WritingDeliveryIntegrationTest {
                 String.class, versionId);
         assertFalse(publishedPrompt.contains("<script"));
 
-        var attempt = writingDeliveryService.startOrResumeSelfPractice(versionId, studentId);
+        var firstAttempt = writingDeliveryService.startOrResumeSelfPractice(versionId, studentId);
+        var resumedAttempt = writingDeliveryService.startOrResumeSelfPractice(versionId, studentId);
+        assertEquals(firstAttempt.attemptId(), resumedAttempt.attemptId());
+
+        var attempt = writingDeliveryService.startOrResumeSelfPractice(versionId, studentId, true);
+        assertNotEquals(firstAttempt.attemptId(), attempt.attemptId());
+        assertEquals("EXPIRED", jdbc.queryForObject(
+                "select status::text from public.test_attempts where id = ?", String.class, firstAttempt.attemptId()));
         assertEquals("IN_PROGRESS", attempt.status());
         assertEquals("task-1", attempt.tasks().getFirst().taskKey());
 

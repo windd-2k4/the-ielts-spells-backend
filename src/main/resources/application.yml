@@ -67,6 +67,7 @@ springdoc:
     persist-authorization: true
 
 app:
+  student-app-url: ${STUDENT_APP_URL:http://localhost:3000}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
   access-approval:

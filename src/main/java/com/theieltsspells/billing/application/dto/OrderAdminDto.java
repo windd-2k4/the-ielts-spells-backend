@@ -5,6 +5,7 @@ import com.theieltsspells.billing.domain.InvoiceErrorCategory;
 import com.theieltsspells.billing.domain.InvoiceStatus;
 import com.theieltsspells.billing.domain.OrderStatus;
 import com.theieltsspells.billing.domain.ReconciliationStatus;
+import com.theieltsspells.billing.domain.AccountActivationStatus;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -21,6 +22,7 @@ public record OrderAdminDto(
         String customerPhone,
         BigDecimal amount,
         OrderStatus status,
+        AccountActivationStatus accountActivationStatus,
         OffsetDateTime expiresAt,
         OffsetDateTime paidAt,
         Boolean invoiceRequired,
