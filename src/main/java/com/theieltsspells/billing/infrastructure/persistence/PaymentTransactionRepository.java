@@ -20,17 +20,17 @@ public interface PaymentTransactionRepository extends JpaRepository<PaymentTrans
 
     Optional<PaymentTransaction> findFirstByOrderCodeOrderByCreatedAtDesc(String orderCode);
 
-    @Query("""
-            select coalesce(sum(t.amountIn), 0)
-            from PaymentTransaction t
-            where t.orderId = :orderId
+    @Query(value = """
+            select coalesce(sum(t.amount_in), 0)
+            from payment_transactions t
+            where t.order_id = :orderId
               and t.id <> :excludedTransactionId
               and t.status in (
-                com.theieltsspells.billing.domain.PaymentTransactionStatus.SUCCESS,
-                com.theieltsspells.billing.domain.PaymentTransactionStatus.PARTIAL_PAYMENT,
-                com.theieltsspells.billing.domain.PaymentTransactionStatus.OVERPAID
+                cast('SUCCESS' as public.payment_transaction_status),
+                cast('PARTIAL_PAYMENT' as public.payment_transaction_status),
+                cast('OVERPAID' as public.payment_transaction_status)
               )
-            """)
+            """, nativeQuery = true)
     BigDecimal sumCapturedAmountByOrderIdExcluding(
             @Param("orderId") UUID orderId,
             @Param("excludedTransactionId") UUID excludedTransactionId

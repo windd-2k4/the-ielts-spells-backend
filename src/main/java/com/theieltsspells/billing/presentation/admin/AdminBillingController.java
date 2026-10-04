@@ -867,15 +867,19 @@ public class AdminBillingController {
         ));
 
         // 7. Production Tax Authority Approved Date
+        String apiTaxDate = productionConnection != null ? productionConnection.taxAuthorityApprovedDate() : null;
+        String configuredTaxDate = s.getProdTaxAuthorityApprovedDate();
+        String effectiveTaxDate = apiTaxDate != null && !apiTaxDate.isBlank() ? apiTaxDate : configuredTaxDate;
         boolean hasTaxDate = productionConnection != null
                 && productionConnection.success()
-                && productionConnection.taxAuthorityApprovedDate() != null
-                && !productionConnection.taxAuthorityApprovedDate().isBlank();
+                && isValidApprovedDate(effectiveTaxDate);
         items.add(new ReadinessCheckItem(
                 "PROD_TAX_AUTHORITY_APPROVED",
                 "Phê duyệt của Cơ quan Thuế (tax_authority_approved_date)",
                 hasTaxDate ? "PASS" : (isProdContext || hasProdCredentials ? "FAIL" : "WARN"),
-                hasTaxDate ? ("SePay Production xác nhận ngày Cơ quan Thuế phê duyệt: " + productionConnection.taxAuthorityApprovedDate())
+                hasTaxDate ? ((apiTaxDate != null && !apiTaxDate.isBlank()
+                        ? "SePay Production xác nhận ngày Cơ quan Thuế phê duyệt: "
+                        : "Ngày Cơ quan Thuế phê duyệt đã lưu sau khi đối chiếu SePay Dashboard: ") + effectiveTaxDate)
                         : "API SePay Production chưa xác nhận ngày phê duyệt tờ khai của Cơ quan Thuế",
                 hasTaxDate ? null : "Đảm bảo tờ khai Đăng ký sử dụng HĐĐT (Mẫu 01/ĐKTĐ-HĐĐT) đã được Thuế chấp thuận trước khi xuất hóa đơn thật"
         ));
@@ -1102,6 +1106,14 @@ public class AdminBillingController {
         String overallStatus = (fail > 0) ? "NOT_READY" : ((warn > 0) ? "READY_WITH_WARNINGS" : "READY_FOR_PILOT");
 
         return new GoLiveReadinessReport(canGoProduction, overallStatus, pass, warn, fail, items);
+    }
+
+    private boolean isValidApprovedDate(String value) {
+        try {
+            return value != null && !value.isBlank() && !LocalDate.parse(value.trim()).isAfter(LocalDate.now());
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private boolean isRealSecretValue(String secret) {
