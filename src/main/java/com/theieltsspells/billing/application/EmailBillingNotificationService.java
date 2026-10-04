@@ -29,7 +29,7 @@ public class EmailBillingNotificationService {
         this.courses = courses;
     }
 
-    @Value("${app.frontend.url:http://localhost:3000}")
+    @Value("${app.student-app-url:http://localhost:3000}")
     private String frontendUrl;
 
     @Value("${spring.mail.username:noreply@theieltsspells.com}")
@@ -47,8 +47,8 @@ public class EmailBillingNotificationService {
         String formattedAmount = currencyFormat.format(order.getAmount());
 
         boolean isGuest = (activationToken != null && !activationToken.isBlank());
-        String activationUrl = isGuest ? String.format("%s/activate?token=%s", frontendUrl, activationToken) : null;
-        String loginUrl = String.format("%s/login", frontendUrl);
+        String activationUrl = isGuest ? String.format("%s/student/activate?token=%s", frontendUrl, activationToken) : null;
+        String loginUrl = String.format("%s/student/login", frontendUrl);
 
         String subject = String.format("[The IELTS Spells] Xác nhận thanh toán thành công khóa học: %s", courseTitle);
 
@@ -67,7 +67,7 @@ public class EmailBillingNotificationService {
         html.append("<div style=\"background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 8px; padding: 18px; margin: 20px 0; text-align: center;\">");
         if (isGuest) {
             html.append("<h3 style=\"margin-top: 0; color: #1e1b4b;\">🚀 BƯỚC TIẾP THEO: KÍCH HOẠT TÀI KHOẢN</h3>");
-            html.append("<p style=\"font-size: 14px; color: #475569;\">Khóa học đã được tạo sẵn trên hệ thống. Bạn chỉ cần kích hoạt mật khẩu để vào học ngay:</p>");
+            html.append("<p style=\"font-size: 14px; color: #475569;\">Bạn đang ở trạng thái <strong>Chờ kích hoạt</strong>. Hãy tạo mật khẩu để mở quyền học:</p>");
             html.append(String.format("<a href=\"%s\" style=\"display: inline-block; background: #4f46e5; color: #ffffff; padding: 12px 28px; font-size: 15px; font-weight: bold; text-decoration: none; border-radius: 6px; margin-top: 10px;\">KÍCH HOẠT TÀI KHOẢN & VÀO HỌC</a>", activationUrl));
             html.append("<p style=\"font-size: 12px; color: #94a3b8; margin-top: 12px;\">Đường link kích hoạt dành riêng cho bạn và có hiệu lực trong 7 ngày.</p>");
         } else {

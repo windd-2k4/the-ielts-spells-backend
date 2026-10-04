@@ -23,8 +23,11 @@ public class AdminDashboardController {
     @GetMapping
     @PreAuthorize("@permissionPolicy.hasAdministrativeScope(authentication, 'course.read') "
             + "and @permissionPolicy.hasAdministrativeScope(authentication, 'enrollment.read')")
-    @Operation(summary = "Lấy dữ liệu tổng hợp rút gọn cho dashboard quản trị")
-    public AdminDashboardResponse overview() {
-        return service.overview();
+    @Operation(summary = "Lấy dữ liệu tổng hợp vận hành chi tiết cho dashboard quản trị")
+    public AdminDashboardResponse overview(
+            @org.springframework.web.bind.annotation.RequestParam(value = "timeRange", defaultValue = "7d") String timeRange,
+            @org.springframework.web.bind.annotation.RequestParam(value = "courseId", required = false) java.util.UUID courseId
+    ) {
+        return service.overview(timeRange, courseId);
     }
 }

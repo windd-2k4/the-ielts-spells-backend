@@ -7,6 +7,7 @@ import com.theieltsspells.billing.domain.*;
 import com.theieltsspells.billing.infrastructure.persistence.BillingSettingRepository;
 import com.theieltsspells.billing.infrastructure.persistence.ElectronicInvoiceRepository;
 import com.theieltsspells.billing.infrastructure.persistence.OrderRepository;
+import com.theieltsspells.billing.infrastructure.persistence.AccountActivationTokenRepository;
 import com.theieltsspells.identity.application.StudentAccountApplicationService;
 import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
@@ -47,6 +48,7 @@ public class OrderApplicationService {
     private final StudentAccountApplicationService studentAccounts;
     private final BillingSettingRepository billingSettingRepository;
     private final ElectronicInvoiceRepository invoiceRepository;
+    private final AccountActivationTokenRepository activationTokenRepository;
 
     @Transactional
     public CheckoutResponse checkout(CheckoutRequest request) {
@@ -250,6 +252,7 @@ public class OrderApplicationService {
         return new OrderStatusResponse(
                 order.getOrderCode(),
                 order.getStatus(),
+                accountActivationStatus(order),
                 order.getAmount(),
                 order.getPaidAt(),
                 courseTitle,
@@ -391,6 +394,7 @@ public class OrderApplicationService {
                 invoice.getBuyerPhone(),
                 amount,
                 OrderStatus.PAID,
+                null,
                 paidAt,
                 paidAt,
                 true,
@@ -454,6 +458,7 @@ public class OrderApplicationService {
                 order.getCustomerPhone(),
                 order.getAmount(),
                 order.getStatus(),
+                accountActivationStatus(order),
                 order.getExpiresAt(),
                 order.getPaidAt(),
                 order.getInvoiceRequired(),
@@ -475,6 +480,14 @@ public class OrderApplicationService {
                 order.getCreatedAt(),
                 false
         );
+    }
+
+    private AccountActivationStatus accountActivationStatus(Order order) {
+        if (order.getStatus() != OrderStatus.PAID) return null;
+        return activationTokenRepository.findByOrderId(order.getId())
+                .filter(token -> !token.isUsed())
+                .map(token -> AccountActivationStatus.WAITING_ACTIVATION)
+                .orElse(AccountActivationStatus.ACTIVATED);
     }
 
     private String generateOrderCode() {

@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.http.HttpStatus;
@@ -51,8 +52,9 @@ public class StudentReadingTestController {
 
     @PostMapping("/catalog/{testVersionId}/attempts")
     public StudentReadingAttemptResponse startOrResumeSelfPractice(@PathVariable UUID testVersionId,
+                                                                  @RequestParam(defaultValue = "false") boolean restart,
                                                                   @AuthenticationPrincipal Jwt jwt) {
-        return service.startOrResumeSelfPractice(testVersionId, studentId(jwt));
+        return service.startOrResumeSelfPractice(testVersionId, studentId(jwt), restart);
     }
 
     @PostMapping("/assignments/{assignmentId}/attempts")

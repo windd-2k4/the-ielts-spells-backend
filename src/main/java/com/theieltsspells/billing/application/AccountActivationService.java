@@ -36,13 +36,24 @@ public class AccountActivationService {
     private final EnrollmentApplicationService enrollmentService;
 
     @Transactional
-    public String generateActivationToken(Order order) {
+    public String preparePendingActivation(Order order) {
+        var account = studentAccounts.reserveOrCreate(order.getCustomerEmail(), order.getCustomerName());
+        order.setUserId(account.userId());
+        order.setUpdatedAt(OffsetDateTime.now());
+        orderRepository.save(order);
+
+        enrollmentService.enrollSafely(
+                order.getCourseId(),
+                account.userId(),
+                "Chờ học viên kích hoạt tài khoản sau thanh toán đơn " + order.getOrderCode()
+        );
+
         // Generate a 64-character unique token
         String rawToken = UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", "");
 
         AccountActivationToken token = new AccountActivationToken();
         token.setOrderId(order.getId());
-        token.setUserId(order.getUserId());
+        token.setUserId(account.userId());
         token.setCustomerEmail(order.getCustomerEmail());
         token.setCustomerName(order.getCustomerName());
         token.setTokenHash(rawToken);
@@ -111,8 +122,11 @@ public class AccountActivationService {
         OffsetDateTime now = OffsetDateTime.now();
 
         // 1. Ensure the identity module owns user/profile/role persistence.
-        var account = studentAccounts.activateOrCreate(normalizedEmail, token.getCustomerName());
+        var account = studentAccounts.activateOrCreate(normalizedEmail, token.getCustomerName(), request.password());
         UUID userId = account.userId();
+        if (token.getUserId() != null && !token.getUserId().equals(userId)) {
+            throw new BusinessRuleException("Tài khoản kích hoạt không khớp với đơn hàng đã thanh toán");
+        }
 
         // 2. Mark token as used
         token.setUsedAt(now);
@@ -124,7 +138,7 @@ public class AccountActivationService {
         orderRepository.save(order);
 
         // 4. Enroll student into the course safely
-        enrollmentService.enrollSafely(
+        enrollmentService.grantPaidAccess(
                 order.getCourseId(),
                 userId,
                 "Kích hoạt tự động sau thanh toán đơn hàng " + order.getOrderCode()

@@ -92,6 +92,12 @@ public class StudentWritingDeliveryService {
 
     @Transactional
     public StudentWritingAttemptResponse startOrResumeSelfPractice(UUID testVersionId, UUID studentId) {
+        return startOrResumeSelfPractice(testVersionId, studentId, false);
+    }
+
+    @Transactional
+    public StudentWritingAttemptResponse startOrResumeSelfPractice(UUID testVersionId, UUID studentId,
+                                                                   boolean restart) {
         var versions = jdbc.query("""
                 select version.id, version.duration_minutes, version.primary_skill
                 from public.tests test join public.test_versions version on version.id=test.current_published_version_id
@@ -102,7 +108,10 @@ public class StudentWritingDeliveryService {
             throw new ResourceNotFoundException("Không tìm thấy đề Writing đã xuất bản");
         }
         var active = activeAttempt("test_version_id = ? and attempt_origin = 'SELF_PRACTICE'", testVersionId, studentId);
-        if (active != null) return payload(loadAttempt(active, studentId, false));
+        if (active != null) {
+            if (!restart) return payload(loadAttempt(active, studentId, false));
+            finalizeAttempt(loadAttempt(active, studentId, true), "EXPIRED");
+        }
         Integer used = jdbc.queryForObject("""
                 select count(*) from public.test_attempts where test_version_id=? and student_id=?
                   and attempt_origin='SELF_PRACTICE'
