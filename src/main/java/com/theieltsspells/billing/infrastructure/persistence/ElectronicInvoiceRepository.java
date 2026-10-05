@@ -50,6 +50,21 @@ public interface ElectronicInvoiceRepository extends JpaRepository<ElectronicInv
             @Param("maxRetries") int maxRetries
     );
 
+    @Query(value = """
+            SELECT * FROM electronic_invoices
+            WHERE status = 'ISSUED'
+              AND (cqt_code IS NULL OR BTRIM(cqt_code) = '')
+              AND xml_url IS NOT NULL
+              AND issued_at >= :issuedAfter
+              AND (next_retry_at IS NULL OR next_retry_at <= :now)
+            ORDER BY issued_at ASC
+            LIMIT 15
+            """, nativeQuery = true)
+    List<ElectronicInvoice> findIssuedInvoicesAwaitingCqt(
+            @Param("issuedAfter") OffsetDateTime issuedAfter,
+            @Param("now") OffsetDateTime now
+    );
+
     @Query("SELECT e FROM ElectronicInvoice e WHERE e.status IN :statuses")
     List<ElectronicInvoice> findByStatusIn(@Param("statuses") List<InvoiceStatus> statuses);
 }

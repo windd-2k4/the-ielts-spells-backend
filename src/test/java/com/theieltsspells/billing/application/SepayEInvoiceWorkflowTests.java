@@ -901,6 +901,39 @@ class SepayEInvoiceWorkflowTests {
         assertThat(invoice.getReconciliationStatus()).isEqualTo(ReconciliationStatus.RECONCILED);
     }
 
+    @Test
+    @DisplayName("20b. ISSUED sync: Bổ sung mã CQT muộn mà không gửi lại email")
+    void testIssuedInvoiceSynchronizesDelayedCqtWithoutDuplicateEmail() {
+        UUID invId = UUID.randomUUID();
+        Order order = createSampleOrder("KH260922LATECQT");
+        ElectronicInvoice invoice = new ElectronicInvoice();
+        invoice.setId(invId);
+        invoice.setOrderId(order.getId());
+        invoice.setReferenceCode("INV-KH260922LATECQT");
+        invoice.setStatus(InvoiceStatus.ISSUED);
+        invoice.setInvoiceNumber("1001");
+        invoice.setInvoiceSeries("C26TSE");
+        invoice.setXmlUrl("https://sepay.vn/xml/1001");
+        invoice.setIssuedAt(OffsetDateTime.now().minusMinutes(5));
+
+        when(invoiceRepository.findById(invId)).thenReturn(Optional.of(invoice));
+        when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+        when(invoiceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(sepayEInvoiceClient.getInvoiceDetail(any(), eq("INV-KH260922LATECQT"))).thenReturn(
+                SepayEInvoiceClient.InvoiceDetailResult.ofSuccess(
+                        "1001", "C26TSE", "00LATECQT123", null,
+                        "https://sepay.vn/pdf/1001", "https://sepay.vn/xml/1001"
+                )
+        );
+
+        realInvoiceService.checkAndAdvanceInvoice(invId);
+
+        assertThat(invoice.getCqtCode()).isEqualTo("00LATECQT123");
+        assertThat(invoice.getReconciliationStatus()).isEqualTo(ReconciliationStatus.RECONCILED);
+        assertThat(invoice.getNextRetryAt()).isNull();
+        verify(emailService, never()).sendInvoiceIssuedEmail(any(), any());
+    }
+
     // =========================================================================
     // SECTION 2: 10 REGRESSION & WORKFLOW TESTS
     // =========================================================================

@@ -16,6 +16,8 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Component
@@ -23,6 +25,10 @@ import java.util.*;
 public class SepayEInvoiceClient {
 
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final Pattern CQT_XML_PATTERN = Pattern.compile(
+            "(?is)<(?:\\w+:)?MCCQT\\b[^>]*>\\s*([^<]+?)\\s*</(?:\\w+:)?MCCQT>"
+    );
+    private static final int MAX_INVOICE_XML_LENGTH = 5_000_000;
 
     private final ObjectMapper objectMapper;
     private final SepayEInvoiceTokenService tokenService;
@@ -204,6 +210,7 @@ public class SepayEInvoiceClient {
         if (httpClient == null) {
             httpClient = HttpClient.newBuilder()
                     .connectTimeout(Duration.ofSeconds(12))
+                    .followRedirects(HttpClient.Redirect.NORMAL)
                     .build();
         }
         return httpClient;
@@ -586,6 +593,9 @@ public class SepayEInvoiceClient {
             String lookup = data.path("lookup_code").asText(null);
             String pdf = data.path("pdf_url").asText(null);
             String xml = data.path("xml_url").asText(null);
+            if ((cqt == null || cqt.isBlank()) && xml != null && !xml.isBlank()) {
+                cqt = fetchTaxAuthorityCodeFromXml(xml);
+            }
             Long total = data.has("total_amount") && !data.path("total_amount").isNull() ? data.path("total_amount").asLong() : null;
             Integer taxRate = data.has("tax_rate") && !data.path("tax_rate").isNull() ? data.path("tax_rate").asInt() : null;
 
@@ -594,6 +604,32 @@ public class SepayEInvoiceClient {
             log.error("Ngoại lệ khi gọi GET /v1/invoices/{}: {}", referenceCode, ex.getMessage(), ex);
             return InvoiceDetailResult.error("EXCEPTION", ex.getMessage());
         }
+    }
+
+    private String fetchTaxAuthorityCodeFromXml(String xmlUrl) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(xmlUrl))
+                    .timeout(Duration.ofSeconds(12))
+                    .GET()
+                    .build();
+            HttpResponse<String> response = httpClient().send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() != 200 || response.body() == null || response.body().length() > MAX_INVOICE_XML_LENGTH) {
+                return null;
+            }
+            return extractTaxAuthorityCode(response.body());
+        } catch (Exception ex) {
+            log.debug("Chưa đọc được mã CQT từ XML SePay: {}", ex.getMessage());
+            return null;
+        }
+    }
+
+    static String extractTaxAuthorityCode(String xml) {
+        if (xml == null || xml.isBlank()) {
+            return null;
+        }
+        Matcher matcher = CQT_XML_PATTERN.matcher(xml);
+        return matcher.find() ? matcher.group(1).trim() : null;
     }
 
     /**

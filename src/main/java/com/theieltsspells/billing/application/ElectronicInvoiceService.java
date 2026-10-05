@@ -63,6 +63,7 @@ public class ElectronicInvoiceService {
         }
 
         BillingSetting settings = billingSettingRepository.findLatest().orElseGet(BillingSetting::new);
+
         TaxTreatment taxTreatment = settings.getTaxTreatment() != null ? settings.getTaxTreatment() : TaxTreatment.NOT_SUBJECT_TO_VAT;
         Integer mappedTaxRate = taxTreatment.getSepayTaxRate();
 
@@ -542,6 +543,21 @@ public class ElectronicInvoiceService {
                 : null;
         BillingSetting settings = billingSettingRepository.findLatest().orElseGet(BillingSetting::new);
 
+        if (invoice.getStatus() == InvoiceStatus.ISSUED
+                && (invoice.getCqtCode() == null || invoice.getCqtCode().isBlank())) {
+            SepayEInvoiceClient.InvoiceDetailResult detail = sepayEInvoiceClient.getInvoiceDetail(
+                    settings, invoice.getReferenceCode()
+            );
+            if (detail != null && detail.success()) {
+                synchronizeFromDetail(invoice, order, detail);
+            } else {
+                invoice.setNextRetryAt(OffsetDateTime.now().plusMinutes(1));
+                invoice.setUpdatedAt(OffsetDateTime.now());
+                invoiceRepository.save(invoice);
+            }
+            return;
+        }
+
         // Trường hợp đang chờ đối soát chi tiết
         if (invoice.getReconciliationStatus() == ReconciliationStatus.PENDING) {
             reconcileInvoiceDetail(invoice, order, settings);
@@ -748,6 +764,8 @@ public class ElectronicInvoiceService {
     }
 
     private ElectronicInvoice synchronizeFromDetail(ElectronicInvoice invoice, Order order, SepayEInvoiceClient.InvoiceDetailResult detail) {
+        boolean wasIssued = invoice.getStatus() == InvoiceStatus.ISSUED;
+        boolean hadCqtCode = invoice.getCqtCode() != null && !invoice.getCqtCode().isBlank();
         String templateCode = detail.templateCode() != null ? detail.templateCode() : (invoice.getTemplateCode() != null ? invoice.getTemplateCode() : "1");
         String series = detail.invoiceSeries() != null ? detail.invoiceSeries() : invoice.getInvoiceSeries();
 
@@ -770,22 +788,36 @@ public class ElectronicInvoiceService {
             recordAudit(invoice.getId(), "DRAFT_READY", "SYSTEM", "Hóa đơn nháp đã đồng bộ", null);
         } else if ("issued".equalsIgnoreCase(detail.status()) || "signed".equalsIgnoreCase(detail.status()) || (detail.success() && detail.invoiceNumber() != null)) {
             invoice.setStatus(InvoiceStatus.ISSUED);
-            invoice.setReconciliationStatus(ReconciliationStatus.RECONCILED);
-            invoice.setIssuedAt(OffsetDateTime.now());
+            if (invoice.getIssuedAt() == null) invoice.setIssuedAt(OffsetDateTime.now());
             invoice.setErrorLog(null);
             invoice.setErrorCategory(null);
-            invoice.setNextRetryAt(null);
+            boolean hasCqtCode = invoice.getCqtCode() != null && !invoice.getCqtCode().isBlank();
+            if (hasCqtCode) {
+                invoice.setReconciliationStatus(ReconciliationStatus.RECONCILED);
+                invoice.setNextRetryAt(null);
+            } else if (invoice.getIssuedAt().isBefore(OffsetDateTime.now().minusHours(24))) {
+                invoice.setReconciliationStatus(ReconciliationStatus.REQUIRES_REVIEW);
+                invoice.setNextRetryAt(null);
+            } else {
+                invoice.setReconciliationStatus(ReconciliationStatus.PENDING);
+                invoice.setNextRetryAt(OffsetDateTime.now().plusMinutes(1));
+            }
             invoice.setUpdatedAt(OffsetDateTime.now());
 
-            recordAudit(invoice.getId(), "INVOICE_RECONCILED", "SYSTEM",
-                    String.format("Đối soát thành công: Số HĐ=%s, Ký hiệu=%s, CQT=%s",
-                            invoice.getInvoiceNumber(), series, invoice.getCqtCode()),
-                    Map.of("invoice_number", invoice.getInvoiceNumber() != null ? invoice.getInvoiceNumber() : "", "pdf_url", invoice.getPdfUrl() != null ? invoice.getPdfUrl() : ""));
+            if (!wasIssued) {
+                recordAudit(invoice.getId(), "INVOICE_RECONCILED", "SYSTEM",
+                        String.format("Đối soát thành công: Số HĐ=%s, Ký hiệu=%s, CQT=%s",
+                                invoice.getInvoiceNumber(), series, invoice.getCqtCode()),
+                        Map.of("invoice_number", invoice.getInvoiceNumber() != null ? invoice.getInvoiceNumber() : "", "pdf_url", invoice.getPdfUrl() != null ? invoice.getPdfUrl() : ""));
+            } else if (!hadCqtCode && hasCqtCode) {
+                recordAudit(invoice.getId(), "CQT_CODE_SYNCHRONIZED", "SYSTEM",
+                        "Đã đồng bộ mã CQT từ XML hóa đơn SePay", null);
+            }
 
             log.info("Phát hành HĐĐT thành công qua SePay: Hóa đơn ID={}, Số HĐ={}, Ký hiệu={}, CQT={}",
                     invoice.getId(), invoice.getInvoiceNumber(), series, invoice.getCqtCode());
 
-            if (order != null) {
+            if (!wasIssued && order != null) {
                 try {
                     emailService.sendInvoiceIssuedEmail(order, invoice);
                     recordAudit(invoice.getId(), "EMAIL_SENT", "SYSTEM", "Đã gửi email hóa đơn điện tử cho học viên", null);
