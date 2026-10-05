@@ -4,6 +4,7 @@ import com.theieltsspells.academic.application.BillingCourseQueryService;
 import com.theieltsspells.academic.application.BillingCourseView;
 import com.theieltsspells.billing.domain.ElectronicInvoice;
 import com.theieltsspells.billing.domain.Order;
+import com.theieltsspells.shared.application.BusinessRuleException;
 import jakarta.mail.internet.MimeMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -89,9 +90,17 @@ public class EmailBillingNotificationService {
      */
     @Async
     public void sendInvoiceIssuedEmail(Order order, ElectronicInvoice invoice) {
+        try {
+            sendInvoiceIssuedEmailNow(order, invoice);
+        } catch (RuntimeException ex) {
+            log.error("Gửi email hóa đơn qua SMTP thất bại: {}", ex.getMessage(), ex);
+        }
+    }
+
+    /** Gửi đồng bộ để API quản trị chỉ báo thành công sau khi SMTP đã chấp nhận thư. */
+    public void sendInvoiceIssuedEmailNow(Order order, ElectronicInvoice invoice) {
         if (invoice == null || invoice.getInvoiceNumber() == null) {
-            log.warn("Bỏ qua gửi email hóa đơn vì thông tin hóa đơn chưa hoàn tất cho đơn {}", order.getOrderCode());
-            return;
+            throw new BusinessRuleException("Hóa đơn chưa hoàn tất nên chưa thể gửi email");
         }
 
         String courseTitle = courses.findById(order.getCourseId())
@@ -167,22 +176,24 @@ public class EmailBillingNotificationService {
     }
 
     private void sendHtmlEmail(String toEmail, String subject, String htmlBody) {
-        if (mailSender != null) {
-            try {
-                MimeMessage message = mailSender.createMimeMessage();
-                MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-                helper.setFrom(fromEmail);
-                helper.setTo(toEmail);
-                helper.setSubject(subject);
-                helper.setText(htmlBody, true);
-                mailSender.send(message);
-                log.info("Đã gửi email thành công tới {}", toEmail);
-                return;
-            } catch (Exception ex) {
-                log.error("Gửi email billing qua SMTP thất bại; cần retry/cảnh báo vận hành: {}", ex.getMessage(), ex);
-                return;
-            }
+        if (mailSender == null) {
+            throw new BusinessRuleException("SMTP chưa được cấu hình");
         }
-        log.error("JavaMailSender chưa được cấu hình; email billing không được gửi");
+        if (toEmail == null || toEmail.isBlank()) {
+            throw new BusinessRuleException("Hóa đơn chưa có địa chỉ email người nhận");
+        }
+        try {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setFrom(fromEmail);
+            helper.setTo(toEmail);
+            helper.setSubject(subject);
+            helper.setText(htmlBody, true);
+            mailSender.send(message);
+            log.info("Đã gửi email thành công tới {}", toEmail);
+        } catch (Exception ex) {
+            log.error("Gửi email billing qua SMTP thất bại; cần retry/cảnh báo vận hành: {}", ex.getMessage(), ex);
+            throw new BusinessRuleException("Không thể gửi email qua SMTP");
+        }
     }
 }

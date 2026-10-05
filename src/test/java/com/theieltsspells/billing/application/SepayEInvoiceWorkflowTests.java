@@ -184,6 +184,25 @@ class SepayEInvoiceWorkflowTests {
     }
 
     @Test
+    @DisplayName("Gửi lại hóa đơn: chỉ báo thành công sau khi SMTP gửi xong")
+    void resendInvoiceEmail_UsesSynchronousSmtpAndAuditsSuccess() {
+        Order order = createSampleOrder("KH2610051234");
+        ElectronicInvoice invoice = new ElectronicInvoice();
+        invoice.setId(UUID.randomUUID());
+        invoice.setOrderId(order.getId());
+        invoice.setStatus(InvoiceStatus.ISSUED);
+        invoice.setInvoiceNumber("1");
+
+        when(invoiceRepository.findById(invoice.getId())).thenReturn(Optional.of(invoice));
+        when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+
+        realInvoiceService.resendInvoiceEmail(invoice.getId());
+
+        verify(emailService).sendInvoiceIssuedEmailNow(order, invoice);
+        verify(auditLogRepository).save(argThat(log -> "EMAIL_RESENT".equals(log.getEvent())));
+    }
+
+    @Test
     @DisplayName("2. Pre-resend check: Gọi GET /v1/invoices/{reference_code} trước khi gửi lại, nếu đã tồn tại thì đồng bộ DB")
     void testPreResendCheck_ExistingOnSepay_SynchronizesLocalDb() {
         Order order = createSampleOrder("KH2609221234");

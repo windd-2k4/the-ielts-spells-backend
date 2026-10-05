@@ -966,6 +966,23 @@ public class ElectronicInvoiceService {
     }
 
     @Transactional
+    public void resendInvoiceEmail(UUID invoiceId) {
+        ElectronicInvoice invoice = invoiceRepository.findById(invoiceId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hóa đơn: " + invoiceId));
+        if (invoice.getStatus() != InvoiceStatus.ISSUED || invoice.getInvoiceNumber() == null) {
+            throw new BusinessRuleException("Chỉ có thể gửi hóa đơn đã phát hành");
+        }
+        if (invoice.getOrderId() == null) {
+            throw new BusinessRuleException("Hóa đơn QR tĩnh không có email người nhận để gửi lại");
+        }
+        Order order = orderRepository.findById(invoice.getOrderId())
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng của hóa đơn"));
+
+        emailService.sendInvoiceIssuedEmailNow(order, invoice);
+        recordAudit(invoice.getId(), "EMAIL_RESENT", "ADMIN", "Quản trị viên đã gửi lại hóa đơn qua SMTP", null);
+    }
+
+    @Transactional
     public InvoiceAdminDto cancelInvoice(UUID targetId, String reason) {
         ElectronicInvoice invoice = invoiceRepository.findById(targetId)
                 .or(() -> invoiceRepository.findFirstByOrderIdOrderByCreatedAtDesc(targetId))
