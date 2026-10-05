@@ -23,6 +23,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
@@ -288,6 +290,37 @@ public class AdminBillingController {
     @Operation(summary = "Chi tiết hóa đơn điện tử")
     public ResponseEntity<InvoiceAdminDto> getInvoice(@PathVariable UUID id) {
         return ResponseEntity.ok(invoiceService.getInvoiceAdmin(id));
+    }
+
+    @GetMapping(value = "/invoices/{id}/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
+    @Operation(summary = "Xem PDF hóa đơn chính thức trực tiếp trong trình duyệt")
+    public ResponseEntity<byte[]> previewInvoicePdf(@PathVariable UUID id) {
+        ElectronicInvoice invoice = invoiceRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hóa đơn: " + id));
+        String trackingCode = invoice.getIssueTrackingCode() != null && !invoice.getIssueTrackingCode().isBlank()
+                ? invoice.getIssueTrackingCode()
+                : invoice.getCreateTrackingCode();
+        if (trackingCode == null || trackingCode.isBlank()) {
+            throw new BusinessRuleException("Hóa đơn chưa có mã theo dõi để tải PDF chính thức");
+        }
+
+        BillingSetting setting = settingsRepository.findLatest()
+                .orElseThrow(() -> new BusinessRuleException("Chưa cấu hình SePay eInvoice"));
+        SepayEInvoiceClient.DownloadResult pdf = sepayEInvoiceClient.downloadInvoiceFile(setting, trackingCode, "pdf");
+        if (!pdf.success() || pdf.content() == null || pdf.content().length == 0) {
+            throw new BusinessRuleException(pdf.errorMessage() != null
+                    ? pdf.errorMessage()
+                    : "Không thể tải PDF hóa đơn từ SePay");
+        }
+
+        String number = invoice.getInvoiceNumber() != null && !invoice.getInvoiceNumber().isBlank()
+                ? invoice.getInvoiceNumber().replaceAll("[^A-Za-z0-9_-]", "-")
+                : invoice.getId().toString();
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .contentLength(pdf.content().length)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=hoa-don-" + number + ".pdf")
+                .body(pdf.content());
     }
 
     @PostMapping("/invoices/{id}/issue")
