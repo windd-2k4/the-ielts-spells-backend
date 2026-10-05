@@ -342,6 +342,13 @@ public class AdminBillingController {
         return ResponseEntity.ok(invoiceService.recheckInvoiceStatus(id));
     }
 
+    @PostMapping("/invoices/{id}/email")
+    @Operation(summary = "Gửi lại hóa đơn đã phát hành qua SMTP")
+    public ResponseEntity<Void> resendInvoiceEmail(@PathVariable UUID id) {
+        invoiceService.resendInvoiceEmail(id);
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/invoices/{id}/cancel")
     @Operation(summary = "Hủy yêu cầu hóa đơn chưa từng gửi SePay (không dùng cho hóa đơn đã phát hành)")
     public ResponseEntity<InvoiceAdminDto> cancelInvoice(
