@@ -434,6 +434,8 @@ public class SepayWebhookService {
             return "Người nộp học phí";
         }
         String normalized = transferContent.trim().replaceAll("\\s+", " ");
+        // MoMo prefixes the customer's transfer note with its numeric transaction id.
+        normalized = normalized.replaceFirst("^\\d{6,}[-_\\s]+", "");
         if (orderCode != null) {
             String withoutOrderCode = normalized.replaceAll("(?i)\\b" + Pattern.quote(orderCode) + "\\b", "")
                     .trim()
@@ -445,7 +447,7 @@ public class SepayWebhookService {
         // Một số ngân hàng/ZaloPay nối thêm mô tả hệ thống phía sau tên người gửi.
         // Chỉ cắt các cụm phân tách rõ ràng để không tự suy diễn hoặc đổi tên khách.
         String nameOnly = normalized.replaceFirst(
-                "(?iu)\\s+(chuyển\\s+khoản|chuyen\\s+khoan|thanh\\s+toán|thanh\\s+toan|đóng\\s+học\\s+phí|dong\\s+hoc\\s+phi)\\b.*$",
+                "(?iu)[\\s_-]+(chuyển\\s+khoản|chuyen\\s+khoan|chuyển\\s+tiền|chuyen\\s+tien|thanh\\s+toán|thanh\\s+toan|đóng\\s+học\\s+phí|dong\\s+hoc\\s+phi)\\b.*$",
                 ""
         ).trim();
         if (!nameOnly.isBlank()) {

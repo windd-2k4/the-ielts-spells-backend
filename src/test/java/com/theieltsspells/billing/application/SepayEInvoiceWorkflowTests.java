@@ -1006,6 +1006,26 @@ class SepayEInvoiceWorkflowTests {
     }
 
     @Test
+    @DisplayName("22c. QR tĩnh qua MoMo bỏ mã bao và mô tả hệ thống khỏi tên người mua")
+    void testStaticQrViaMomo_ExtractsOnlyCustomerTransferNote() {
+        when(billingSettingRepository.findLatest()).thenReturn(Optional.of(configuredWebhookSetting()));
+        when(transactionRepository.existsBySepayTransactionId("87052482")).thenReturn(false);
+
+        SepayWebhookPayload payload = new SepayWebhookPayload(
+                87052482L, "MBBank", "2026-10-05 07:32:00", "0987654321",
+                null, null,
+                "150109217985-PHONG NGUYEN TEST QR TINH 0510-CHUYEN TIEN-OQCH000LgU68-MOMO150109217985MOMO",
+                "in", null, BigDecimal.valueOf(8000), "REF87052482", BigDecimal.valueOf(8000)
+        );
+
+        webhookService.processWebhook("Apikey webhook-test-key", payload);
+
+        ArgumentCaptor<PaymentTransaction> transactionCaptor = ArgumentCaptor.forClass(PaymentTransaction.class);
+        verify(transactionRepository).saveAndFlush(transactionCaptor.capture());
+        assertThat(transactionCaptor.getValue().getPayerName()).isEqualTo("PHONG NGUYEN TEST QR TINH 0510");
+    }
+
+    @Test
     @DisplayName("23. Decoupled Webhook: Webhook phản hồi ngay, HĐĐT và email xử lý bất đồng bộ")
     void testWebhookSuccess_DecoupledInvoiceAndEmail() {
         when(billingSettingRepository.findLatest()).thenReturn(Optional.of(configuredWebhookSetting()));
