@@ -39,6 +39,21 @@ public class ElectronicInvoiceWorker {
      */
     @Scheduled(fixedDelay = 5000)
     public void processPendingInvoices() {
+        OffsetDateTime now = OffsetDateTime.now();
+
+        // Mã CQT có thể xuất hiện sau khi SePay đã trả trạng thái ISSUED.
+        // Đồng bộ metadata này độc lập với kill-switch vì không phát hành hóa đơn mới.
+        List<ElectronicInvoice> awaitingCqt = invoiceRepository.findIssuedInvoicesAwaitingCqt(
+                now.minusHours(24), now
+        );
+        for (ElectronicInvoice invoice : awaitingCqt) {
+            try {
+                invoiceService.checkAndAdvanceInvoice(invoice.getId());
+            } catch (Exception ex) {
+                log.warn("Chưa đồng bộ được mã CQT cho hóa đơn {}: {}", invoice.getId(), ex.getMessage());
+            }
+        }
+
         boolean autoInvoiceEnabled = billingSettingRepository.findLatest()
                 .map(setting -> Boolean.TRUE.equals(setting.getAutoInvoiceEnabled()))
                 .orElse(false);
@@ -46,7 +61,6 @@ public class ElectronicInvoiceWorker {
             return;
         }
 
-        OffsetDateTime now = OffsetDateTime.now();
         List<ElectronicInvoice> candidates = invoiceRepository.findActionableInvoices(ACTIONABLE_STATUSES, now, 15);
 
         if (candidates.isEmpty()) {
