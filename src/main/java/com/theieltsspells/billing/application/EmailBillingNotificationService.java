@@ -4,6 +4,7 @@ import com.theieltsspells.academic.application.BillingCourseQueryService;
 import com.theieltsspells.academic.application.BillingCourseView;
 import com.theieltsspells.billing.domain.ElectronicInvoice;
 import com.theieltsspells.billing.domain.Order;
+import com.theieltsspells.billing.infrastructure.persistence.AccountActivationTokenRepository;
 import com.theieltsspells.shared.application.BusinessRuleException;
 import jakarta.mail.internet.MimeMessage;
 import lombok.extern.slf4j.Slf4j;
@@ -25,9 +26,14 @@ public class EmailBillingNotificationService {
     private JavaMailSender mailSender;
 
     private final BillingCourseQueryService courses;
+    private final AccountActivationTokenRepository activationTokens;
 
-    public EmailBillingNotificationService(BillingCourseQueryService courses) {
+    public EmailBillingNotificationService(
+            BillingCourseQueryService courses,
+            AccountActivationTokenRepository activationTokens
+    ) {
         this.courses = courses;
+        this.activationTokens = activationTokens;
     }
 
     @Value("${app.student-app-url:http://localhost:3000}")
@@ -110,6 +116,10 @@ public class EmailBillingNotificationService {
         String targetEmail = (order.getInvoiceEmail() != null && !order.getInvoiceEmail().isBlank())
                 ? order.getInvoiceEmail()
                 : order.getCustomerEmail();
+        String activationUrl = activationTokens.findByOrderId(order.getId())
+                .filter(token -> !token.isUsed() && !token.isExpired())
+                .map(token -> String.format("%s/student/activate?token=%s", frontendUrl, token.getTokenHash()))
+                .orElse(null);
 
         String subject = String.format("[The IELTS Spells] Hóa đơn điện tử số %s (Ký hiệu %s) - Đơn %s",
                 invoice.getInvoiceNumber(),
@@ -157,6 +167,15 @@ public class EmailBillingNotificationService {
         }
         html.append("</div>");
 
+        if (activationUrl != null) {
+            html.append("<div style=\"background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 18px; margin: 20px 0; text-align: center;\">");
+            html.append("<h3 style=\"margin: 0 0 8px; color: #166534;\">KÍCH HOẠT TÀI KHOẢN HỌC VIÊN</h3>");
+            html.append("<p style=\"font-size: 14px; color: #475569;\">Tài khoản của bạn đang ở trạng thái <strong>Chờ kích hoạt</strong>. Hãy tạo mật khẩu để vào khóa học:</p>");
+            html.append(String.format("<a href=\"%s\" style=\"display: inline-block; background: #16a34a; color: #ffffff; padding: 12px 24px; font-size: 14px; font-weight: bold; text-decoration: none; border-radius: 6px;\">KÍCH HOẠT TÀI KHOẢN &amp; VÀO HỌC</a>", activationUrl));
+            html.append("<p style=\"font-size: 12px; color: #64748b; margin: 10px 0 0;\">Liên kết có hiệu lực trong 7 ngày kể từ khi thanh toán.</p>");
+            html.append("</div>");
+        }
+
         html.append("<p style=\"font-size: 12px; color: #94a3b8; margin-top: 24px; text-align: center;\">Hóa đơn điện tử được khởi tạo và phát hành tự động qua cổng SePay eInvoice tuân thủ Nghị định 123/2020/NĐ-CP và Thông tư 78/2021/TT-BTC.</p>");
         html.append("</div>");
         html.append("</div>");
@@ -184,7 +203,7 @@ public class EmailBillingNotificationService {
         }
         try {
             MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
             helper.setFrom(fromEmail);
             helper.setTo(toEmail);
             helper.setSubject(subject);
