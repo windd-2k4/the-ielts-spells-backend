@@ -3,6 +3,7 @@ package com.theieltsspells.identity.application;
 import com.theieltsspells.identity.application.dto.*;
 import com.theieltsspells.identity.domain.*;
 import com.theieltsspells.identity.infrastructure.SupabaseAdminClient;
+import com.theieltsspells.identity.infrastructure.StaffInvitationEmailService;
 import com.theieltsspells.identity.infrastructure.persistence.*;
 import com.theieltsspells.shared.application.*;
 import com.theieltsspells.shared.persistence.enums.AppRole;
@@ -20,7 +21,7 @@ import java.util.*;
 @RequiredArgsConstructor
 public class StaffInvitationApplicationService {
     private static final Set<AppRole> STAFF_ROLES = Set.of(
-            AppRole.ADMISSIONS, AppRole.SOCIAL_MEDIA, AppRole.TEACHER,
+            AppRole.ADMIN, AppRole.ADMISSIONS, AppRole.SOCIAL_MEDIA, AppRole.TEACHER,
             AppRole.STUDENT_SUPPORT);
 
     private final StaffProfileRepository staffProfiles;
@@ -29,6 +30,7 @@ public class StaffInvitationApplicationService {
     private final UserRoleRepository roles;
     private final TeacherProfileRepository teacherProfiles;
     private final SupabaseAdminClient supabase;
+    private final StaffInvitationEmailService invitationEmail;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -46,7 +48,14 @@ public class StaffInvitationApplicationService {
             throw new ConflictException("Email đã có lời mời đang chờ");
 
         OffsetDateTime now = OffsetDateTime.now();
-        UUID supabaseUserId = supabase.inviteStaff(email, input.fullName().trim());
+        SupabaseAdminClient.StaffInvite authInvite = supabase.inviteStaff(email, input.fullName().trim());
+        UUID supabaseUserId = authInvite.userId();
+        try {
+            invitationEmail.send(email, input.fullName().trim(), input.role(), authInvite.actionLink());
+        } catch (RuntimeException exception) {
+            supabase.deleteUser(supabaseUserId);
+            throw exception;
+        }
 
         StaffProfile staff = new StaffProfile();
         staff.setAuthUserId(supabaseUserId);
@@ -222,15 +231,16 @@ public class StaffInvitationApplicationService {
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy lời mời"));
         if (invitation.getStatus() != InvitationStatus.PENDING)
             throw new ConflictException("Chỉ có thể thu hồi lời mời đang chờ");
+        StaffProfile staff = staffProfiles.findById(invitation.getStaffProfileId())
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hồ sơ nhân sự"));
         OffsetDateTime now = OffsetDateTime.now();
         invitation.setStatus(InvitationStatus.REVOKED);
         invitation.setRevokedAt(now);
         invitation.setUpdatedAt(now);
-        StaffProfile staff = staffProfiles.findById(invitation.getStaffProfileId())
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hồ sơ nhân sự"));
-        staff.setStatus(StaffStatus.DRAFT);
-        staff.setUpdatedAt(now);
-        return map(invitation, staff);
+        InvitationResponse response = map(invitation, staff);
+        if (invitation.getSupabaseUserId() != null) supabase.deleteUser(invitation.getSupabaseUserId());
+        staffProfiles.delete(staff);
+        return response;
     }
 
     private StaffInvitation pendingFor(String email) {
@@ -273,6 +283,7 @@ public class StaffInvitationApplicationService {
     }
 
     private String clean(String value) {
+        if (value == null) return null;
         String cleaned = value.trim();
         return cleaned.isEmpty() ? null : cleaned;
     }

@@ -14,13 +14,16 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.YearMonth;
 import java.util.List;
 import java.util.UUID;
 
@@ -39,6 +42,16 @@ public class StudentPortalController {
     @Operation(summary = "Lấy dữ liệu tổng hợp thật cho góc học tập")
     public StudentPortalOverviewResponse overview(@AuthenticationPrincipal Jwt jwt) {
         return service.overview(studentId(jwt));
+    }
+
+    @GetMapping("/activity")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'identity.profile.self.read')")
+    @Operation(summary = "Lấy hoạt động học tập đã nộp trong một tháng")
+    public List<StudentPortalOverviewResponse.DailyActivity> activity(
+            @RequestParam @DateTimeFormat(pattern = "yyyy-MM") YearMonth month,
+            @AuthenticationPrincipal Jwt jwt
+    ) {
+        return service.activity(studentId(jwt), month);
     }
 
     @GetMapping("/courses")

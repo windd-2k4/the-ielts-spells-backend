@@ -25,6 +25,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStream;
 import java.net.URI;
+import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Set;
@@ -158,6 +159,7 @@ public class LearningLibraryApplicationService {
 
     public Page<LearningResourceResponse> listResources(String query, SkillType skill, String category,
                                                         String scope, String status, UUID courseId,
+                                                        UUID folderId,
                                                         boolean includeGlobal, Pageable pageable) {
         Specification<LearningResource> spec = (root, ignored, cb) -> cb.notEqual(root.get("category"), MEDIA_CATEGORY);
         if (query != null && !query.isBlank()) {
@@ -174,11 +176,19 @@ public class LearningLibraryApplicationService {
         if (courseId != null) spec = spec.and((root, ignored, cb) -> includeGlobal
                 ? cb.or(cb.equal(root.get("courseId"), courseId), cb.equal(root.get("scope"), "GLOBAL"))
                 : cb.equal(root.get("courseId"), courseId));
+        if (folderId != null) spec = spec.and((root, ignored, cb) -> cb.equal(root.get("folderId"), folderId));
         return resources.findAll(spec, pageable).map(this::resourceResponse);
+    }
+
+    public Page<LearningResourceResponse> listResources(String query, SkillType skill, String category,
+                                                        String scope, String status, UUID courseId,
+                                                        boolean includeGlobal, Pageable pageable) {
+        return listResources(query, skill, category, scope, status, courseId, null, includeGlobal, pageable);
     }
 
     public Page<ExerciseTemplateResponse> listExercises(String query, SkillType skill, String category,
                                                         String scope, String status, UUID courseId,
+                                                         UUID folderId,
                                                         boolean includeGlobal, Pageable pageable) {
         Specification<ExerciseTemplate> spec = (root, ignored, cb) -> cb.conjunction();
         if (query != null && !query.isBlank()) {
@@ -195,7 +205,44 @@ public class LearningLibraryApplicationService {
         if (courseId != null) spec = spec.and((root, ignored, cb) -> includeGlobal
                 ? cb.or(cb.equal(root.get("courseId"), courseId), cb.equal(root.get("scope"), "GLOBAL"))
                 : cb.equal(root.get("courseId"), courseId));
+        if (folderId != null) spec = spec.and((root, ignored, cb) -> cb.equal(root.get("folderId"), folderId));
         return exercises.findAll(spec, pageable).map(this::exerciseResponse);
+    }
+
+    public Page<ExerciseTemplateResponse> listExercises(String query, SkillType skill, String category,
+                                                        String scope, String status, UUID courseId,
+                                                        boolean includeGlobal, Pageable pageable) {
+        return listExercises(query, skill, category, scope, status, courseId, null, includeGlobal, pageable);
+    }
+
+    public List<LibraryFolderResponse> listFolders() {
+        return jdbc.query("""
+                select f.id, f.name, f.course_id, c.name course_name,
+                  ((select count(*) from public.learning_resources r where r.folder_id=f.id and r.status <> 'ARCHIVED')
+                    + (select count(*) from public.exercise_templates e where e.folder_id=f.id and e.status <> 'ARCHIVED')) item_count,
+                  f.created_at, f.updated_at
+                from public.library_folders f
+                left join public.courses c on c.id=f.course_id
+                order by (f.course_id is null), coalesce(c.starts_on, current_date) desc, lower(f.name)
+                """, (rs, ignored) -> new LibraryFolderResponse(
+                rs.getObject("id", UUID.class), rs.getString("name"), rs.getObject("course_id", UUID.class),
+                rs.getString("course_name"), rs.getLong("item_count"),
+                rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class)));
+    }
+
+    @Transactional
+    public LibraryFolderResponse createFolder(LibraryFolderRequest request, UUID actor) {
+        var name = request.name().trim();
+        if (request.courseId() != null) validateCourseScope("COURSE", request.courseId());
+        var duplicate = jdbc.queryForObject("""
+                select count(*) from public.library_folders
+                where lower(name)=lower(?) and course_id is not distinct from ?
+                """, Integer.class, name, request.courseId());
+        if (duplicate != null && duplicate > 0) throw new BusinessRuleException("Thư mục này đã tồn tại");
+        var id = UUID.randomUUID();
+        jdbc.update("insert into public.library_folders(id,name,course_id,created_by) values (?,?,?,?)",
+                id, name, request.courseId(), actor);
+        return folder(id);
     }
 
     public LearningResourceResponse getResource(UUID id) { return resourceResponse(findResource(id)); }
@@ -368,11 +415,12 @@ public class LearningLibraryApplicationService {
     private void apply(LearningResource value, LearningResourceRequest request) {
         var scope = allowed(request.scope(), SCOPES, "Phạm vi tài liệu không hợp lệ");
         validateCourseScope(scope, request.courseId());
+        validateFolder(request.folderId(), "COURSE".equals(scope) ? request.courseId() : null);
         validateUrl(request.externalUrl(), false);
         value.setTitle(request.title().trim()); value.setDescription(blank(request.description()));
         value.setSkill(request.skill()); value.setCategory(request.category().trim());
         value.setResourceType(allowed(request.resourceType(), RESOURCE_TYPES, "Loại tài liệu không hợp lệ"));
-        value.setScope(scope); value.setCourseId("COURSE".equals(scope) ? request.courseId() : null);
+        value.setScope(scope); value.setCourseId("COURSE".equals(scope) ? request.courseId() : null); value.setFolderId(request.folderId());
         value.setExternalUrl(blank(request.externalUrl()));
         value.setTeacherOnly(Boolean.TRUE.equals(request.teacherOnly()) || "TEACHER_NOTE".equals(value.getResourceType()));
         value.setStatus(allowed(request.status(), STATUSES, "Trạng thái tài liệu không hợp lệ"));
@@ -381,12 +429,13 @@ public class LearningLibraryApplicationService {
     private void apply(ExerciseTemplate value, ExerciseTemplateRequest request) {
         var scope = allowed(request.scope(), SCOPES, "Phạm vi bài tập không hợp lệ");
         validateCourseScope(scope, request.courseId());
+        validateFolder(request.folderId(), "COURSE".equals(scope) ? request.courseId() : null);
         validateUrl(request.sourceUrl(), false);
         value.setTitle(request.title().trim()); value.setInstructions(blank(request.instructions()));
         value.setSkill(request.skill()); value.setCategory(request.category().trim());
         value.setExerciseType(request.exerciseType().trim());
         value.setCompletionMode(allowed(request.completionMode(), COMPLETION_MODES, "Phương thức hoàn thành không hợp lệ"));
-        value.setScope(scope); value.setCourseId("COURSE".equals(scope) ? request.courseId() : null);
+        value.setScope(scope); value.setCourseId("COURSE".equals(scope) ? request.courseId() : null); value.setFolderId(request.folderId());
         value.setSourceUrl(blank(request.sourceUrl())); value.setDurationMinutes(request.durationMinutes());
         value.setMaxScore(request.maxScore()); value.setAttemptLimit(request.attemptLimit() == null ? (short) 1 : request.attemptLimit());
         value.setRequiresTeacherReview(Boolean.TRUE.equals(request.requiresTeacherReview()));
@@ -402,6 +451,30 @@ public class LearningLibraryApplicationService {
                     .setParameter("id", courseId).getSingleResult();
             if (((Number) count).longValue() == 0) throw new ResourceNotFoundException("Không tìm thấy khóa học");
         }
+    }
+
+    private void validateFolder(UUID folderId, UUID courseId) {
+        if (folderId == null) return;
+        var rows = jdbc.query("select course_id from public.library_folders where id=?",
+                (rs, ignored) -> rs.getObject("course_id", UUID.class), folderId);
+        if (rows.isEmpty()) throw new ResourceNotFoundException("Không tìm thấy thư mục học liệu");
+        var folderCourseId = rows.getFirst();
+        if (folderCourseId != null && !folderCourseId.equals(courseId)) {
+            throw new BusinessRuleException("Thư mục khóa học không khớp với phạm vi tài liệu");
+        }
+    }
+
+    private LibraryFolderResponse folder(UUID id) {
+        return jdbc.queryForObject("""
+                select f.id, f.name, f.course_id, c.name course_name,
+                  ((select count(*) from public.learning_resources r where r.folder_id=f.id and r.status <> 'ARCHIVED')
+                    + (select count(*) from public.exercise_templates e where e.folder_id=f.id and e.status <> 'ARCHIVED')) item_count,
+                  f.created_at, f.updated_at
+                from public.library_folders f left join public.courses c on c.id=f.course_id where f.id=?
+                """, (rs, ignored) -> new LibraryFolderResponse(
+                rs.getObject("id", UUID.class), rs.getString("name"), rs.getObject("course_id", UUID.class),
+                rs.getString("course_name"), rs.getLong("item_count"),
+                rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class)), id);
     }
 
     private void validateUrl(String value, boolean required) {
@@ -467,12 +540,12 @@ public class LearningLibraryApplicationService {
     private LearningResourceFile findFile(UUID id) { return resourceFiles.findById(id).orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy tệp học liệu")); }
     private LearningResourceResponse resourceResponse(LearningResource value) {
         return new LearningResourceResponse(value.getId(), value.getCode(), value.getTitle(), value.getDescription(), value.getSkill(),
-                value.getCategory(), value.getResourceType(), value.getScope(), value.getCourseId(), value.getExternalUrl(),
+                value.getCategory(), value.getResourceType(), value.getScope(), value.getCourseId(), value.getFolderId(), value.getExternalUrl(),
                 Boolean.TRUE.equals(value.getTeacherOnly()), value.getStatus(), value.getCreatedBy(), value.getCreatedAt(), value.getUpdatedAt());
     }
     private ExerciseTemplateResponse exerciseResponse(ExerciseTemplate value) {
         return new ExerciseTemplateResponse(value.getId(), value.getCode(), value.getTitle(), value.getInstructions(), value.getSkill(),
-                value.getCategory(), value.getExerciseType(), value.getCompletionMode(), value.getScope(), value.getCourseId(),
+                value.getCategory(), value.getExerciseType(), value.getCompletionMode(), value.getScope(), value.getCourseId(), value.getFolderId(),
                 value.getSourceUrl(), value.getDurationMinutes(), value.getMaxScore(), value.getAttemptLimit(),
                 Boolean.TRUE.equals(value.getRequiresTeacherReview()), value.getContent(), value.getAnswerKey(), value.getStatus(),
                 value.getCreatedBy(), value.getCreatedAt(), value.getUpdatedAt());

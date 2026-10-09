@@ -86,10 +86,24 @@ public class SupabaseAdminClient {
         }
     }
 
-    public UUID inviteStaff(String email, String name) {
+    public StaffInvite inviteStaff(String email, String name) {
         requireConfiguration();
         try {
-            return invite(email, name);
+            JsonNode body = client.post()
+                    .uri("/auth/v1/admin/generate_link")
+                    .headers(this::authorize)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of(
+                            "type", "invite",
+                            "email", email,
+                            "data", Map.of("full_name", name),
+                            "redirect_to", managementUrl + "/auth/callback"))
+                    .retrieve().body(JsonNode.class);
+            if (body == null || body.path("action_link").isMissingNode())
+                throw new BusinessRuleException("Supabase không trả về liên kết lời mời");
+            JsonNode id = body.path("id").isMissingNode() ? body.path("user").path("id") : body.path("id");
+            if (id.isMissingNode()) throw new BusinessRuleException("Supabase không trả về người dùng được mời");
+            return new StaffInvite(UUID.fromString(id.asText()), body.path("action_link").asText());
         } catch (RestClientResponseException exception) {
             throw new BusinessRuleException("Không thể gửi lời mời qua Supabase (HTTP "
                     + exception.getStatusCode().value() + "): " + exception.getResponseBodyAsString());
@@ -188,6 +202,20 @@ public class SupabaseAdminClient {
         }
     }
 
+    public void deleteUser(UUID userId) {
+        requireConfiguration();
+        try {
+            client.delete().uri("/auth/v1/admin/users/{id}", userId)
+                    .headers(this::authorize)
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (RestClientResponseException exception) {
+            if (exception.getStatusCode().value() == 404) return;
+            throw new BusinessRuleException("Không thể xóa tài khoản mời trên Supabase (HTTP "
+                    + exception.getStatusCode().value() + "): " + exception.getResponseBodyAsString());
+        }
+    }
+
     private UUID invite(String email, String name) {
         JsonNode body = client.post()
                 .uri(uri -> uri.path("/auth/v1/invite")
@@ -239,4 +267,6 @@ public class SupabaseAdminClient {
     private void requireConfiguration() {
         if (key.isBlank()) throw new BusinessRuleException("Chưa cấu hình SUPABASE_SERVICE_ROLE_KEY");
     }
+
+    public record StaffInvite(UUID userId, String actionLink) {}
 }

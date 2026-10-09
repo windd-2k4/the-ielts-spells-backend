@@ -3,10 +3,14 @@ package com.theieltsspells.testing.application;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
 import com.theieltsspells.shared.persistence.enums.SkillType;
 import com.theieltsspells.shared.web.PageResponse;
 import com.theieltsspells.testing.application.dto.*;
+import com.theieltsspells.testing.application.crawl.CrawlBatchResult;
+import com.theieltsspells.testing.application.crawl.CrawledTestDocument;
+import com.theieltsspells.testing.application.crawl.OpenSourceTestCrawler;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -26,6 +30,7 @@ public class CrawlHubApplicationService {
     private final ObjectMapper objectMapper;
     private final AiTestParserService aiParserService;
     private final TestBankApplicationService testBankService;
+    private final OpenSourceTestCrawler openSourceTestCrawler;
 
     // -------------------------------------------------------------------------
     // CRAWL SOURCES CRUD & TRIGGER
@@ -85,64 +90,93 @@ public class CrawlHubApplicationService {
         jdbc.update("delete from public.crawl_sources where id = ?", id);
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = BusinessRuleException.class)
     public CrawlSourceDto triggerCrawl(UUID sourceId) {
         var source = getSource(sourceId);
-        
-        // Update status to running
+        if (!source.isActive()) {
+            throw new BusinessRuleException("Nguồn crawl đang bị tắt");
+        }
+
         jdbc.update("update public.crawl_sources set last_status = 'running', last_crawled_at = now() where id = ?", sourceId);
+        try {
+            Set<String> knownSourceTestIds = new HashSet<>(jdbc.queryForList("""
+                    select source_test_id
+                    from public.raw_crawled_tests
+                    where source_id = ? and source_test_id is not null
+                    """, String.class, sourceId));
 
-        // Seed/Simulate a new raw crawled test payload into raw_crawled_tests
-        String sampleTitle = "Crawled Test - " + source.name() + " (" + (source.totalCrawled() + 1) + ")";
-        String sampleText = """
-                READING PASSAGE 1
-                You should spend about 20 minutes on Questions 1-13, which are based on Reading Passage 1 below.
+            CrawlBatchResult crawlResult = openSourceTestCrawler.crawl(source, knownSourceTestIds);
+            if (crawlResult.documents().isEmpty()
+                    && crawlResult.skippedKnownCount() == 0
+                    && crawlResult.skippedIncompleteCount() > 0) {
+                markCrawlFailed(sourceId);
+                String detail = crawlResult.warnings().isEmpty()
+                        ? "Không tìm thấy đề đủ nội dung"
+                        : crawlResult.warnings().getFirst();
+                throw new BusinessRuleException(detail);
+            }
+            if (crawlResult.documents().isEmpty()
+                    && crawlResult.skippedKnownCount() == 0
+                    && crawlResult.discoveredCount() == 0) {
+                markCrawlFailed(sourceId);
+                throw new BusinessRuleException("Không phát hiện được liên kết đề chi tiết từ nguồn crawl");
+            }
 
-                The History of Artificial Intelligence in Education
-                Artificial Intelligence (AI) has rapidly transformed the educational landscape over the past decade.
-                From automated grading systems to personalized learning algorithms, AI tools have redefined how educators teach and students learn.
-                Early educational software in the 1980s relied on rigid, rule-based decision trees.
-                However, modern platforms leverage deep neural networks and natural language processing to evaluate student comprehension in real time.
+            int inserted = 0;
+            for (CrawledTestDocument document : crawlResult.documents()) {
+                Map<String, Object> rawPayload = new LinkedHashMap<>();
+                rawPayload.put("extracted_text", document.extractedText());
+                rawPayload.put("html", document.html());
+                rawPayload.put("canonical_url", document.sourceUrl());
+                rawPayload.put("question_count", document.questionCount());
+                rawPayload.put("content_hash", document.contentHash());
+                rawPayload.put("metadata", document.metadata());
+                rawPayload.put("crawled_at", OffsetDateTime.now().toString());
+                rawPayload.put("crawler_type", source.crawlerType());
 
-                Questions 1-5
-                Do the following statements agree with the information given in Reading Passage 1?
-                In boxes 1-5 on your answer sheet, write:
-                TRUE if the statement agrees with the information
-                FALSE if the statement contradicts the information
-                NOT GIVEN if there is no information on this
+                inserted += jdbc.update("""
+                        insert into public.raw_crawled_tests
+                            (source_id, source_test_id, title, skill, source_url, raw_payload, status)
+                        values (?, ?, ?, cast(? as public.skill_type), ?, cast(? as jsonb), 'pending')
+                        on conflict (source_id, source_test_id) where source_test_id is not null do nothing
+                        """,
+                        sourceId,
+                        document.sourceTestId(),
+                        document.title(),
+                        source.targetSkill().name(),
+                        document.sourceUrl(),
+                        json(rawPayload)
+                );
+            }
 
-                1. Early educational software in the 1980s used deep neural networks.
-                2. Automated grading systems can evaluate student answers in real time.
-                3. Decision trees are still the primary technology used in 2026 AI platforms.
-                4. AI has transformed both teaching and learning practices.
-                5. Natural language processing is no longer used in modern education tools.
+            jdbc.update("""
+                    update public.crawl_sources
+                    set total_crawled = total_crawled + ?, last_status = 'success', updated_at = now()
+                    where id = ?
+                    """, inserted, sourceId);
+            return getSource(sourceId);
+        } catch (BusinessRuleException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            markCrawlFailed(sourceId);
+            throw new BusinessRuleException("Crawl nguồn thất bại: " + rootMessage(exception));
+        }
+    }
 
-                Questions 6-10
-                Complete the sentences below.
-                Choose NO MORE THAN TWO WORDS from the passage for each answer.
-
-                6. Over the past decade, AI has transformed the educational ________.
-                7. Software in the 1980s depended on rigid ________ decision trees.
-                8. Modern platforms evaluate student comprehension in ________.
-                """;
-
-        Map<String, Object> rawPayload = Map.of(
-                "extracted_text", sampleText,
-                "source_url", source.sourceUrl(),
-                "crawled_at", OffsetDateTime.now().toString(),
-                "crawler_type", source.crawlerType()
-        );
-
+    private void markCrawlFailed(UUID sourceId) {
         jdbc.update("""
-                insert into public.raw_crawled_tests (source_id, source_test_id, title, skill, source_url, raw_payload, status)
-                values (?, ?, ?, cast(? as public.skill_type), ?, cast(? as jsonb), 'pending')
-                """, sourceId, "OPEN_REF_" + System.currentTimeMillis(), sampleTitle, source.targetSkill().name(),
-                source.sourceUrl(), json(rawPayload));
+                update public.crawl_sources
+                set last_status = 'failed', updated_at = now()
+                where id = ?
+                """, sourceId);
+    }
 
-        // Update total crawled & last_status
-        jdbc.update("update public.crawl_sources set total_crawled = total_crawled + 1, last_status = 'success' where id = ?", sourceId);
-
-        return getSource(sourceId);
+    private String rootMessage(Throwable throwable) {
+        Throwable current = throwable;
+        while (current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current.getMessage() == null ? current.getClass().getSimpleName() : current.getMessage();
     }
 
     // -------------------------------------------------------------------------

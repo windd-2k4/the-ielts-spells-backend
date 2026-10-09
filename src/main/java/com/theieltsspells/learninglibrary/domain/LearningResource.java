@@ -29,6 +29,7 @@ public class LearningResource {
     @Column(name = "resource_type", nullable = false) private String resourceType;
     @Column(nullable = false) private String scope;
     @Column(name = "course_id") private UUID courseId;
+    @Column(name = "folder_id") private UUID folderId;
     @Column(name = "external_url") private String externalUrl;
     @Column(name = "teacher_only", nullable = false) private Boolean teacherOnly;
     @Column(nullable = false) private String status;

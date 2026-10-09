@@ -37,7 +37,8 @@ public class CourseApplicationService {
         var course = new Course();
         course.setCode(code);
         course.setProgramId(request.programId());
-        apply(course, request.name(), request.description(), request.level(), request.skillPair(), request.targetBand(),
+        apply(course, request.name(), request.description(), request.coverImageUrl(), request.coverImageAltText(),
+                request.level(), request.skillPair(), request.targetBand(),
                 request.totalSessions(), request.tuitionAmount(), request.capacity(), request.startsOn(), request.endsOn(),
                 normalizeRequestedStatus(request.status()), request.defaultZoomUrl(),
                 request.isPublic() == null ? false : request.isPublic(), true);
@@ -80,7 +81,8 @@ public class CourseApplicationService {
         if (request.capacity() < activeEnrollments) {
             throw new BusinessRuleException("Sĩ số tối đa (" + request.capacity() + ") không thể nhỏ hơn số học viên hiện tại (" + activeEnrollments + " học viên)");
         }
-        apply(course, request.name(), request.description(), request.level(), request.skillPair(), request.targetBand(),
+        apply(course, request.name(), request.description(), request.coverImageUrl(), request.coverImageAltText(),
+                request.level(), request.skillPair(), request.targetBand(),
                 request.totalSessions(), request.tuitionAmount(), request.capacity(), request.startsOn(), request.endsOn(),
                 normalizeRequestedStatus(request.status()), request.defaultZoomUrl(), request.isPublic(), request.isActive());
         synchronizeLifecycle(course);
@@ -127,13 +129,20 @@ public class CourseApplicationService {
         return courses.findById(id).orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy khóa học: " + id));
     }
 
-    private void apply(Course c, String name, String description, String level,
+    private void apply(Course c, String name, String description, String coverImageUrl, String coverImageAltText,
+                       String level,
                        com.theieltsspells.shared.persistence.enums.SkillPair skillPair,
                        java.math.BigDecimal targetBand, Short sessions, java.math.BigDecimal tuition,
                        Short capacity, LocalDate startsOn, LocalDate endsOn, ClassStatus status,
                        String defaultZoomUrl, Boolean isPublic, Boolean isActive) {
         validateDates(startsOn, endsOn);
+        if (coverImageUrl != null && !coverImageUrl.isBlank()
+                && (coverImageAltText == null || coverImageAltText.isBlank())) {
+            throw new BusinessRuleException("Vui lòng thêm mô tả thay thế cho ảnh minh họa khóa học");
+        }
         c.setName(name.trim()); c.setDescription(description); c.setLevel(level);
+        c.setCoverImageUrl(normalizeNullable(coverImageUrl));
+        c.setCoverImageAltText(c.getCoverImageUrl() == null ? null : normalizeNullable(coverImageAltText));
         c.setSkillPair(skillPair);
         c.setTargetBand(targetBand); c.setTotalSessions(sessions); c.setTuitionAmount(tuition);
         c.setCapacity(capacity); c.setStartsOn(startsOn); c.setEndsOn(endsOn); c.setStatus(status);
@@ -145,6 +154,10 @@ public class CourseApplicationService {
         if (endsOn != null && endsOn.isBefore(startsOn)) {
             throw new BusinessRuleException("Ngày kết thúc không được trước ngày bắt đầu");
         }
+    }
+
+    private String normalizeNullable(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     private ClassStatus normalizeRequestedStatus(ClassStatus status) {

@@ -9,6 +9,8 @@ import com.theieltsspells.shared.persistence.enums.SkillPair;
 public record UpdateCourseRequest(
         @NotBlank @Size(max = 200) String name,
         String description,
+        @Size(max = 1000) String coverImageUrl,
+        @Size(max = 300) String coverImageAltText,
         @Size(max = 100) String level,
         @NotNull SkillPair skillPair,
         @DecimalMin("0.0") @DecimalMax("9.0") BigDecimal targetBand,

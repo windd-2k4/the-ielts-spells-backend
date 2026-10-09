@@ -68,6 +68,17 @@ public class StudentReadingTestController {
         return service.getAttempt(attemptId, studentId(jwt));
     }
 
+    @PostMapping("/attempts/{attemptId}/resume")
+    public StudentReadingAttemptResponse resume(@PathVariable UUID attemptId, @AuthenticationPrincipal Jwt jwt) {
+        return service.resumeAttempt(attemptId, studentId(jwt));
+    }
+
+    @PostMapping("/attempts/{attemptId}/pause")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void pause(@PathVariable UUID attemptId, @AuthenticationPrincipal Jwt jwt) {
+        service.pauseAttempt(attemptId, studentId(jwt));
+    }
+
     @PutMapping("/attempts/{attemptId}/responses")
     public StudentReadingAttemptResponse saveResponses(@PathVariable UUID attemptId,
                                                        @Valid @RequestBody SaveReadingResponsesRequest request,

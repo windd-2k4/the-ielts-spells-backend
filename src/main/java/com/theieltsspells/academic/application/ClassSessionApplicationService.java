@@ -19,7 +19,9 @@ import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 @Service
 @RequiredArgsConstructor
@@ -153,9 +155,6 @@ public class ClassSessionApplicationService {
         }
         if (request.items() != null) {
             request.items().forEach(item -> {
-                if ("ASSIGNMENT".equals(item.itemType()) && item.sourceTestId() != null) {
-                    throw new BusinessRuleException("Bài tập không thể liên kết với kho đề test");
-                }
                 if ("TEST".equals(item.itemType()) && item.sourceAssignmentId() != null) {
                     throw new BusinessRuleException("Bài test không thể liên kết với kho bài tập");
                 }
@@ -170,6 +169,11 @@ public class ClassSessionApplicationService {
                 }
                 if ("ASSIGNMENT".equals(item.itemType()) && item.sourceResourceId() != null) {
                     throw new BusinessRuleException("Bài tập không thể liên kết với kho tài liệu");
+                }
+                if ("ASSIGNMENT".equals(item.itemType())
+                        && Stream.of(item.sourceAssignmentId(), item.sourceTestId(), item.sourceExerciseTemplateId())
+                        .filter(Objects::nonNull).count() > 1) {
+                    throw new BusinessRuleException("Bài tập chỉ được liên kết với một nguồn");
                 }
             });
         }

@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.YearMonth;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
@@ -40,6 +41,34 @@ public class StudentPortalService {
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("Không thể đọc dữ liệu tổng quan học viên", exception);
         }
+    }
+
+    public List<StudentPortalOverviewResponse.DailyActivity> activity(UUID studentId, YearMonth month) {
+        LocalDate monthStart = month.atDay(1);
+        LocalDate nextMonthStart = month.plusMonths(1).atDay(1);
+        return jdbc.query("""
+                select (attempt.submitted_at at time zone 'Asia/Ho_Chi_Minh')::date activity_date,
+                  count(*) filter (where version.primary_skill = 'READING')::integer reading,
+                  count(*) filter (where version.primary_skill = 'LISTENING')::integer listening,
+                  count(*) filter (where version.primary_skill = 'WRITING')::integer writing,
+                  count(*) filter (where version.primary_skill = 'SPEAKING')::integer speaking,
+                  count(*)::integer total_attempts
+                from public.test_attempts attempt
+                join public.test_versions version on version.id = attempt.test_version_id
+                where attempt.student_id = ?
+                  and attempt.submitted_at is not null
+                  and (attempt.submitted_at at time zone 'Asia/Ho_Chi_Minh')::date >= ?
+                  and (attempt.submitted_at at time zone 'Asia/Ho_Chi_Minh')::date < ?
+                group by (attempt.submitted_at at time zone 'Asia/Ho_Chi_Minh')::date
+                order by activity_date
+                """, (rs, ignored) -> new StudentPortalOverviewResponse.DailyActivity(
+                rs.getObject("activity_date", LocalDate.class),
+                rs.getInt("reading"),
+                rs.getInt("listening"),
+                rs.getInt("writing"),
+                rs.getInt("speaking"),
+                rs.getInt("total_attempts")
+        ), studentId, monthStart, nextMonthStart);
     }
 
     public List<StudentCourseResponse> courses(UUID studentId) {

@@ -33,6 +33,7 @@ public class ExerciseTemplate {
     @Column(name = "completion_mode", nullable = false) private String completionMode;
     @Column(nullable = false) private String scope;
     @Column(name = "course_id") private UUID courseId;
+    @Column(name = "folder_id") private UUID folderId;
     @Column(name = "source_url") private String sourceUrl;
     @Column(name = "duration_minutes") private Short durationMinutes;
     @Column(name = "max_score") private BigDecimal maxScore;

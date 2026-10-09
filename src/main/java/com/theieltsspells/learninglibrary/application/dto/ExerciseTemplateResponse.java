@@ -10,7 +10,7 @@ import java.util.UUID;
 public record ExerciseTemplateResponse(
         UUID id, String code, String title, String instructions, SkillType skill,
         String category, String exerciseType, String completionMode, String scope,
-        UUID courseId, String sourceUrl, Short durationMinutes, BigDecimal maxScore,
+        UUID courseId, UUID folderId, String sourceUrl, Short durationMinutes, BigDecimal maxScore,
         Short attemptLimit, boolean requiresTeacherReview, Map<String, Object> content,
         Map<String, Object> answerKey, String status, UUID createdBy,
         OffsetDateTime createdAt, OffsetDateTime updatedAt

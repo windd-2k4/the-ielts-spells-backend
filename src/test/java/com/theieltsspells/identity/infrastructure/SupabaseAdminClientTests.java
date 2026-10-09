@@ -10,6 +10,7 @@ import org.springframework.web.client.RestClient;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.client.ExpectedCount.once;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
@@ -97,6 +98,47 @@ class SupabaseAdminClientTests {
 
         client.upsertProfile(userId, "Nguyen Van A", "teacher@example.com", null, null, updatedAt);
 
+        server.verify();
+    }
+
+    @Test
+    void deletesRevokedInvitedUser() {
+        UUID userId = UUID.fromString("7f14e018-ff88-4d2c-99ad-094bc593f54e");
+
+        server.expect(once(), requestTo(SUPABASE_URL + "/auth/v1/admin/users/" + userId))
+                .andExpect(method(HttpMethod.DELETE))
+                .andExpect(header("apikey", SERVICE_ROLE_KEY))
+                .andRespond(withSuccess());
+
+        client.deleteUser(userId);
+
+        server.verify();
+    }
+
+    @Test
+    void generatesInviteLinkWithoutUsingSupabaseDefaultEmail() {
+        String url = SUPABASE_URL + "/auth/v1/admin/generate_link";
+        server.expect(once(), requestTo(url))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().json("""
+                        {
+                          "type": "invite",
+                          "email": "teacher@example.com",
+                          "data": {"full_name": "Teacher One"},
+                          "redirect_to": "http://localhost:5174/auth/callback"
+                        }
+                        """))
+                .andRespond(withSuccess("""
+                        {
+                          "id": "7f14e018-ff88-4d2c-99ad-094bc593f54e",
+                          "action_link": "https://project.supabase.co/auth/v1/verify?token=test"
+                        }
+                        """, MediaType.APPLICATION_JSON));
+
+        var invite = client.inviteStaff("teacher@example.com", "Teacher One");
+
+        assertThat(invite.userId()).isEqualTo(UUID.fromString("7f14e018-ff88-4d2c-99ad-094bc593f54e"));
+        assertThat(invite.actionLink()).contains("/auth/v1/verify");
         server.verify();
     }
 }

@@ -14,6 +14,7 @@ public record LearningResourceRequest(
         @NotBlank String resourceType,
         @NotBlank String scope,
         UUID courseId,
+        UUID folderId,
         String externalUrl,
         Boolean teacherOnly,
         @NotBlank String status

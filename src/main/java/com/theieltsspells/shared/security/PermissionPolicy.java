@@ -236,7 +236,8 @@ public class PermissionPolicy {
         values.put(AppRole.TEACHER, permissions(
                 ApplicationPermission.IDENTITY_PROFILE_SELF_READ, ApplicationPermission.IDENTITY_PROFILE_SELF_UPDATE,
                 ApplicationPermission.ENROLLMENT_READ, ApplicationPermission.COURSE_READ,
-                ApplicationPermission.SESSION_READ, ApplicationPermission.ATTENDANCE_READ,
+                ApplicationPermission.SESSION_READ, ApplicationPermission.SESSION_MANAGE,
+                ApplicationPermission.ATTENDANCE_READ,
                 ApplicationPermission.ATTENDANCE_MARK, ApplicationPermission.PROGRESS_READ,
                 ApplicationPermission.LIBRARY_PUBLISHED_READ, ApplicationPermission.LIBRARY_DRAFT_CREATE,
                 ApplicationPermission.LIBRARY_DRAFT_UPDATE_OWN, ApplicationPermission.ACADEMIC_MEDIA_MANAGE_OWN,

@@ -59,6 +59,10 @@ class PermissionPolicyTests {
         when(memberships.isTeacherAssigned(courseId, teacherId)).thenReturn(true);
 
         assertThat(policy.hasForCourse(authentication, courseId, "attendance.mark")).isTrue();
+        assertThat(policy.hasForCourse(authentication, courseId, "session.manage")).isTrue();
+
+        when(memberships.isTeacherAssigned(courseId, teacherId)).thenReturn(false);
+        assertThat(policy.hasForCourse(authentication, courseId, "session.manage")).isFalse();
     }
 
     @Test

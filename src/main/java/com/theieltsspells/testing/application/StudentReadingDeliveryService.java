@@ -222,11 +222,46 @@ public class StudentReadingDeliveryService {
     }
 
     @Transactional
+    public StudentReadingAttemptResponse resumeAttempt(UUID attemptId, UUID studentId) {
+        var attempt = loadAttempt(attemptId, studentId, true);
+        assertInProgress(attempt);
+        var pausedRemaining = pausedRemainingSeconds(attempt);
+        if ("SELF_PRACTICE".equals(attempt.origin()) && pausedRemaining != null) {
+            if (pausedRemaining <= 0) {
+                finalizeAttempt(attempt, "EXPIRED");
+            } else {
+                jdbc.update("""
+                        update public.test_attempts
+                        set expires_at = now() + (? * interval '1 second'),
+                          paused_remaining_seconds = null, updated_at = now()
+                        where id = ? and status = 'IN_PROGRESS'
+                        """, pausedRemaining, attempt.id());
+            }
+        }
+        return attemptPayload(loadAttempt(attemptId, studentId, false));
+    }
+
+    @Transactional
+    public void pauseAttempt(UUID attemptId, UUID studentId) {
+        var attempt = loadAttempt(attemptId, studentId, true);
+        if (!"SELF_PRACTICE".equals(attempt.origin()) || !"IN_PROGRESS".equals(attempt.status())
+                || pausedRemainingSeconds(attempt) != null) {
+            return;
+        }
+        jdbc.update("""
+                update public.test_attempts
+                set paused_remaining_seconds = ?,
+                  updated_at = now()
+                where id = ? and status = 'IN_PROGRESS'
+                """, remainingSeconds(attempt.expiresAt()), attempt.id());
+    }
+
+    @Transactional
     public StudentReadingAttemptResponse saveResponses(UUID attemptId, SaveReadingResponsesRequest request,
                                                        UUID studentId) {
         var attempt = loadAttempt(attemptId, studentId, true);
         assertInProgress(attempt);
-        if (!now().isBefore(attempt.expiresAt())) {
+        if (isExpired(attempt)) {
             finalizeAttempt(attempt, "EXPIRED");
             throw new BusinessRuleException("Đã hết thời gian làm bài; bài đã được chấm với các đáp án đã lưu");
         }
@@ -275,7 +310,7 @@ public class StudentReadingDeliveryService {
                                                     SaveReadingAnnotationRequest request, UUID studentId) {
         var attempt = loadAttempt(attemptId, studentId, true);
         assertInProgress(attempt);
-        if (!now().isBefore(attempt.expiresAt())) {
+        if (isExpired(attempt)) {
             finalizeAttempt(attempt, "EXPIRED");
             throw new BusinessRuleException("Đã hết thời gian làm bài; không thể lưu ghi chú mới");
         }
@@ -343,7 +378,7 @@ public class StudentReadingDeliveryService {
     public ReadingAttemptResultResponse submit(UUID attemptId, UUID studentId) {
         var attempt = loadAttempt(attemptId, studentId, true);
         if ("IN_PROGRESS".equals(attempt.status())) {
-            finalizeAttempt(attempt, now().isBefore(attempt.expiresAt()) ? "GRADED" : "EXPIRED");
+            finalizeAttempt(attempt, isExpired(attempt) ? "EXPIRED" : "GRADED");
         }
         return result(loadAttempt(attemptId, studentId, false));
     }
@@ -450,7 +485,7 @@ public class StudentReadingDeliveryService {
     private StudentReadingAttemptResponse attemptPayload(AttemptContext attempt) {
         return new StudentReadingAttemptResponse(
                 attempt.id(), attempt.assignmentId(), attempt.testVersionId(), attempt.status(),
-                attempt.startedAt(), attempt.expiresAt(), remainingSeconds(attempt.expiresAt()),
+                attempt.startedAt(), attempt.expiresAt(), effectiveRemainingSeconds(attempt),
                 attempt.title(), attempt.description(), attempt.showResultAfterSubmit(),
                 studentSections(attempt.testVersionId()), savedResponseDtos(storedResponses(attempt.id())),
                 annotations(attempt.id()),
@@ -853,6 +888,7 @@ public class StudentReadingDeliveryService {
                 select attempt.id attempt_id, attempt.test_assignment_id, attempt.test_version_id, attempt.student_id,
                   attempt.attempt_origin,
                   attempt.status, attempt.started_at, attempt.submitted_at, attempt.expires_at,
+                  attempt.paused_remaining_seconds,
                   attempt.auto_score, attempt.final_score, assignment.course_id,
                   assignment.opens_at, assignment.closes_at,
                   coalesce(assignment.max_attempts, 32767) max_attempts,
@@ -888,6 +924,7 @@ public class StudentReadingDeliveryService {
                 rs.getString("attempt_origin"), rs.getString("status"),
                 rs.getObject("started_at", OffsetDateTime.class),
                 rs.getObject("submitted_at", OffsetDateTime.class), rs.getObject("expires_at", OffsetDateTime.class),
+                rs.getObject("paused_remaining_seconds", Long.class),
                 rs.getBigDecimal("auto_score"), rs.getBigDecimal("final_score"),
                 rs.getObject("course_id", UUID.class), rs.getObject("opens_at", OffsetDateTime.class),
                 rs.getObject("closes_at", OffsetDateTime.class), rs.getShort("max_attempts"), rs.getString("mode"),
@@ -946,6 +983,19 @@ public class StudentReadingDeliveryService {
             return 0;
         }
         return Math.max(0, expiresAt.toEpochSecond() - now().toEpochSecond());
+    }
+
+    private Long pausedRemainingSeconds(AttemptContext attempt) {
+        return attempt.pausedRemainingSeconds();
+    }
+
+    private long effectiveRemainingSeconds(AttemptContext attempt) {
+        var paused = pausedRemainingSeconds(attempt);
+        return paused == null ? remainingSeconds(attempt.expiresAt()) : paused;
+    }
+
+    private boolean isExpired(AttemptContext attempt) {
+        return pausedRemainingSeconds(attempt) == null && !now().isBefore(attempt.expiresAt());
     }
 
     private OffsetDateTime now() {
@@ -1016,6 +1066,7 @@ public class StudentReadingDeliveryService {
             OffsetDateTime startedAt,
             OffsetDateTime submittedAt,
             OffsetDateTime expiresAt,
+            Long pausedRemainingSeconds,
             BigDecimal autoScore,
             BigDecimal finalScore,
             UUID courseId,

@@ -51,9 +51,22 @@ public class LearningLibraryAdminController {
             @RequestParam(required = false) String query, @RequestParam(required = false) SkillType skill,
             @RequestParam(required = false) String category, @RequestParam(required = false) String scope,
             @RequestParam(required = false) String status, @RequestParam(required = false) UUID courseId,
+            @RequestParam(required = false) UUID folderId,
             @RequestParam(defaultValue = "false") boolean includeGlobal,
             @PageableDefault(size = 24, sort = "updatedAt") Pageable pageable) {
-        return PageResponse.from(service.listResources(query, skill, category, scope, status, courseId, includeGlobal, pageable));
+        return PageResponse.from(service.listResources(query, skill, category, scope, status, courseId, folderId, includeGlobal, pageable));
+    }
+
+    @GetMapping("/folders")
+    @PreAuthorize("@permissionPolicy.canAccessLibraryAdministration(authentication)")
+    public List<LibraryFolderResponse> folders() { return service.listFolders(); }
+
+    @PostMapping("/folders")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'library.draft.create')")
+    public ResponseEntity<LibraryFolderResponse> createFolder(
+            @Valid @RequestBody LibraryFolderRequest request, @AuthenticationPrincipal Jwt jwt) {
+        var result = service.createFolder(request, actor(jwt));
+        return ResponseEntity.created(URI.create("/api/v1/admin/library/folders/" + result.id())).body(result);
     }
 
     @GetMapping("/resources/{id}") @PreAuthorize("@permissionPolicy.canAccessLibraryAdministration(authentication)") public LearningResourceResponse resource(@PathVariable UUID id) { return service.getResource(id); }
@@ -129,9 +142,10 @@ public class LearningLibraryAdminController {
             @RequestParam(required = false) String query, @RequestParam(required = false) SkillType skill,
             @RequestParam(required = false) String category, @RequestParam(required = false) String scope,
             @RequestParam(required = false) String status, @RequestParam(required = false) UUID courseId,
+            @RequestParam(required = false) UUID folderId,
             @RequestParam(defaultValue = "false") boolean includeGlobal,
             @PageableDefault(size = 24, sort = "updatedAt") Pageable pageable) {
-        return PageResponse.from(service.listExercises(query, skill, category, scope, status, courseId, includeGlobal, pageable));
+        return PageResponse.from(service.listExercises(query, skill, category, scope, status, courseId, folderId, includeGlobal, pageable));
     }
 
     @GetMapping("/exercises/{id}") @PreAuthorize("@permissionPolicy.canAccessLibraryAdministration(authentication)") public ExerciseTemplateResponse exercise(@PathVariable UUID id) { return service.getExercise(id); }

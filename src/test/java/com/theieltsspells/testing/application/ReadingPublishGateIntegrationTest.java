@@ -586,6 +586,33 @@ class ReadingPublishGateIntegrationTest {
                 """, Integer.class, studentId, item.testVersionId()));
     }
 
+    @Test
+    void selfPracticeTimerPausesOutsidePlayerAndResumesFromSavedTime() {
+        UUID studentId = UUID.randomUUID();
+        jdbc.update("insert into public.profiles(id, email, full_name) values (?, ?, ?)",
+                studentId, "paused-practice-" + studentId + "@example.test", "Paused Practice Student");
+        jdbc.update("insert into public.student_profiles(user_id, student_code) values (?, ?)",
+                studentId, "PP-" + studentId.toString().substring(0, 8));
+        var test = createSingleReading("Pausable self practice", createValidReadingBuilderContent(1, 5));
+        var published = testBankService.changeStatus(test.id(), "PUBLISHED", test.draftRevision(), actorId, true);
+        var attempt = studentDeliveryService.startOrResumeSelfPractice(published.publishedVersion().id(), studentId);
+
+        jdbc.update("update public.test_attempts set expires_at = now() + interval '30 seconds' where id = ?",
+                attempt.attemptId());
+        studentDeliveryService.pauseAttempt(attempt.attemptId(), studentId);
+        long pausedRemaining = studentDeliveryService.getAttempt(attempt.attemptId(), studentId).remainingSeconds();
+        assertTrue(pausedRemaining > 0 && pausedRemaining <= 30);
+
+        jdbc.update("update public.test_attempts set expires_at = now() - interval '1 hour' where id = ?",
+                attempt.attemptId());
+        assertEquals(pausedRemaining,
+                studentDeliveryService.getAttempt(attempt.attemptId(), studentId).remainingSeconds());
+
+        var resumed = studentDeliveryService.resumeAttempt(attempt.attemptId(), studentId);
+        assertEquals("IN_PROGRESS", resumed.status());
+        assertTrue(resumed.remainingSeconds() > 0 && resumed.remainingSeconds() <= pausedRemaining);
+    }
+
     private TestBankResponse createSingleReading(String title, Map<String, Object> content) {
         return testBankService.create(new TestBankRequest(
                 title, "Description", SkillType.READING, "SINGLE_SKILL", 15,

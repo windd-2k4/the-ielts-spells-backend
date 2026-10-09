@@ -38,6 +38,12 @@ public class Course {
     @Column(name = "description")
     private String description;
 
+    @Column(name = "cover_image_url")
+    private String coverImageUrl;
+
+    @Column(name = "cover_image_alt_text")
+    private String coverImageAltText;
+
     @Column(name = "program_id")
     private UUID programId;
 

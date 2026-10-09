@@ -7,6 +7,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.List;
 import java.util.UUID;
 
@@ -80,6 +82,26 @@ class StudentPortalServiceTests {
                 });
         assertThat(result.readingAssignments()).isEmpty();
         verify(jdbc).queryForObject(any(String.class), eq(String.class), eq(studentId));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void loadsActivityForTheSelectedCalendarMonth() {
+        UUID studentId = UUID.randomUUID();
+        var expected = List.of(new com.theieltsspells.studentportal.application.dto.StudentPortalOverviewResponse.DailyActivity(
+                LocalDate.of(2026, 9, 14), 2, 0, 1, 0, 3
+        ));
+        when(jdbc.query(
+                any(String.class),
+                any(org.springframework.jdbc.core.RowMapper.class),
+                eq(studentId),
+                eq(LocalDate.of(2026, 9, 1)),
+                eq(LocalDate.of(2026, 10, 1))
+        )).thenReturn(expected);
+
+        var result = service.activity(studentId, YearMonth.of(2026, 9));
+
+        assertThat(result).isEqualTo(expected);
     }
 
     @Test

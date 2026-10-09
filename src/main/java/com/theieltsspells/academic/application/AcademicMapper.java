@@ -9,7 +9,8 @@ final class AcademicMapper {
 
     static CourseResponse toResponse(Course value) {
         return new CourseResponse(value.getId(), value.getProgramId(), value.getCode(), value.getName(), value.getDescription(),
-                value.getLevel(), value.getSkillPair(), value.getTargetBand(), value.getTotalSessions(), value.getTuitionAmount(),
+                value.getLevel(), value.getSkillPair(), value.getCoverImageUrl(), value.getCoverImageAltText(),
+                value.getTargetBand(), value.getTotalSessions(), value.getTuitionAmount(),
                 value.getCapacity(), value.getStartsOn(), value.getEndsOn(), value.getStatus(), value.getDefaultZoomUrl(),
                 value.getIsPublic(), value.getIsActive(), value.getCreatedBy(), value.getCreatedAt(), value.getUpdatedAt());
     }

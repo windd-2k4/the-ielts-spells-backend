@@ -19,6 +19,7 @@ public record ExerciseTemplateRequest(
         @NotBlank String completionMode,
         @NotBlank String scope,
         UUID courseId,
+        UUID folderId,
         String sourceUrl,
         @Positive Short durationMinutes,
         @DecimalMin(value = "0.01") BigDecimal maxScore,
