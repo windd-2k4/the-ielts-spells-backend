@@ -276,6 +276,7 @@ class ReadingVersionMaterializer {
                     insert into public.test_version_question_options(
                       test_version_id, group_id, question_id, option_key, option_code, content, display_order
                     ) values (?, ?, ?, ?, ?, ?, ?)
+                    on conflict (test_version_id, option_key) do nothing
                     """, testVersionId, groupId, questionId, optionKey,
                     nullableText(option.get("code")) == null ? nullableText(option.get("label")) : nullableText(option.get("code")),
                     sanitizedContent, index);

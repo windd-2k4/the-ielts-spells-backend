@@ -594,6 +594,21 @@ public class StudentReadingDeliveryService {
             }
         }, versionId);
 
+        for (var group : groupsById.values()) {
+            if ("MULTIPLE_ANSWERS".equals(group.get("typeFormat"))) {
+                var groupQuestions = maps(group.get("questions"));
+                List<Map<String, Object>> lastOptions = List.of();
+                for (var q : groupQuestions) {
+                    var qOpts = maps(q.get("options"));
+                    if (!qOpts.isEmpty()) {
+                        lastOptions = qOpts;
+                    } else if (!lastOptions.isEmpty()) {
+                        q.put("options", new ArrayList<>(lastOptions));
+                    }
+                }
+            }
+        }
+
         String rawBuilderContent = jdbc.query(
                 "select builder_content::text from public.test_versions where id = ?",
                 rs -> rs.next() ? rs.getString(1) : null,

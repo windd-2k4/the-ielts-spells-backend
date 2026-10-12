@@ -245,8 +245,9 @@ final class StrictReadingDraftValidator {
 
         Set<String> questionOptionIds = Set.of();
         if ("MULTIPLE_CHOICE".equals(groupType) || "MULTIPLE_ANSWERS".equals(groupType)) {
+            boolean isSiblingInCluster = "MULTIPLE_ANSWERS".equals(groupType) && (questionIndex % requiredAnswerCount != 0);
             questionOptionIds = validateOptions(maps(question.get("options")), true, "Lựa chọn câu hỏi",
-                    sectionTitle, questionNo, targetId, issues, seenIds);
+                    sectionTitle, questionNo, targetId, issues, isSiblingInCluster ? new HashSet<>() : seenIds);
             if (questionOptionIds.size() < 2) {
                 error(issues, prefix + "-options", sectionTitle, questionNo,
                         "Câu " + questionNo + " phải có ít nhất 2 lựa chọn hợp lệ.", targetId);
