@@ -1,6 +1,7 @@
 package com.theieltsspells.reporting.presentation.admin;
 
 import com.theieltsspells.reporting.application.StudentLearningInsightsService;
+import com.theieltsspells.reporting.application.dto.StudentAttemptDetailResponse;
 import com.theieltsspells.reporting.application.dto.StudentLearningInsightsResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -28,5 +29,15 @@ public class StudentLearningInsightsController {
     @Operation(summary = "Tổng hợp lịch sử làm bài, năng lực và lỗi lặp lại của học viên")
     public StudentLearningInsightsResponse get(@PathVariable UUID studentId) {
         return service.get(studentId);
+    }
+
+    @GetMapping("/attempts/{attemptId}")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'student.profile.read')")
+    @Operation(summary = "Xem chi tiết câu trả lời và kết quả một lượt làm của học viên")
+    public StudentAttemptDetailResponse getAttemptDetail(
+            @PathVariable UUID studentId,
+            @PathVariable UUID attemptId
+    ) {
+        return service.getAttemptDetail(studentId, attemptId);
     }
 }
