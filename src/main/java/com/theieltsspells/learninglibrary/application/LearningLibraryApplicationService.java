@@ -28,6 +28,7 @@ import java.net.URI;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.List;
@@ -177,7 +178,9 @@ public class LearningLibraryApplicationService {
                 ? cb.or(cb.equal(root.get("courseId"), courseId), cb.equal(root.get("scope"), "GLOBAL"))
                 : cb.equal(root.get("courseId"), courseId));
         if (folderId != null) spec = spec.and((root, ignored, cb) -> cb.equal(root.get("folderId"), folderId));
-        return resources.findAll(spec, pageable).map(this::resourceResponse);
+        var page = resources.findAll(spec, pageable);
+        var filesByResource = filesByResource(page.getContent());
+        return page.map(value -> resourceResponse(value, filesByResource.getOrDefault(value.getId(), List.of())));
     }
 
     public Page<LearningResourceResponse> listResources(String query, SkillType skill, String category,
@@ -539,9 +542,27 @@ public class LearningLibraryApplicationService {
     private ExerciseTemplate findExercise(UUID id) { return exercises.findById(id).orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy bài tập mẫu")); }
     private LearningResourceFile findFile(UUID id) { return resourceFiles.findById(id).orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy tệp học liệu")); }
     private LearningResourceResponse resourceResponse(LearningResource value) {
+        return resourceResponse(value, resourceFiles.findByResourceIdAndArchivedAtIsNullOrderByCreatedAtAsc(value.getId()));
+    }
+    private LearningResourceResponse resourceResponse(LearningResource value, List<LearningResourceFile> files) {
+        var previewFile = files.stream()
+                .filter(file -> "THUMBNAIL".equals(file.getFileRole()))
+                .findFirst()
+                .or(() -> files.stream().filter(file -> "MAIN".equals(file.getFileRole())).findFirst())
+                .or(() -> files.stream().filter(file -> fileResponse(file).previewSupported()).findFirst())
+                .orElse(files.isEmpty() ? null : files.getFirst());
         return new LearningResourceResponse(value.getId(), value.getCode(), value.getTitle(), value.getDescription(), value.getSkill(),
                 value.getCategory(), value.getResourceType(), value.getScope(), value.getCourseId(), value.getFolderId(), value.getExternalUrl(),
-                Boolean.TRUE.equals(value.getTeacherOnly()), value.getStatus(), value.getCreatedBy(), value.getCreatedAt(), value.getUpdatedAt());
+                Boolean.TRUE.equals(value.getTeacherOnly()), value.getStatus(), value.getCreatedBy(), value.getCreatedAt(), value.getUpdatedAt(),
+                files.size(), previewFile == null ? null : fileResponse(previewFile));
+    }
+    private Map<UUID, List<LearningResourceFile>> filesByResource(List<LearningResource> values) {
+        if (values.isEmpty()) return Map.of();
+        var result = new LinkedHashMap<UUID, List<LearningResourceFile>>();
+        resourceFiles.findByResourceIdInAndArchivedAtIsNullOrderByCreatedAtAsc(
+                values.stream().map(LearningResource::getId).toList())
+                .forEach(file -> result.computeIfAbsent(file.getResourceId(), ignored -> new java.util.ArrayList<>()).add(file));
+        return result;
     }
     private ExerciseTemplateResponse exerciseResponse(ExerciseTemplate value) {
         return new ExerciseTemplateResponse(value.getId(), value.getCode(), value.getTitle(), value.getInstructions(), value.getSkill(),

@@ -88,6 +88,41 @@ class LearningLibraryApplicationServiceTests {
     }
 
     @Test
+    void listsAttachmentCountAndPreviewFileInOneBatch() {
+        var resourceId = java.util.UUID.randomUUID();
+        var resource = new com.theieltsspells.learninglibrary.domain.LearningResource();
+        resource.setId(resourceId);
+        resource.setCode("RES-001");
+        resource.setTitle("Reading guide");
+        resource.setSkill(com.theieltsspells.shared.persistence.enums.SkillType.READING);
+        resource.setCategory("GENERAL");
+        resource.setResourceType("DOCUMENT");
+        resource.setScope("GLOBAL");
+        resource.setStatus("PUBLISHED");
+
+        var mainFile = new com.theieltsspells.learninglibrary.domain.LearningResourceFile();
+        mainFile.setId(java.util.UUID.randomUUID());
+        mainFile.setResourceId(resourceId);
+        mainFile.setFileRole("MAIN");
+        mainFile.setOriginalFilename("reading-guide.pdf");
+        mainFile.setMimeType("application/pdf");
+        mainFile.setSizeBytes(128);
+
+        when(resources.findAll(any(Specification.class), any(PageRequest.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(resource)));
+        when(resourceFiles.findByResourceIdInAndArchivedAtIsNullOrderByCreatedAtAsc(any()))
+                .thenReturn(java.util.List.of(mainFile));
+
+        var result = service.listResources(null, null, null, null, null, null, false, PageRequest.of(0, 20));
+
+        assertThat(result.getContent()).hasSize(1);
+        assertThat(result.getContent().getFirst().attachmentsCount()).isEqualTo(1);
+        assertThat(result.getContent().getFirst().previewFile().originalFilename()).isEqualTo("reading-guide.pdf");
+        assertThat(result.getContent().getFirst().previewFile().previewSupported()).isTrue();
+        verify(resourceFiles).findByResourceIdInAndArchivedAtIsNullOrderByCreatedAtAsc(any());
+    }
+
+    @Test
     void uploadMedia_createsMediaResourceAndStoresFileDirectly() {
         var actor = java.util.UUID.randomUUID();
         var file = new org.springframework.mock.web.MockMultipartFile("file", "listening-part1.mp3", "audio/mpeg", new byte[]{1, 2, 3});
