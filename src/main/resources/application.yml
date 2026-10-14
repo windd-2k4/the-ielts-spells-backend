@@ -7,7 +7,7 @@ spring:
       max-file-size: ${FILE_STORAGE_MAX_FILE_SIZE:50MB}
       max-request-size: ${FILE_STORAGE_MAX_REQUEST_SIZE:55MB}
   config:
-    import: optional:file:.env[.properties]
+    import: optional:file:.env[.properties],optional:file:.env.local[.properties]
   application:
     name: the-ielts-spells-backend
   datasource:
