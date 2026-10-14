@@ -87,10 +87,16 @@ public class StudentCourseWorkspaceService {
 
         // 4. Fetch Sessions with details
         List<SessionItem> sessions = jdbc.query("""
-                select s.id, s.session_no, s.title, s.phase_name, s.starts_at, s.ends_at,
+                select s.id, s.session_no, s.title, s.phase_name, s.content, s.starts_at, s.ends_at,
                   s.status::text status,
                   coalesce(st.full_name, pt.full_name) teacher_name,
-                  coalesce(s.zoom_url, c.default_zoom_url) zoom_url
+                  coalesce(s.zoom_url, c.default_zoom_url) zoom_url,
+                  exists (
+                    select 1 from public.course_session_items item
+                    where item.session_id = s.id and item.item_type = 'TEST' and item.visibility = 'STUDENT'
+                  ) has_test,
+                  (select count(*) from public.course_session_items item
+                   where item.session_id = s.id and item.visibility = 'STUDENT')::int item_count
                 from public.course_sessions s
                 join public.courses c on c.id = s.course_id
                 left join public.profiles st on st.id = s.teacher_id
@@ -103,11 +109,14 @@ public class StudentCourseWorkspaceService {
                 rs.getObject("session_no", Short.class),
                 rs.getString("title"),
                 rs.getString("phase_name"),
+                rs.getString("content"),
                 rs.getObject("starts_at", OffsetDateTime.class),
                 rs.getObject("ends_at", OffsetDateTime.class),
                 rs.getString("status"),
                 rs.getString("teacher_name"),
                 rs.getString("zoom_url"),
+                rs.getBoolean("has_test"),
+                rs.getInt("item_count"),
                 new ArrayList<>(),
                 new ArrayList<>()
         ), courseId);

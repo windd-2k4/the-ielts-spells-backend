@@ -76,11 +76,14 @@ public record StudentCourseWorkspaceResponse(
             Short sessionNo,
             String title,
             String phaseName,
+            String content,
             OffsetDateTime startsAt,
             OffsetDateTime endsAt,
             String status,
             String teacherName,
             String zoomUrl,
+            boolean hasTest,
+            int itemCount,
             List<AttachedMaterial> materials,
             List<AttachedAssignment> assignments
     ) {
