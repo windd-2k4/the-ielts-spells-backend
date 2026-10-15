@@ -34,7 +34,9 @@ public record StudentCourseWorkspaceResponse(
             LocalDate endsOn,
             String status,
             String defaultZoomUrl,
-            String primaryTeacherName
+            String primaryTeacherName,
+            String coverImageUrl,
+            String coverImageAltText
     ) {}
 
     public record EnrollmentInfo(

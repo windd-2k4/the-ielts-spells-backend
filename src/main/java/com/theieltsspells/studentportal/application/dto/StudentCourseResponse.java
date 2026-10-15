@@ -18,6 +18,8 @@ public record StudentCourseResponse(
         LocalDate startsOn,
         LocalDate endsOn,
         String status,
-        String defaultZoomUrl
+        String defaultZoomUrl,
+        String coverImageUrl,
+        String coverImageAltText
 ) {
 }

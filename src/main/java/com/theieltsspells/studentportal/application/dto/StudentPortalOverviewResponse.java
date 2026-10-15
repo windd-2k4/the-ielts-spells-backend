@@ -57,7 +57,9 @@ public record StudentPortalOverviewResponse(
             OffsetDateTime nextSessionAt,
             LocalDate plannedExamMonth,
             LocalDate actualExamDate,
-            String examRegistrationStatus
+            String examRegistrationStatus,
+            String coverImageUrl,
+            String coverImageAltText
     ) {
     }
 

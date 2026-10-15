@@ -211,7 +211,7 @@ public class StudentPracticeCatalogService {
                 switch (skill) {
                     case READING, LISTENING -> rs.getInt("materialized_questions_count") > 0
                             || itemCount(skill, content, 0) > 0;
-                    case WRITING -> sectionsCount(skill, content) > 0;
+                    case WRITING, SPEAKING -> sectionsCount(skill, content) > 0;
                     default -> false;
                 }
         );

@@ -81,7 +81,8 @@ public class StudentPortalService {
                     select 1 from public.enrollments enrollment
                     where enrollment.course_id = course.id and enrollment.student_id = ?
                       and enrollment.status <> 'WITHDRAWN'
-                  ) then course.default_zoom_url else null end default_zoom_url
+                  ) then course.default_zoom_url else null end default_zoom_url,
+                  course.cover_image_url, course.cover_image_alt_text
                 from public.courses course
                 where course.is_public = true and course.is_active = true
                 order by course.starts_on, course.code
@@ -99,7 +100,9 @@ public class StudentPortalService {
                 rs.getObject("starts_on", LocalDate.class),
                 rs.getObject("ends_on", LocalDate.class),
                 rs.getString("course_status"),
-                rs.getString("default_zoom_url")
+                rs.getString("default_zoom_url"),
+                rs.getString("cover_image_url"),
+                rs.getString("cover_image_alt_text")
         ), studentId);
     }
 
@@ -160,6 +163,7 @@ public class StudentPortalService {
                     course.target_band, course.starts_on, course.ends_on,
                     enrollment.planned_exam_month, enrollment.actual_exam_date,
                     enrollment.exam_registration_status,
+                    course.cover_image_url, course.cover_image_alt_text,
                     count(session.id) filter (where session.status = 'COMPLETED') completed_sessions,
                     course.total_sessions,
                     (select teacher_profile.full_name
@@ -177,7 +181,8 @@ public class StudentPortalService {
                   where enrollment.status <> 'WITHDRAWN'
                   group by enrollment.id, enrollment.status, course.id,
                     enrollment.planned_exam_month, enrollment.actual_exam_date,
-                    enrollment.exam_registration_status
+                    enrollment.exam_registration_status,
+                    course.cover_image_url, course.cover_image_alt_text
                 ), upcoming_session_items as (
                   select session.id session_id, course.id course_id, course.code course_code,
                     course.name course_name, session.session_no, session.title, session.phase_name,
@@ -346,7 +351,9 @@ public class StudentPortalService {
                     'nextSessionAt', item.next_session_at,
                     'plannedExamMonth', item.planned_exam_month,
                     'actualExamDate', item.actual_exam_date,
-                    'examRegistrationStatus', item.exam_registration_status
+                    'examRegistrationStatus', item.exam_registration_status,
+                    'coverImageUrl', item.cover_image_url,
+                    'coverImageAltText', item.cover_image_alt_text
                   ) order by case item.enrollment_status
                     when 'ACTIVE' then 0 when 'PENDING' then 1 when 'PAUSED' then 2 else 3 end,
                     item.starts_on desc) from enrollment_items item), '[]'::jsonb),
@@ -489,7 +496,8 @@ public class StudentPortalService {
                 where enrollment.student_id = ? and enrollment.status <> 'WITHDRAWN'
                 group by enrollment.id, enrollment.status, course.id,
                   enrollment.planned_exam_month, enrollment.actual_exam_date,
-                  enrollment.exam_registration_status
+                  enrollment.exam_registration_status,
+                  course.cover_image_url, course.cover_image_alt_text
                 order by case enrollment.status
                   when 'ACTIVE' then 0 when 'PENDING' then 1 when 'PAUSED' then 2 else 3 end,
                   course.starts_on desc
@@ -511,7 +519,9 @@ public class StudentPortalService {
                 rs.getObject("next_session_at", OffsetDateTime.class),
                 rs.getObject("planned_exam_month", LocalDate.class),
                 rs.getObject("actual_exam_date", LocalDate.class),
-                rs.getString("exam_registration_status")
+                rs.getString("exam_registration_status"),
+                rs.getString("cover_image_url"),
+                rs.getString("cover_image_alt_text")
         ), studentId);
     }
 
