@@ -1,5 +1,9 @@
 package com.theieltsspells.reporting.application;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.theieltsspells.reporting.application.dto.StudentAttemptDetailResponse;
+import com.theieltsspells.reporting.application.dto.StudentAttemptDetailResponse.QuestionDetail;
 import com.theieltsspells.reporting.application.dto.StudentLearningInsightsResponse;
 import com.theieltsspells.reporting.application.dto.StudentLearningInsightsResponse.RecurringMistake;
 import com.theieltsspells.reporting.application.dto.StudentLearningInsightsResponse.SkillInsight;
@@ -11,6 +15,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -22,6 +27,7 @@ import java.util.UUID;
 public class StudentLearningInsightsService {
 
     private final JdbcTemplate jdbc;
+    private final ObjectMapper objectMapper;
 
     public StudentLearningInsightsResponse get(UUID studentId) {
         Boolean exists = jdbc.queryForObject(
@@ -36,6 +42,166 @@ public class StudentLearningInsightsService {
         List<SkillInsight> skills = skills(studentId);
         List<RecurringMistake> mistakes = recurringMistakes(studentId);
         return new StudentLearningInsightsResponse(summary(studentId, mistakes), skills, attempts, mistakes);
+    }
+
+    public StudentAttemptDetailResponse getAttemptDetail(UUID studentId, UUID attemptId) {
+        List<AttemptDetailHeader> headers = jdbc.query("""
+                select attempt.id, attempt.test_version_id, version.title, version.primary_skill::text skill,
+                  attempt.status::text status, attempt.attempt_origin origin, attempt.attempt_no,
+                  attempt.started_at, attempt.submitted_at,
+                  coalesce(attempt.submitted_at, attempt.last_saved_at, attempt.started_at) last_activity_at,
+                  coalesce(attempt.final_score, attempt.auto_score) score,
+                  coalesce(assignment.duration_seconds, version.duration_minutes * 60)::bigint allowed_duration_seconds,
+                  case
+                    when attempt.attempt_origin = 'SELF_PRACTICE' and attempt.expires_at is not null then
+                      greatest(0, least(
+                        version.duration_minutes * 60::bigint,
+                        version.duration_minutes * 60::bigint - least(
+                          version.duration_minutes * 60::bigint,
+                          coalesce(
+                            attempt.paused_remaining_seconds,
+                            greatest(0, extract(epoch from (
+                              attempt.expires_at - coalesce(attempt.submitted_at, attempt.last_saved_at)
+                            ))::bigint)
+                          )
+                        )
+                      ))
+                    else greatest(0, least(
+                      coalesce(assignment.duration_seconds, version.duration_minutes * 60)::bigint,
+                      extract(epoch from (
+                        coalesce(attempt.submitted_at, attempt.last_saved_at) - attempt.started_at
+                      ))::bigint
+                    ))
+                  end duration_seconds
+                from public.test_attempts attempt
+                join public.test_versions version on version.id = attempt.test_version_id
+                left join public.test_assignments assignment on assignment.id = attempt.test_assignment_id
+                where attempt.id = ? and attempt.student_id = ?
+                """, (rs, ignored) -> new AttemptDetailHeader(
+                rs.getObject("id", UUID.class),
+                rs.getObject("test_version_id", UUID.class),
+                rs.getString("title"),
+                rs.getString("skill"),
+                rs.getString("status"),
+                rs.getString("origin"),
+                rs.getShort("attempt_no"),
+                rs.getObject("started_at", OffsetDateTime.class),
+                rs.getObject("submitted_at", OffsetDateTime.class),
+                rs.getObject("last_activity_at", OffsetDateTime.class),
+                rs.getLong("duration_seconds"),
+                rs.getLong("allowed_duration_seconds"),
+                rs.getBigDecimal("score")
+        ), attemptId, studentId);
+        if (headers.isEmpty()) {
+            throw new ResourceNotFoundException("Không tìm thấy lượt làm của học viên");
+        }
+
+        AttemptDetailHeader header = headers.getFirst();
+        List<QuestionDetail> questions = attemptQuestions(header.versionId(), attemptId);
+        int correctCount = (int) questions.stream().filter(item -> Boolean.TRUE.equals(item.correct())).count();
+        int incorrectCount = (int) questions.stream().filter(item -> Boolean.FALSE.equals(item.correct())).count();
+        int unansweredCount = (int) questions.stream().filter(item -> item.studentAnswers().isEmpty()).count();
+        BigDecimal maxScore = questions.stream().map(QuestionDetail::maxScore)
+                .filter(value -> value != null).reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        return new StudentAttemptDetailResponse(
+                header.id(), header.title(), header.skill(), header.status(), header.origin(), header.attemptNo(),
+                header.startedAt(), header.submittedAt(), header.lastActivityAt(), header.durationSeconds(),
+                header.allowedDurationSeconds(), header.score(), maxScore, correctCount, incorrectCount,
+                unansweredCount, questions
+        );
+    }
+
+    private List<QuestionDetail> attemptQuestions(UUID versionId, UUID attemptId) {
+        return jdbc.query("""
+                with items as (
+                  select question.question_key, question.question_no::int question_no,
+                    question.type_format question_type, section.title section_title,
+                    question_group.title group_title, question.prompt,
+                    question.correct_answers::text correct_answers, question.explanation,
+                    question.max_score,
+                    coalesce((
+                      select jsonb_object_agg(option.option_key,
+                        case
+                          when nullif(trim(option.option_code), '') is null then option.content
+                          else option.option_code || ' — ' || option.content
+                        end)
+                      from public.test_version_question_options option
+                      where option.group_id = question.group_id
+                    ), '{}'::jsonb)::text option_map
+                  from public.test_version_questions question
+                  join public.test_version_question_groups question_group on question_group.id = question.group_id
+                  join public.test_version_sections section on section.id = question_group.section_id
+                  where question.test_version_id = ?
+                  union all
+                  select response.question_key, null, response.question_type, null, null, null,
+                    '[]', null, response.max_score, '{}'
+                  from public.test_attempt_responses response
+                  where response.attempt_id = ? and not exists (
+                    select 1 from public.test_version_questions question
+                    where question.test_version_id = ? and question.question_key = response.question_key
+                  )
+                )
+                select item.question_key,
+                  row_number() over(order by item.question_no nulls last, item.question_key)::int display_no,
+                  item.question_type, item.section_title, item.group_title, item.prompt,
+                  item.correct_answers, item.explanation, item.max_score, item.option_map,
+                  response.answer::text student_answer, response.is_correct,
+                  coalesce(response.auto_score, 0) score
+                from items item
+                left join public.test_attempt_responses response
+                  on response.attempt_id = ? and response.question_key = item.question_key
+                order by item.question_no nulls last, item.question_key
+                """, (rs, ignored) -> new QuestionDetail(
+                rs.getString("question_key"),
+                rs.getInt("display_no"),
+                rs.getString("question_type"),
+                rs.getString("section_title"),
+                rs.getString("group_title"),
+                rs.getString("prompt"),
+                displayAnswers(answerValues(rs.getString("student_answer")), rs.getString("option_map")),
+                displayAnswers(answerValues(rs.getString("correct_answers")), rs.getString("option_map")),
+                rs.getObject("is_correct", Boolean.class),
+                rs.getBigDecimal("score"),
+                rs.getBigDecimal("max_score"),
+                rs.getString("explanation")
+        ), versionId, attemptId, versionId, attemptId);
+    }
+
+    private List<String> answerValues(String json) {
+        if (json == null || json.isBlank()) return List.of();
+        try {
+            JsonNode root = objectMapper.readTree(json);
+            JsonNode value = root.isObject()
+                    ? root.has("values") ? root.get("values")
+                    : root.has("value") ? root.get("value")
+                    : root.has("text") ? root.get("text") : root
+                    : root;
+            if (value == null || value.isNull()) return List.of();
+            if (value.isArray()) {
+                List<String> result = new ArrayList<>();
+                value.forEach(item -> {
+                    if (!item.isNull() && !item.asText().isBlank()) result.add(item.asText());
+                });
+                return List.copyOf(result);
+            }
+            return value.asText().isBlank() ? List.of() : List.of(value.asText());
+        } catch (Exception exception) {
+            return List.of();
+        }
+    }
+
+    private List<String> displayAnswers(List<String> values, String optionMapJson) {
+        if (values.isEmpty() || optionMapJson == null || optionMapJson.isBlank()) return values;
+        try {
+            JsonNode optionMap = objectMapper.readTree(optionMapJson);
+            return values.stream().map(value -> {
+                JsonNode label = optionMap.get(value);
+                return label == null || label.isNull() || label.asText().isBlank() ? value : label.asText();
+            }).toList();
+        } catch (Exception exception) {
+            return values;
+        }
     }
 
     private List<TestAttemptInsight> attempts(UUID studentId) {
@@ -195,23 +361,56 @@ public class StudentLearningInsightsService {
 
     private long totalStudyMinutes(UUID studentId) {
         Long seconds = jdbc.queryForObject("""
-                select
-                  coalesce((
-                    select sum(coalesce(activity.duration_seconds, 0))
-                    from public.student_activity_attempts activity
-                    where activity.student_id = ?
-                  ), 0)
-                  + coalesce((
-                    select sum(coalesce(
-                      attendance.duration_seconds,
-                      extract(epoch from (course_session.ends_at - course_session.starts_at))::bigint
-                    ))
-                    from public.attendance_records attendance
-                    join public.course_sessions course_session on course_session.id = attendance.session_id
-                    where attendance.student_id = ?
-                      and attendance.status in ('PRESENT', 'LATE', 'LEFT_EARLY')
-                  ), 0)
-                """, Long.class, studentId, studentId);
+                with recorded_activity as (
+                  select coalesce(sum(coalesce(activity.duration_seconds, 0)), 0)::bigint seconds
+                  from public.student_activity_attempts activity
+                  where activity.student_id = ?
+                ), recorded_attendance as (
+                  select coalesce(sum(coalesce(
+                    attendance.duration_seconds,
+                    extract(epoch from (course_session.ends_at - course_session.starts_at))::bigint
+                  )), 0)::bigint seconds
+                  from public.attendance_records attendance
+                  join public.course_sessions course_session on course_session.id = attendance.session_id
+                  where attendance.student_id = ?
+                    and attendance.status in ('PRESENT', 'LATE', 'LEFT_EARLY')
+                ), recorded_tests as (
+                  select coalesce(sum(
+                    case
+                      when attempt.attempt_origin = 'SELF_PRACTICE'
+                        and attempt.expires_at is not null then
+                        greatest(0, least(
+                          version.duration_minutes * 60::bigint,
+                          version.duration_minutes * 60::bigint - least(
+                            version.duration_minutes * 60::bigint,
+                            coalesce(
+                              attempt.paused_remaining_seconds,
+                              greatest(0, extract(epoch from (
+                                attempt.expires_at - coalesce(attempt.submitted_at, attempt.last_saved_at)
+                              ))::bigint)
+                            )
+                          )
+                        ))
+                      else greatest(0, least(
+                        coalesce(assignment.duration_seconds, version.duration_minutes * 60)::bigint,
+                        extract(epoch from (
+                          coalesce(attempt.submitted_at, attempt.last_saved_at) - attempt.started_at
+                        ))::bigint
+                      ))
+                    end
+                  ), 0)::bigint seconds
+                  from public.test_attempts attempt
+                  join public.test_versions version on version.id = attempt.test_version_id
+                  left join public.test_assignments assignment on assignment.id = attempt.test_assignment_id
+                  where attempt.student_id = ?
+                    and not exists (
+                      select 1 from public.student_activity_attempts activity
+                      where activity.test_attempt_id = attempt.id
+                    )
+                )
+                select recorded_activity.seconds + recorded_attendance.seconds + recorded_tests.seconds
+                from recorded_activity, recorded_attendance, recorded_tests
+                """, Long.class, studentId, studentId, studentId);
         return seconds == null ? 0 : Math.round(seconds / 60.0);
     }
 
@@ -272,6 +471,22 @@ public class StudentLearningInsightsService {
             Integer averageAccuracy,
             Integer averageScorePercent,
             OffsetDateTime lastActivityAt
+    ) {}
+
+    private record AttemptDetailHeader(
+            UUID id,
+            UUID versionId,
+            String title,
+            String skill,
+            String status,
+            String origin,
+            short attemptNo,
+            OffsetDateTime startedAt,
+            OffsetDateTime submittedAt,
+            OffsetDateTime lastActivityAt,
+            long durationSeconds,
+            long allowedDurationSeconds,
+            BigDecimal score
     ) {}
 
     record SupportAssessment(String level, List<String> reasons) {}

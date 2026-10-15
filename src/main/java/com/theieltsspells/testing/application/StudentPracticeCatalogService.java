@@ -202,7 +202,7 @@ public class StudentPracticeCatalogService {
                 readStrings(rs.getString("tags")),
                 detectedQuestionTypes(skill, content, readStrings(rs.getString("tags")),
                         rs.getString("title"), rs.getString("code")),
-                coverMap(content.get("coverImage")),
+                catalogCover(skill, content),
                 rs.getObject("published_at", java.time.OffsetDateTime.class),
                 rs.getInt("attempts_count"),
                 rs.getObject("active_attempt_id", UUID.class),
@@ -317,6 +317,25 @@ public class StudentPracticeCatalogService {
 
     private String text(Object value, String fallback) {
         return value instanceof String text && !text.isBlank() ? text : fallback;
+    }
+
+    Map<String, Object> catalogCover(SkillType skill, Map<String, Object> content) {
+        if (skill == SkillType.WRITING) {
+            Object source = content.containsKey("tasks") ? content.get("tasks") : content.get("writingTasks");
+            List<Map<String, Object>> tasks = maps(source);
+            Map<String, Object> task = tasks.stream()
+                    .filter(item -> number(item.get("taskNo")) == 1)
+                    .findFirst()
+                    .orElse(tasks.isEmpty() ? Map.of() : tasks.getFirst());
+            String imageUrl = text(task.get("imageUrl"), "");
+            if (!imageUrl.isBlank()) {
+                return Map.of(
+                        "fileUrl", imageUrl,
+                        "altText", text(task.get("imageAltText"), "Ảnh minh họa Writing Task 1")
+                );
+            }
+        }
+        return coverMap(content.get("coverImage"));
     }
 
     @SuppressWarnings("unchecked")

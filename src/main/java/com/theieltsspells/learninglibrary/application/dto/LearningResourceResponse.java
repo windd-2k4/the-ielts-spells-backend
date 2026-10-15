@@ -10,5 +10,6 @@ public record LearningResourceResponse(
         String category, String resourceType, String scope, UUID courseId,
         UUID folderId,
         String externalUrl, boolean teacherOnly, String status, UUID createdBy,
-        OffsetDateTime createdAt, OffsetDateTime updatedAt
+        OffsetDateTime createdAt, OffsetDateTime updatedAt,
+        long attachmentsCount, LearningResourceFileResponse previewFile
 ) {}
