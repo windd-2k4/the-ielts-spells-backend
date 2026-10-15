@@ -21,6 +21,21 @@ Because it has no student Auth users, it intentionally does not create
 enrollments or attendance. Create real student accounts and enroll them through
 the management portal when that data is needed.
 
+### Course workspace demo
+
+`seed_course_workspace_demo.sql` enriches the existing `SEED-LR-2609` course
+with 12 sessions, attendance sheets/records for its current enrollment roster,
+and Listening/Reading activities with varied verified results. It is intended
+for testing the schedule, attendance, progress, and activity-matrix tabs after
+`seed_supabase_demo.sql` and real student enrollments already exist.
+
+The script is idempotent and does not create or modify user accounts. Run it
+against a local or disposable demo database:
+
+```powershell
+psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f src/main/resources/db/seed/seed_course_workspace_demo.sql
+```
+
 You can confirm that the existing administrator is available before running:
 
 ```sql

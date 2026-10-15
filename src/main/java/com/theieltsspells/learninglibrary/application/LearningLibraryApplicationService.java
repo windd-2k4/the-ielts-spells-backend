@@ -353,7 +353,21 @@ public class LearningLibraryApplicationService {
                 default -> throw new BusinessRuleException("Loại media không hợp lệ");
             });
         }
-        return resourceFiles.findAll(spec, pageable).map(this::mediaResponse);
+        var page = resourceFiles.findAll(spec, pageable);
+        var resourceIds = page.getContent().stream()
+                .map(LearningResourceFile::getResourceId)
+                .distinct()
+                .toList();
+        var uploaderIds = page.getContent().stream()
+                .map(LearningResourceFile::getUploadedBy)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        var locationsByResource = mediaLocations(resourceIds);
+        var uploaderNamesById = uploaderNames(uploaderIds);
+        return page.map(value -> mediaResponse(value,
+                locationsByResource.getOrDefault(value.getResourceId(), List.of()),
+                uploaderNamesById.getOrDefault(value.getUploadedBy(), "Không xác định")));
     }
 
     @Transactional
@@ -580,22 +594,50 @@ public class LearningLibraryApplicationService {
                 value.getOriginalFilename(), value.getMimeType(), value.getSizeBytes(), previewSupported, value.getCreatedAt());
     }
 
-    @SuppressWarnings("unchecked")
     private MediaAssetResponse mediaResponse(LearningResourceFile value) {
-        var rows = entityManager.createNativeQuery("""
-                select cs.id, coalesce(cs.title, 'Buổi học')
+        var locations = mediaLocations(List.of(value.getResourceId()))
+                .getOrDefault(value.getResourceId(), List.of());
+        var uploaderNames = value.getUploadedBy() == null
+                ? Map.<UUID, String>of()
+                : uploaderNames(List.of(value.getUploadedBy()));
+        return mediaResponse(value, locations,
+                uploaderNames.getOrDefault(value.getUploadedBy(), "Không xác định"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<UUID, List<MediaAssetResponse.UsageLocation>> mediaLocations(List<UUID> resourceIds) {
+        if (resourceIds.isEmpty()) return Map.of();
+        List<Object[]> rows = entityManager.createNativeQuery("""
+                select csi.source_resource_id, cs.id, coalesce(cs.title, 'Buổi học')
                 from public.course_session_items csi
                 join public.course_sessions cs on cs.id=csi.session_id
-                where csi.source_resource_id=:resourceId order by cs.starts_at
-                """).setParameter("resourceId", value.getResourceId()).getResultList();
-        var locations = ((List<Object[]>) rows).stream().map(row -> new MediaAssetResponse.UsageLocation(
-                "LESSON", String.valueOf(row[1]), (UUID) row[0])).toList();
-        String uploader = "Không xác định";
-        if (value.getUploadedBy() != null) {
-            var names = entityManager.createNativeQuery("select coalesce(full_name,email,'Không xác định') from public.profiles where id=:id")
-                    .setParameter("id", value.getUploadedBy()).getResultList();
-            if (!names.isEmpty()) uploader = String.valueOf(names.getFirst());
+                where csi.source_resource_id in (:resourceIds)
+                order by csi.source_resource_id, cs.starts_at
+                """).setParameter("resourceIds", resourceIds).getResultList();
+        var result = new LinkedHashMap<UUID, List<MediaAssetResponse.UsageLocation>>();
+        for (var row : rows) {
+            result.computeIfAbsent((UUID) row[0], ignored -> new java.util.ArrayList<>())
+                    .add(new MediaAssetResponse.UsageLocation("LESSON", String.valueOf(row[2]), (UUID) row[1]));
         }
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<UUID, String> uploaderNames(List<UUID> uploaderIds) {
+        if (uploaderIds.isEmpty()) return Map.of();
+        List<Object[]> rows = entityManager.createNativeQuery("""
+                select id, coalesce(full_name,email,'Không xác định')
+                from public.profiles
+                where id in (:uploaderIds)
+                """).setParameter("uploaderIds", uploaderIds).getResultList();
+        var result = new LinkedHashMap<UUID, String>();
+        for (var row : rows) result.put((UUID) row[0], String.valueOf(row[1]));
+        return result;
+    }
+
+    private MediaAssetResponse mediaResponse(LearningResourceFile value,
+                                              List<MediaAssetResponse.UsageLocation> locations,
+                                              String uploader) {
         return new MediaAssetResponse(value.getId(), value.getResourceId(), "MED-" + value.getId().toString().substring(0, 8).toUpperCase(Locale.ROOT),
                 value.getOriginalFilename(), mediaType(value.getMimeType()), "/admin/library/files/" + value.getId() + "/content",
                 value.getSizeBytes(), List.of(), locations, uploader, value.getCreatedAt());
