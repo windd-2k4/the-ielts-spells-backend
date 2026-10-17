@@ -54,6 +54,9 @@ public class AttendanceRecord {
     @Column(name = "duration_seconds")
     private Integer durationSeconds;
 
+    @Column(name = "interaction_count", nullable = false)
+    private Integer interactionCount;
+
     @Column(name = "match_method")
     private String matchMethod;
 

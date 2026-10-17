@@ -34,16 +34,12 @@ public class AttendanceApplicationService {
     private final AttendanceSheetAuditRepository audits;
     private final AcademicMembershipService academic;
 
-    @Transactional
     public List<AttendanceSessionSummaryResponse> listSessions(UUID courseId) {
         var sessions = academic.sessions(courseId);
         if (sessions.isEmpty()) return List.of();
         var sessionIds = sessions.stream().map(ClassSession::getId).toList();
         var sheetBySession = sheets.findBySessionIdIn(sessionIds).stream()
                 .collect(Collectors.toMap(AttendanceSheet::getSessionId, Function.identity()));
-        sessions.stream()
-                .filter(session -> sheetBySession.containsKey(session.getId()))
-                .forEach(session -> synchronizeRoster(courseId, session.getId()));
         var recordsBySession = records.findBySessionIdInOrderBySessionId(sessionIds).stream()
                 .collect(Collectors.groupingBy(AttendanceRecord::getSessionId));
         return sessions.stream()
@@ -64,8 +60,9 @@ public class AttendanceApplicationService {
     @Transactional
     public AttendanceSheetResponse initialize(UUID courseId, UUID sessionId, UUID actorId) {
         var session = requireSession(courseId, sessionId);
-        boolean isNew = sheets.findBySessionId(sessionId).isEmpty();
-        var sheet = sheets.findBySessionId(sessionId).orElseGet(() -> {
+        var existingSheet = sheets.findBySessionId(sessionId);
+        boolean isNew = existingSheet.isEmpty();
+        var sheet = existingSheet.orElseGet(() -> {
             var value = new AttendanceSheet();
             value.setSessionId(sessionId);
             value.setStatus(AttendanceSheetStatus.DRAFT);
@@ -92,6 +89,45 @@ public class AttendanceApplicationService {
             records.save(record);
         }
         audit(sheet, "DRAFT_SAVED", actorId, request.entries().size() + " dòng được lưu");
+        return sheetResponse(session, sheet);
+    }
+
+    @Transactional
+    public AttendanceSheetResponse save(UUID courseId, UUID sessionId,
+                                        BulkUpdateAttendanceRequest request, UUID actorId) {
+        var session = requireSession(courseId, sessionId);
+        var existingSheet = sheets.findBySessionId(sessionId);
+        boolean isNew = existingSheet.isEmpty();
+        var sheet = existingSheet.orElseGet(() -> {
+            var value = new AttendanceSheet();
+            value.setSessionId(sessionId);
+            value.setStatus(AttendanceSheetStatus.DRAFT);
+            value.setPreparedBy(actorId);
+            return sheets.save(value);
+        });
+        if (isNew) audit(sheet, "INITIALIZED", actorId, null);
+        synchronizeRoster(courseId, sessionId);
+        var byStudent = records.findRosterBySessionId(sessionId).stream()
+                .collect(Collectors.toMap(AttendanceRecord::getStudentId, Function.identity()));
+        for (var entry : request.entries()) {
+            var record = Optional.ofNullable(byStudent.get(entry.studentId()))
+                    .orElseThrow(() -> new BusinessRuleException("Học viên không có trong danh sách điểm danh của buổi học"));
+            apply(record, entry, actorId);
+        }
+        var values = byStudent.values().stream().filter(this::hasStudent).toList();
+        boolean complete = values.stream().noneMatch(value -> value.getStatus() == AttendanceStatus.PENDING);
+        var now = OffsetDateTime.now();
+        values.forEach(value -> {
+            value.setIsConfirmed(complete);
+            value.setConfirmedBy(complete ? actorId : null);
+            value.setConfirmedAt(complete ? now : null);
+        });
+        records.saveAll(values);
+        sheet.setStatus(complete ? AttendanceSheetStatus.LOCKED : AttendanceSheetStatus.DRAFT);
+        sheet.setLockedBy(complete ? actorId : null);
+        sheet.setLockedAt(complete ? now : null);
+        sheets.save(sheet);
+        audit(sheet, complete ? "LOCKED" : "DRAFT_SAVED", actorId, request.entries().size() + " dòng được lưu trực tiếp");
         return sheetResponse(session, sheet);
     }
 
@@ -155,7 +191,7 @@ public class AttendanceApplicationService {
         value.setSessionId(session.getId());
         value.setStudentId(request.studentId());
         apply(value, new AttendanceEntryRequest(request.studentId(), request.status(), request.joinedAt(),
-                request.leftAt(), request.durationSeconds(), request.adjustmentReason()), actorId);
+                request.leftAt(), request.durationSeconds(), request.interactionCount(), request.adjustmentReason()), actorId);
         records.save(value);
         return legacyResponse(value);
     }
@@ -170,6 +206,7 @@ public class AttendanceApplicationService {
                     value.setSessionId(sessionId);
                     value.setStudentId(student.studentId());
                     value.setStatus(AttendanceStatus.PENDING);
+                    value.setInteractionCount(0);
                     value.setMatchMethod("manual");
                     value.setIsConfirmed(false);
                     return value;
@@ -180,6 +217,8 @@ public class AttendanceApplicationService {
     private void apply(AttendanceRecord value, AttendanceEntryRequest entry, UUID actorId) {
         if (entry.durationSeconds() != null && entry.durationSeconds() < 0)
             throw new BusinessRuleException("Thời lượng tham dự không hợp lệ");
+        if (entry.interactionCount() != null && entry.interactionCount() < 0)
+            throw new BusinessRuleException("Số lượt tương tác không hợp lệ");
         if (entry.joinedAt() != null && entry.leftAt() != null && !entry.leftAt().isAfter(entry.joinedAt()))
             throw new BusinessRuleException("Thời gian rời lớp phải sau thời gian vào lớp");
         Integer duration = entry.durationSeconds();
@@ -189,6 +228,7 @@ public class AttendanceApplicationService {
         value.setJoinedAt(entry.joinedAt());
         value.setLeftAt(entry.leftAt());
         value.setDurationSeconds(duration);
+        value.setInteractionCount(entry.interactionCount() == null ? 0 : entry.interactionCount());
         value.setAdjustmentReason(blank(entry.note()));
         value.setUpdatedBy(actorId);
         value.setMatchMethod("manual");
@@ -198,13 +238,13 @@ public class AttendanceApplicationService {
     }
 
     private AttendanceSheetResponse sheetResponse(ClassSession session, AttendanceSheet sheet) {
-        var values = records.findRosterBySessionId(session.getId());
+        var values = records.findRosterBySessionId(session.getId()).stream().filter(this::hasStudent).toList();
         return new AttendanceSheetResponse(summary(session, sheet, values), values.stream().map(value -> {
             var student = value.getStudentRef();
             var profile = student.getUserRef();
             return new AttendanceStudentRowResponse(value.getId(), value.getStudentId(), student.getStudentCode(),
                     profile.getFullName(), profile.getEmail(), profile.getAvatarPath(), value.getStatus(),
-                    value.getJoinedAt(), value.getLeftAt(), value.getDurationSeconds(),
+                    value.getJoinedAt(), value.getLeftAt(), value.getDurationSeconds(), value.getInteractionCount(),
                     "zoom".equalsIgnoreCase(value.getMatchMethod()) ? "ZOOM" : "MANUAL",
                     value.getAdjustmentReason());
         }).toList());
@@ -212,6 +252,7 @@ public class AttendanceApplicationService {
 
     private AttendanceSessionSummaryResponse summary(ClassSession session, AttendanceSheet sheet,
                                                      List<AttendanceRecord> values) {
+        values = values.stream().filter(this::hasStudent).toList();
         int present = count(values, AttendanceStatus.PRESENT);
         int late = count(values, AttendanceStatus.LATE);
         int leftEarly = count(values, AttendanceStatus.LEFT_EARLY);
@@ -231,6 +272,10 @@ public class AttendanceApplicationService {
 
     private int count(List<AttendanceRecord> values, AttendanceStatus status) {
         return (int) values.stream().filter(value -> value.getStatus() == status).count();
+    }
+
+    private boolean hasStudent(AttendanceRecord value) {
+        return value.getStudentRef() != null && value.getStudentRef().getUserRef() != null;
     }
 
     private ClassSession requireSession(UUID courseId, UUID sessionId) {
@@ -263,7 +308,7 @@ public class AttendanceApplicationService {
 
     private AttendanceResponse legacyResponse(AttendanceRecord value) {
         return new AttendanceResponse(value.getId(), value.getSessionId(), value.getStudentId(), value.getStatus(),
-                value.getJoinedAt(), value.getLeftAt(), value.getDurationSeconds(),
+                value.getJoinedAt(), value.getLeftAt(), value.getDurationSeconds(), value.getInteractionCount(),
                 Boolean.TRUE.equals(value.getIsConfirmed()), value.getAdjustmentReason());
     }
 }

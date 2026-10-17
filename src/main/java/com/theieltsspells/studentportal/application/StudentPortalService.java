@@ -6,6 +6,7 @@ import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
 import com.theieltsspells.studentportal.application.dto.StudentCourseResponse;
 import com.theieltsspells.studentportal.application.dto.StudentCourseSessionResponse;
+import com.theieltsspells.studentportal.application.dto.StudentExamPlanResponse;
 import com.theieltsspells.studentportal.application.dto.StudentPortalOverviewResponse;
 import com.theieltsspells.studentportal.application.dto.StudentTargetBandResponse;
 import lombok.RequiredArgsConstructor;
@@ -148,7 +149,10 @@ public class StudentPortalService {
                 ), portal_profile as (
                   select profile.id, student.student_code, profile.full_name, profile.email,
                     profile.phone, profile.avatar_path, student.current_band, student.target_band,
-                    student.joined_at
+                    student.target_listening_band, student.target_reading_band,
+                    student.target_writing_band, student.target_speaking_band,
+                    student.joined_at, student.planned_exam_date, student.exam_plan_status,
+                    student.learning_setup_completed_at
                   from public.student_profiles student
                   join public.profiles profile on profile.id = student.user_id
                   join params on params.student_id = student.user_id
@@ -312,7 +316,14 @@ public class StudentPortalService {
                     'avatarPath', profile.avatar_path,
                     'currentBand', profile.current_band,
                     'targetBand', profile.target_band,
-                    'joinedAt', profile.joined_at
+                    'listeningTarget', profile.target_listening_band,
+                    'readingTarget', profile.target_reading_band,
+                    'writingTarget', profile.target_writing_band,
+                    'speakingTarget', profile.target_speaking_band,
+                    'joinedAt', profile.joined_at,
+                    'plannedExamDate', profile.planned_exam_date,
+                    'examPlanStatus', profile.exam_plan_status,
+                    'learningSetupComplete', profile.learning_setup_completed_at is not null
                   ),
                   'metrics', jsonb_build_object(
                     'assignedTests', (select count(*) from assignment_items),
@@ -420,11 +431,19 @@ public class StudentPortalService {
     }
 
     @Transactional
-    public StudentTargetBandResponse updateTargetBand(UUID studentId, BigDecimal targetBand) {
-        if (targetBand == null
-                || targetBand.remainder(new BigDecimal("0.5")).compareTo(BigDecimal.ZERO) != 0) {
-            throw new BusinessRuleException("Band mục tiêu phải theo bước 0.5");
-        }
+    public StudentTargetBandResponse updateTargetBand(
+            UUID studentId,
+            BigDecimal targetBand,
+            BigDecimal listeningTarget,
+            BigDecimal readingTarget,
+            BigDecimal writingTarget,
+            BigDecimal speakingTarget
+    ) {
+        validateBandStep(targetBand, "Band mục tiêu");
+        validateOptionalBandStep(listeningTarget, "Listening");
+        validateOptionalBandStep(readingTarget, "Reading");
+        validateOptionalBandStep(writingTarget, "Writing");
+        validateOptionalBandStep(speakingTarget, "Speaking");
         var currentBands = jdbc.query("""
                 select current_band from public.student_profiles where user_id = ?
                 """, (rs, ignored) -> rs.getBigDecimal("current_band"), studentId);
@@ -436,15 +455,72 @@ public class StudentPortalService {
             throw new BusinessRuleException("Band mục tiêu không được thấp hơn Band hiện tại");
         }
         jdbc.update("""
-                update public.student_profiles set target_band = ? where user_id = ?
-                """, targetBand, studentId);
-        return new StudentTargetBandResponse(currentBand, targetBand);
+                update public.student_profiles
+                   set target_band = ?,
+                       target_listening_band = coalesce(?, target_listening_band),
+                       target_reading_band = coalesce(?, target_reading_band),
+                       target_writing_band = coalesce(?, target_writing_band),
+                       target_speaking_band = coalesce(?, target_speaking_band)
+                 where user_id = ?
+                """, targetBand, listeningTarget, readingTarget, writingTarget, speakingTarget, studentId);
+        return new StudentTargetBandResponse(
+                currentBand, targetBand, listeningTarget, readingTarget, writingTarget, speakingTarget);
+    }
+
+    private void validateBandStep(BigDecimal band, String label) {
+        if (band == null || band.remainder(new BigDecimal("0.5")).compareTo(BigDecimal.ZERO) != 0) {
+            throw new BusinessRuleException(label + " phải theo bước 0.5");
+        }
+    }
+
+    private void validateOptionalBandStep(BigDecimal band, String label) {
+        if (band != null) validateBandStep(band, "Mục tiêu " + label);
+    }
+
+    @Transactional
+    public StudentExamPlanResponse updateExamPlan(UUID studentId, boolean noExamPlan, LocalDate plannedExamDate) {
+        if (noExamPlan && plannedExamDate != null) {
+            throw new BusinessRuleException("Không nhập ngày thi khi chọn chưa có dự định thi");
+        }
+        if (!noExamPlan && plannedExamDate == null) {
+            throw new BusinessRuleException("Vui lòng chọn ngày dự định thi");
+        }
+        if (plannedExamDate != null && plannedExamDate.isBefore(LocalDate.now(BUSINESS_TIME_ZONE))) {
+            throw new BusinessRuleException("Ngày dự định thi không được ở trong quá khứ");
+        }
+        var updated = jdbc.update("""
+                update public.student_profiles
+                   set planned_exam_date = ?,
+                       exam_plan_status = ?,
+                       learning_setup_completed_at = case
+                         when target_band is not null
+                           and target_listening_band is not null
+                           and target_reading_band is not null
+                           and target_writing_band is not null
+                           and target_speaking_band is not null
+                         then coalesce(learning_setup_completed_at, now())
+                         else learning_setup_completed_at
+                       end
+                 where user_id = ?
+                """, noExamPlan ? null : plannedExamDate, noExamPlan ? "NONE" : "PLANNED", studentId);
+        if (updated == 0) {
+            throw new ResourceNotFoundException("Không tìm thấy hồ sơ học viên");
+        }
+        var completed = Boolean.TRUE.equals(jdbc.queryForObject("""
+                select learning_setup_completed_at is not null
+                  from public.student_profiles
+                 where user_id = ?
+                """, Boolean.class, studentId));
+        return new StudentExamPlanResponse(noExamPlan, noExamPlan ? null : plannedExamDate, completed);
     }
 
     private StudentPortalOverviewResponse.Profile profile(UUID studentId) {
         var values = jdbc.query("""
                 select profile.id, student.student_code, profile.full_name, profile.email,
-                  profile.phone, profile.avatar_path, student.current_band, student.target_band, student.joined_at
+                  profile.phone, profile.avatar_path, student.current_band, student.target_band, student.joined_at,
+                  student.target_listening_band, student.target_reading_band,
+                  student.target_writing_band, student.target_speaking_band,
+                  student.planned_exam_date, student.exam_plan_status, student.learning_setup_completed_at
                 from public.student_profiles student
                 join public.profiles profile on profile.id = student.user_id
                 where student.user_id = ? and profile.is_active = true
@@ -457,7 +533,14 @@ public class StudentPortalService {
                 rs.getString("avatar_path"),
                 rs.getBigDecimal("current_band"),
                 rs.getBigDecimal("target_band"),
-                rs.getObject("joined_at", LocalDate.class)
+                rs.getBigDecimal("target_listening_band"),
+                rs.getBigDecimal("target_reading_band"),
+                rs.getBigDecimal("target_writing_band"),
+                rs.getBigDecimal("target_speaking_band"),
+                rs.getObject("joined_at", LocalDate.class),
+                rs.getObject("planned_exam_date", LocalDate.class),
+                rs.getString("exam_plan_status"),
+                rs.getObject("learning_setup_completed_at", OffsetDateTime.class) != null
         ), studentId);
         if (values.isEmpty()) {
             throw new ResourceNotFoundException("Không tìm thấy hồ sơ học viên đang hoạt động");

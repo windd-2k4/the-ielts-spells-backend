@@ -18,9 +18,11 @@ import java.time.*;
 import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Map;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @Service
@@ -34,7 +36,12 @@ public class ClassSessionApplicationService {
 
     public List<ClassSessionResponse> list(UUID courseId) {
         requireCourse(courseId);
-        return sessions.findByCourseIdOrderBySessionNo(courseId).stream().map(this::response).toList();
+        var values = sessions.findByCourseIdWithTeacherOrderBySessionNo(courseId);
+        var sessionIds = values.stream().map(ClassSession::getId).toList();
+        Map<UUID, List<CourseSessionItem>> itemsBySession = sessionIds.isEmpty() ? Map.of()
+                : sessionItems.findBySessionIdInOrderBySessionIdAscDisplayOrderAscCreatedAtAsc(sessionIds).stream()
+                .collect(Collectors.groupingBy(CourseSessionItem::getSessionId));
+        return values.stream().map(value -> response(value, itemsBySession.getOrDefault(value.getId(), List.of()))).toList();
     }
 
     @Transactional
@@ -262,7 +269,11 @@ public class ClassSessionApplicationService {
     }
 
     private ClassSessionResponse response(ClassSession value) {
-        var items = sessionItems.findBySessionIdOrderByDisplayOrderAscCreatedAtAsc(value.getId()).stream()
+        return response(value, sessionItems.findBySessionIdOrderByDisplayOrderAscCreatedAtAsc(value.getId()));
+    }
+
+    private ClassSessionResponse response(ClassSession value, List<CourseSessionItem> sourceItems) {
+        var items = sourceItems.stream()
                 .map(item -> new CourseSessionItemResponse(item.getId(), item.getItemType(), item.getTitle(),
                         item.getDescription(), item.getSourceAssignmentId(), item.getSourceTestId(),
                         item.getSourceResourceId(), item.getSourceExerciseTemplateId(),

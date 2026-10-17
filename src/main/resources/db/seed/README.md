@@ -21,6 +21,24 @@ Because it has no student Auth users, it intentionally does not create
 enrollments or attendance. Create real student accounts and enroll them through
 the management portal when that data is needed.
 
+### Reading UI fixture
+
+`seed_reading_ui_demo.sql` creates 16 published, self-practice Reading tests:
+one test for every supported Reading question type. Each test contains one
+passage, one question group, five questions, and one type only. It is intended
+for checking the student catalog and Reading attempt UI without creating
+assignments or student accounts.
+
+Run it against a local or disposable demo database after Flyway migrations:
+
+```powershell
+psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f src/main/resources/db/seed/seed_reading_ui_demo.sql
+```
+
+The tests are visible through the authenticated student practice catalog and
+can be started as self-practice attempts. The seed uses an existing active
+administrator as publisher and does not modify Auth users or profiles.
+
 ### Course workspace demo
 
 `seed_course_workspace_demo.sql` enriches the existing `SEED-LR-2609` course

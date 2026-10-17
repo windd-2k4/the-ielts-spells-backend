@@ -26,7 +26,14 @@ public record StudentPortalOverviewResponse(
             String avatarPath,
             BigDecimal currentBand,
             BigDecimal targetBand,
-            LocalDate joinedAt
+            BigDecimal listeningTarget,
+            BigDecimal readingTarget,
+            BigDecimal writingTarget,
+            BigDecimal speakingTarget,
+            LocalDate joinedAt,
+            LocalDate plannedExamDate,
+            String examPlanStatus,
+            boolean learningSetupComplete
     ) {
     }
 

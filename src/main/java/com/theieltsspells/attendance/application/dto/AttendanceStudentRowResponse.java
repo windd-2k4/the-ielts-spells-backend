@@ -16,6 +16,7 @@ public record AttendanceStudentRowResponse(
         OffsetDateTime joinedAt,
         OffsetDateTime leftAt,
         Integer durationSeconds,
+        Integer interactionCount,
         String source,
         String note
 ) {}

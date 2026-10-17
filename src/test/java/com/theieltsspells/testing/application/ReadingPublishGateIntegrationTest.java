@@ -596,6 +596,9 @@ class ReadingPublishGateIntegrationTest {
         var test = createSingleReading("Pausable self practice", createValidReadingBuilderContent(1, 5));
         var published = testBankService.changeStatus(test.id(), "PUBLISHED", test.draftRevision(), actorId, true);
         var attempt = studentDeliveryService.startOrResumeSelfPractice(published.publishedVersion().id(), studentId);
+        assertEquals(15 * 60, attempt.remainingSeconds());
+
+        studentDeliveryService.resumeAttempt(attempt.attemptId(), studentId);
 
         jdbc.update("update public.test_attempts set expires_at = now() + interval '30 seconds' where id = ?",
                 attempt.attemptId());
@@ -611,6 +614,15 @@ class ReadingPublishGateIntegrationTest {
         var resumed = studentDeliveryService.resumeAttempt(attempt.attemptId(), studentId);
         assertEquals("IN_PROGRESS", resumed.status());
         assertTrue(resumed.remainingSeconds() > 0 && resumed.remainingSeconds() <= pausedRemaining);
+
+        jdbc.update("""
+                update public.test_attempts
+                set expires_at = now() - interval '1 hour', paused_remaining_seconds = null
+                where id = ?
+                """, attempt.attemptId());
+        studentDeliveryService.pauseAttempt(attempt.attemptId(), studentId);
+        assertEquals(15 * 60,
+                studentDeliveryService.getAttempt(attempt.attemptId(), studentId).remainingSeconds());
     }
 
     private TestBankResponse createSingleReading(String title, Map<String, Object> content) {

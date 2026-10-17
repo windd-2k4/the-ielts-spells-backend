@@ -18,6 +18,7 @@ final class AcademicMapper {
     static EnrollmentResponse toResponse(Enrollment value) {
         return new EnrollmentResponse(value.getId(), value.getCourseId(), value.getStudentId(), value.getStatus(),
                 value.getEnrolledAt(), value.getStartedOn(), value.getEndedOn(), value.getNotes(),
+                value.getAttendanceNote(),
                 value.getPlannedExamMonth(), value.getActualExamDate(),
                 value.getExamRegistrationStatus(), value.getTargetNote());
     }

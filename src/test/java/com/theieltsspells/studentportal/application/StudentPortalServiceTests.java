@@ -16,6 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -44,7 +45,14 @@ class StudentPortalServiceTests {
                     "avatarPath": null,
                     "currentBand": 6.0,
                     "targetBand": 7.0,
-                    "joinedAt": "2026-01-01"
+                    "listeningTarget": 7.5,
+                    "readingTarget": 7.0,
+                    "writingTarget": 6.5,
+                    "speakingTarget": 7.0,
+                    "joinedAt": "2026-01-01",
+                    "plannedExamDate": null,
+                    "examPlanStatus": "NONE",
+                    "learningSetupComplete": true
                   },
                   "metrics": {
                     "assignedTests": 1,
@@ -73,6 +81,8 @@ class StudentPortalServiceTests {
         var result = service.overview(studentId);
 
         assertThat(result.profile().id()).isEqualTo(profileId);
+        assertThat(result.profile().learningSetupComplete()).isTrue();
+        assertThat(result.profile().examPlanStatus()).isEqualTo("NONE");
         assertThat(result.metrics().assignedTests()).isEqualTo(1);
         assertThat(result.activityCalendar()).singleElement()
                 .satisfies(activity -> {
@@ -118,11 +128,20 @@ class StudentPortalServiceTests {
 
     @Test
     void rejectsTargetBandOutsideHalfBandSteps() {
-        assertThatThrownBy(() -> service.updateTargetBand(UUID.randomUUID(), new BigDecimal("7.25")))
+        assertThatThrownBy(() -> service.updateTargetBand(
+                UUID.randomUUID(), new BigDecimal("7.25"), null, null, null, null))
                 .isInstanceOf(BusinessRuleException.class)
                 .hasMessage("Band mục tiêu phải theo bước 0.5");
 
         verify(jdbc, never()).update(any(String.class), any(), any());
+    }
+
+    @Test
+    void rejectsSkillTargetOutsideHalfBandSteps() {
+        assertThatThrownBy(() -> service.updateTargetBand(
+                UUID.randomUUID(), new BigDecimal("7.0"), new BigDecimal("7.25"), null, null, null))
+                .isInstanceOf(BusinessRuleException.class)
+                .hasMessage("Mục tiêu Listening phải theo bước 0.5");
     }
 
     @Test
@@ -131,7 +150,8 @@ class StudentPortalServiceTests {
         when(jdbc.query(any(String.class), any(org.springframework.jdbc.core.RowMapper.class), eq(studentId)))
                 .thenReturn(List.of(new BigDecimal("6.5")));
 
-        assertThatThrownBy(() -> service.updateTargetBand(studentId, new BigDecimal("6.0")))
+        assertThatThrownBy(() -> service.updateTargetBand(
+                studentId, new BigDecimal("6.0"), null, null, null, null))
                 .isInstanceOf(BusinessRuleException.class)
                 .hasMessage("Band mục tiêu không được thấp hơn Band hiện tại");
     }
@@ -142,11 +162,13 @@ class StudentPortalServiceTests {
         when(jdbc.query(any(String.class), any(org.springframework.jdbc.core.RowMapper.class), eq(studentId)))
                 .thenReturn(List.of(new BigDecimal("6.0")));
 
-        var result = service.updateTargetBand(studentId, new BigDecimal("7.0"));
+        var target = new BigDecimal("7.0");
+        var result = service.updateTargetBand(studentId, target, target, target, target, target);
 
         assertThat(result.currentBand()).isEqualByComparingTo("6.0");
         assertThat(result.targetBand()).isEqualByComparingTo("7.0");
-        verify(jdbc).update(any(String.class), eq(new BigDecimal("7.0")), eq(studentId));
+        assertThat(result.listeningTarget()).isEqualByComparingTo("7.0");
+        verify(jdbc).update(any(String.class), eq(target), eq(target), eq(target), eq(target), eq(target), eq(studentId));
     }
 
     @Test
@@ -155,9 +177,29 @@ class StudentPortalServiceTests {
         when(jdbc.query(any(String.class), any(org.springframework.jdbc.core.RowMapper.class), eq(studentId)))
                 .thenReturn(List.of(new BigDecimal("6.0")));
 
-        var result = service.updateTargetBand(studentId, new BigDecimal("7.00"));
+        var result = service.updateTargetBand(studentId, new BigDecimal("7.00"), null, null, null, null);
 
         assertThat(result.targetBand()).isEqualByComparingTo("7.0");
-        verify(jdbc).update(any(String.class), eq(new BigDecimal("7.00")), eq(studentId));
+        verify(jdbc).update(any(String.class), eq(new BigDecimal("7.00")), isNull(), isNull(), isNull(), isNull(), eq(studentId));
+    }
+
+    @Test
+    void rejectsAnExamDateInThePast() {
+        assertThatThrownBy(() -> service.updateExamPlan(UUID.randomUUID(), false, LocalDate.of(2020, 1, 1)))
+                .isInstanceOf(BusinessRuleException.class)
+                .hasMessage("Ngày dự định thi không được ở trong quá khứ");
+    }
+
+    @Test
+    void savesAnExplicitNoExamPlanChoice() {
+        UUID studentId = UUID.randomUUID();
+        when(jdbc.update(any(String.class), isNull(), eq("NONE"), eq(studentId))).thenReturn(1);
+        when(jdbc.queryForObject(any(String.class), eq(Boolean.class), eq(studentId))).thenReturn(true);
+
+        var result = service.updateExamPlan(studentId, true, null);
+
+        assertThat(result.noExamPlan()).isTrue();
+        assertThat(result.plannedExamDate()).isNull();
+        assertThat(result.learningSetupComplete()).isTrue();
     }
 }

@@ -52,6 +52,9 @@ public class Enrollment {
     @Column(name = "notes")
     private String notes;
 
+    @Column(name = "attendance_note")
+    private String attendanceNote;
+
     @Column(name = "planned_exam_month")
     private LocalDate plannedExamMonth;
 

@@ -58,6 +58,15 @@ public class EnrollmentAdminController {
         return service.update(id, request);
     }
 
+    @PatchMapping("/courses/{courseId}/students/{studentId}/note")
+    @PreAuthorize("@permissionPolicy.hasForCourse(authentication, #courseId, 'attendance.mark')")
+    @Operation(summary = "Cập nhật ghi chú học viên dùng chung cho mọi buổi trong khóa")
+    public EnrollmentResponse updateNote(@PathVariable UUID courseId,
+                                         @PathVariable UUID studentId,
+                                         @Valid @RequestBody UpdateEnrollmentNoteRequest request) {
+        return service.updateNote(courseId, studentId, request);
+    }
+
     @PatchMapping("/{id}/exam-plan")
     @PreAuthorize("@permissionPolicy.has(authentication, 'enrollment.exam_plan.manage')")
     @Operation(summary = "Cập nhật kế hoạch thi IELTS của học viên trong khóa")

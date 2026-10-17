@@ -35,7 +35,7 @@ public class AcademicMembershipService implements CourseMembershipLookup {
     }
 
     public List<ClassSession> sessions(UUID courseId) {
-        return sessions.findByCourseIdOrderBySessionNo(courseId);
+        return sessions.findByCourseIdWithTeacherOrderBySessionNo(courseId);
     }
 
     public Optional<ClassSession> session(UUID courseId, UUID sessionId) {

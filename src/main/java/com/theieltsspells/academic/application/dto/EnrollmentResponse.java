@@ -7,6 +7,7 @@ import java.util.UUID;
 public record EnrollmentResponse(
         UUID id, UUID courseId, UUID studentId, EnrollmentStatus status,
         OffsetDateTime enrolledAt, LocalDate startedOn, LocalDate endedOn, String notes,
+        String attendanceNote,
         LocalDate plannedExamMonth, LocalDate actualExamDate,
         String examRegistrationStatus, String targetNote
 ) {}

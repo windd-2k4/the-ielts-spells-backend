@@ -6,4 +6,4 @@ import java.util.UUID;
 
 public record AttendanceResponse(UUID id, UUID sessionId, UUID studentId, AttendanceStatus status,
         OffsetDateTime joinedAt, OffsetDateTime leftAt, Integer durationSeconds,
-        boolean confirmed, String adjustmentReason) {}
+        Integer interactionCount, boolean confirmed, String adjustmentReason) {}

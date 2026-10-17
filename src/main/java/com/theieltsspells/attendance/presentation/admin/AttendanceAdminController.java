@@ -54,6 +54,15 @@ public class AttendanceAdminController {
         return service.saveDraft(courseId, sessionId, request, actor(jwt));
     }
 
+    @PutMapping("/sessions/{sessionId}")
+    @PreAuthorize("@permissionPolicy.hasForCourse(authentication, #courseId, 'attendance.mark')")
+    @Operation(summary = "Lưu điểm danh trực tiếp; tự khởi tạo và hoàn tất khi đã đánh dấu đủ")
+    public AttendanceSheetResponse save(@PathVariable UUID courseId, @PathVariable UUID sessionId,
+                                        @Valid @RequestBody BulkUpdateAttendanceRequest request,
+                                        @AuthenticationPrincipal Jwt jwt) {
+        return service.save(courseId, sessionId, request, actor(jwt));
+    }
+
     @PostMapping("/sessions/{sessionId}/lock")
     @PreAuthorize("@permissionPolicy.hasForCourse(authentication, #courseId, 'attendance.mark')")
     @Operation(summary = "Xác nhận và khóa phiếu; không cho phép còn học viên chưa đánh dấu")

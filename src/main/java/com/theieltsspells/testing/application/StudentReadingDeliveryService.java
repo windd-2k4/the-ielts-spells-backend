@@ -210,10 +210,11 @@ public class StudentReadingDeliveryService {
         UUID attemptId = jdbc.queryForObject("""
                 insert into public.test_attempts(
                   test_assignment_id, test_version_id, student_id, attempt_no, status,
-                  started_at, expires_at, last_saved_at, attempt_origin
-                ) values (null, ?, ?, ?, 'IN_PROGRESS', ?, ?, ?, 'SELF_PRACTICE')
+                  started_at, expires_at, last_saved_at, attempt_origin, paused_remaining_seconds
+                ) values (null, ?, ?, ?, 'IN_PROGRESS', ?, ?, ?, 'SELF_PRACTICE', ?)
                 returning id
-                """, UUID.class, version.id(), studentId, attemptNo, now, expiresAt, now);
+                """, UUID.class, version.id(), studentId, attemptNo, now, expiresAt, now,
+                Math.max(1, version.durationMinutes()) * 60L);
         return attemptPayload(loadAttempt(attemptId, studentId, false));
     }
 
@@ -226,17 +227,16 @@ public class StudentReadingDeliveryService {
         var attempt = loadAttempt(attemptId, studentId, true);
         assertInProgress(attempt);
         var pausedRemaining = pausedRemainingSeconds(attempt);
-        if ("SELF_PRACTICE".equals(attempt.origin()) && pausedRemaining != null) {
-            if (pausedRemaining <= 0) {
-                finalizeAttempt(attempt, "EXPIRED");
-            } else {
-                jdbc.update("""
-                        update public.test_attempts
-                        set expires_at = now() + (? * interval '1 second'),
-                          paused_remaining_seconds = null, updated_at = now()
-                        where id = ? and status = 'IN_PROGRESS'
-                        """, pausedRemaining, attempt.id());
-            }
+        if ("SELF_PRACTICE".equals(attempt.origin())
+                && (pausedRemaining != null || remainingSeconds(attempt.expiresAt()) == 0)) {
+            long resumeBudget = pausedRemaining != null && pausedRemaining > 0
+                    ? pausedRemaining : fullDurationSeconds(attempt);
+            jdbc.update("""
+                    update public.test_attempts
+                    set expires_at = now() + (? * interval '1 second'),
+                      paused_remaining_seconds = null, updated_at = now()
+                    where id = ? and status = 'IN_PROGRESS'
+                    """, resumeBudget, attempt.id());
         }
         return attemptPayload(loadAttempt(attemptId, studentId, false));
     }
@@ -253,7 +253,7 @@ public class StudentReadingDeliveryService {
                 set paused_remaining_seconds = ?,
                   updated_at = now()
                 where id = ? and status = 'IN_PROGRESS'
-                """, remainingSeconds(attempt.expiresAt()), attempt.id());
+                """, pauseBudgetSeconds(attempt), attempt.id());
     }
 
     @Transactional
@@ -998,6 +998,15 @@ public class StudentReadingDeliveryService {
             return 0;
         }
         return Math.max(0, expiresAt.toEpochSecond() - now().toEpochSecond());
+    }
+
+    private long pauseBudgetSeconds(AttemptContext attempt) {
+        long remaining = remainingSeconds(attempt.expiresAt());
+        return remaining > 0 ? remaining : fullDurationSeconds(attempt);
+    }
+
+    private long fullDurationSeconds(AttemptContext attempt) {
+        return Math.max(1, attempt.durationMinutes()) * 60L;
     }
 
     private Long pausedRemainingSeconds(AttemptContext attempt) {

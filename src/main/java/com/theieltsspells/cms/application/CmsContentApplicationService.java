@@ -34,6 +34,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -56,6 +57,17 @@ public class CmsContentApplicationService {
 
     public CmsPageResponse page(UUID id) {
         return page(requirePage(id));
+    }
+
+    public Optional<CmsPageResponse> publishedPage(String slug) {
+        OffsetDateTime now = OffsetDateTime.now();
+        return pages.findBySlug(slug)
+                .filter(value -> (value.getStatus() == PublishStatus.PUBLISHED
+                        && (value.getPublishedAt() == null || !value.getPublishedAt().isAfter(now)))
+                        || (value.getStatus() == PublishStatus.SCHEDULED
+                        && value.getPublishedAt() != null
+                        && !value.getPublishedAt().isAfter(now)))
+                .map(this::page);
     }
 
     @Transactional

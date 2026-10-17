@@ -160,6 +160,14 @@ public class EnrollmentApplicationService {
     }
 
     @Transactional
+    public EnrollmentResponse updateNote(UUID courseId, UUID studentId, UpdateEnrollmentNoteRequest request) {
+        var value = enrollments.findByCourseIdAndStudentId(courseId, studentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy lượt ghi danh của học viên trong khóa học"));
+        value.setAttendanceNote(request.note() == null || request.note().isBlank() ? null : request.note().trim());
+        return AcademicMapper.toResponse(enrollments.save(value));
+    }
+
+    @Transactional
     public EnrollmentResponse updateExamPlan(UUID id, UpdateEnrollmentExamPlanRequest request) {
         var value = find(id);
         if (request.actualExamDate() != null && "NOT_REGISTERED".equals(request.examRegistrationStatus())) {

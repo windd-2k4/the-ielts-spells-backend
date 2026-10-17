@@ -120,10 +120,11 @@ public class StudentWritingDeliveryService {
         var expiresAt = now.plusMinutes(Math.max(1, versions.getFirst().durationMinutes()));
         UUID attemptId = jdbc.queryForObject("""
                 insert into public.test_attempts(test_assignment_id, test_version_id, student_id, attempt_no,
-                  status, started_at, expires_at, last_saved_at, attempt_origin)
-                values (null, ?, ?, ?, 'IN_PROGRESS', ?, ?, ?, 'SELF_PRACTICE') returning id
+                  status, started_at, expires_at, last_saved_at, attempt_origin, paused_remaining_seconds)
+                values (null, ?, ?, ?, 'IN_PROGRESS', ?, ?, ?, 'SELF_PRACTICE', ?) returning id
                 """, UUID.class, testVersionId, studentId,
-                (short) Math.min(Short.MAX_VALUE, (used == null ? 0 : used) + 1), now, expiresAt, now);
+                (short) Math.min(Short.MAX_VALUE, (used == null ? 0 : used) + 1), now, expiresAt, now,
+                Math.max(1, versions.getFirst().durationMinutes()) * 60L);
         return payload(loadAttempt(attemptId, studentId, false));
     }
 
@@ -136,17 +137,16 @@ public class StudentWritingDeliveryService {
         var attempt = loadAttempt(attemptId, studentId, true);
         assertInProgress(attempt);
         var pausedRemaining = pausedRemainingSeconds(attempt);
-        if ("SELF_PRACTICE".equals(attempt.origin()) && pausedRemaining != null) {
-            if (pausedRemaining <= 0) {
-                finalizeAttempt(attempt, "EXPIRED");
-            } else {
-                jdbc.update("""
-                        update public.test_attempts
-                        set expires_at = now() + (? * interval '1 second'),
-                          paused_remaining_seconds = null, updated_at = now()
-                        where id = ? and status = 'IN_PROGRESS'
-                        """, pausedRemaining, attempt.id());
-            }
+        if ("SELF_PRACTICE".equals(attempt.origin())
+                && (pausedRemaining != null || remainingSeconds(attempt.expiresAt()) == 0)) {
+            long resumeBudget = pausedRemaining != null && pausedRemaining > 0
+                    ? pausedRemaining : fullDurationSeconds(attempt);
+            jdbc.update("""
+                    update public.test_attempts
+                    set expires_at = now() + (? * interval '1 second'),
+                      paused_remaining_seconds = null, updated_at = now()
+                    where id = ? and status = 'IN_PROGRESS'
+                    """, resumeBudget, attempt.id());
         }
         return payload(loadAttempt(attemptId, studentId, false));
     }
@@ -161,7 +161,7 @@ public class StudentWritingDeliveryService {
                 set paused_remaining_seconds = ?,
                   updated_at = now()
                 where id = ? and status = 'IN_PROGRESS'
-                """, remainingSeconds(attempt.expiresAt()), attempt.id());
+                """, pauseBudgetSeconds(attempt), attempt.id());
     }
 
     @Transactional(noRollbackFor = BusinessRuleException.class)
@@ -344,7 +344,8 @@ public class StudentWritingDeliveryService {
                 select attempt.id, attempt.test_assignment_id, attempt.test_version_id, attempt.student_id,
                   attempt.attempt_origin, attempt.status::text status, attempt.started_at, attempt.submitted_at,
                   attempt.expires_at, attempt.paused_remaining_seconds, assignment.course_id, coalesce(assignment.show_result_after_submit, true) show_result,
-                  version.title, version.description, version.primary_skill, version.builder_content::text builder_content
+                  version.title, version.description, version.duration_minutes, version.primary_skill,
+                  version.builder_content::text builder_content
                 from public.test_attempts attempt
                 left join public.test_assignments assignment on assignment.id=attempt.test_assignment_id
                 join public.test_versions version on version.id=attempt.test_version_id where attempt.id=?
@@ -355,7 +356,8 @@ public class StudentWritingDeliveryService {
                 rs.getObject("submitted_at", OffsetDateTime.class), rs.getObject("expires_at", OffsetDateTime.class),
                 rs.getObject("paused_remaining_seconds", Long.class),
                 rs.getObject("course_id", UUID.class), rs.getBoolean("show_result"), rs.getString("title"),
-                rs.getString("description"), rs.getString("primary_skill"), readMap(rs.getString("builder_content"))), id);
+                rs.getString("description"), rs.getInt("duration_minutes"), rs.getString("primary_skill"),
+                readMap(rs.getString("builder_content"))), id);
         if (values.isEmpty() || !values.getFirst().studentId().equals(studentId)) {
             throw new ResourceNotFoundException("Không tìm thấy lượt làm bài Writing");
         }
@@ -390,6 +392,15 @@ public class StudentWritingDeliveryService {
 
     private long remainingSeconds(OffsetDateTime expiresAt) {
         return expiresAt == null ? 0 : Math.max(0, expiresAt.toEpochSecond() - now().toEpochSecond());
+    }
+
+    private long pauseBudgetSeconds(AttemptContext attempt) {
+        long remaining = remainingSeconds(attempt.expiresAt());
+        return remaining > 0 ? remaining : fullDurationSeconds(attempt);
+    }
+
+    private long fullDurationSeconds(AttemptContext attempt) {
+        return Math.max(1, attempt.durationMinutes()) * 60L;
     }
 
     private Long pausedRemainingSeconds(AttemptContext attempt) {
@@ -458,5 +469,6 @@ public class StudentWritingDeliveryService {
                                   String status, OffsetDateTime startedAt, OffsetDateTime submittedAt,
                                   OffsetDateTime expiresAt, Long pausedRemainingSeconds,
                                   UUID courseId, boolean showResultAfterSubmit,
-                                  String title, String description, String skill, Map<String, Object> builderContent) { }
+                                  String title, String description, int durationMinutes, String skill,
+                                  Map<String, Object> builderContent) { }
 }

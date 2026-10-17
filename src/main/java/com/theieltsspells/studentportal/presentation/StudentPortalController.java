@@ -3,9 +3,15 @@ package com.theieltsspells.studentportal.presentation;
 import com.theieltsspells.studentportal.application.StudentPortalService;
 import com.theieltsspells.studentportal.application.dto.StudentCourseResponse;
 import com.theieltsspells.studentportal.application.dto.StudentCourseSessionResponse;
+import com.theieltsspells.studentportal.application.dto.StudentExamPlanResponse;
 import com.theieltsspells.studentportal.application.dto.StudentPortalOverviewResponse;
 import com.theieltsspells.studentportal.application.dto.StudentTargetBandResponse;
+import com.theieltsspells.studentportal.application.dto.UpdateStudentExamPlanRequest;
 import com.theieltsspells.studentportal.application.dto.UpdateStudentTargetBandRequest;
+import com.theieltsspells.progress.application.StudentProgressApplicationService;
+import com.theieltsspells.progress.application.dto.StudentProgressTaskResponse;
+import com.theieltsspells.progress.application.dto.UpdateChecklistRequest;
+import com.theieltsspells.progress.application.dto.UpdateProgressSummaryRequest;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -22,6 +28,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.YearMonth;
 import java.util.List;
@@ -36,6 +46,7 @@ public class StudentPortalController {
 
     private final StudentPortalService service;
     private final com.theieltsspells.studentportal.application.StudentCourseWorkspaceService workspaceService;
+    private final StudentProgressApplicationService progressService;
 
     @GetMapping("/overview")
     @PreAuthorize("@permissionPolicy.has(authentication, 'identity.profile.self.read')")
@@ -81,6 +92,48 @@ public class StudentPortalController {
         return workspaceService.getWorkspace(studentId(jwt), courseId);
     }
 
+    @GetMapping("/courses/{courseId}/progress")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'identity.profile.self.read')")
+    public List<StudentProgressTaskResponse> courseProgress(
+            @PathVariable String courseId, @AuthenticationPrincipal Jwt jwt) {
+        return progressService.list(studentId(jwt), courseId);
+    }
+
+    @PostMapping(value = "/courses/{courseId}/activities/{classActivityId}/evidence",
+            consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("@permissionPolicy.has(authentication, 'identity.profile.self.update')")
+    public ResponseEntity<Void> uploadProgressEvidence(
+            @PathVariable String courseId,
+            @PathVariable UUID classActivityId,
+            @RequestParam MultipartFile file,
+            @AuthenticationPrincipal Jwt jwt) {
+        progressService.uploadEvidence(studentId(jwt), courseId, classActivityId, file);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PatchMapping("/courses/{courseId}/progress/{attemptId}/checklist/{checklistItemId}")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'identity.profile.self.update')")
+    public ResponseEntity<Void> updateProgressChecklist(
+            @PathVariable String courseId,
+            @PathVariable UUID attemptId,
+            @PathVariable UUID checklistItemId,
+            @RequestBody UpdateChecklistRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        progressService.updateChecklist(studentId(jwt), courseId, attemptId, checklistItemId, request.completed());
+        return ResponseEntity.noContent().build();
+    }
+
+    @PatchMapping("/courses/{courseId}/progress/{attemptId}/summary")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'identity.profile.self.update')")
+    public ResponseEntity<Void> updateProgressSummary(
+            @PathVariable String courseId,
+            @PathVariable UUID attemptId,
+            @Valid @RequestBody UpdateProgressSummaryRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        progressService.updateSummary(studentId(jwt), courseId, attemptId, request);
+        return ResponseEntity.noContent().build();
+    }
+
     @PatchMapping("/target-band")
     @PreAuthorize("@permissionPolicy.has(authentication, 'identity.profile.self.update')")
     @Operation(summary = "Học viên tự cập nhật Band mục tiêu")
@@ -88,7 +141,24 @@ public class StudentPortalController {
             @Valid @RequestBody UpdateStudentTargetBandRequest request,
             @AuthenticationPrincipal Jwt jwt
     ) {
-        return service.updateTargetBand(studentId(jwt), request.targetBand());
+        return service.updateTargetBand(
+                studentId(jwt),
+                request.targetBand(),
+                request.listeningTarget(),
+                request.readingTarget(),
+                request.writingTarget(),
+                request.speakingTarget()
+        );
+    }
+
+    @PatchMapping("/exam-plan")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'identity.profile.self.update')")
+    @Operation(summary = "Học viên tự cập nhật kế hoạch thi IELTS")
+    public StudentExamPlanResponse updateExamPlan(
+            @Valid @RequestBody UpdateStudentExamPlanRequest request,
+            @AuthenticationPrincipal Jwt jwt
+    ) {
+        return service.updateExamPlan(studentId(jwt), request.noExamPlan(), request.plannedExamDate());
     }
 
     private UUID studentId(Jwt jwt) {

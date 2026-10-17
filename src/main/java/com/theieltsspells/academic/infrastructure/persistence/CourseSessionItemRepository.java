@@ -8,5 +8,6 @@ import java.util.UUID;
 
 public interface CourseSessionItemRepository extends JpaRepository<CourseSessionItem, UUID> {
     List<CourseSessionItem> findBySessionIdOrderByDisplayOrderAscCreatedAtAsc(UUID sessionId);
+    List<CourseSessionItem> findBySessionIdInOrderBySessionIdAscDisplayOrderAscCreatedAtAsc(List<UUID> sessionIds);
     void deleteBySessionId(UUID sessionId);
 }

@@ -11,4 +11,5 @@ import java.util.UUID;
 public record ClassActivityProgressResponse(UUID classActivityId, UUID sessionId, UUID activityId,
         String title, SkillType skill, ActivityType activityType, CompletionMethod completionMethod,
         OffsetDateTime opensAt, OffsetDateTime dueAt, boolean required,
+        List<ActivityChecklistItemResponse> checklistItems,
         List<ActivityAttemptResponse> attempts) {}
