@@ -45,7 +45,8 @@ public class StudentCourseWorkspaceService {
                   c.default_zoom_url,
                   (select p.full_name from public.course_teachers ct
                    join public.profiles p on p.id = ct.teacher_id
-                   where ct.course_id = c.id and ct.is_primary = true limit 1) primary_teacher_name
+                   where ct.course_id = c.id and ct.is_primary = true limit 1) primary_teacher_name,
+                  c.cover_image_url, c.cover_image_alt_text
                 from public.courses c
                 where c.id = ?
                 """, (rs, i) -> new CourseInfo(
@@ -63,7 +64,9 @@ public class StudentCourseWorkspaceService {
                 rs.getObject("ends_on", LocalDate.class),
                 rs.getString("status"),
                 rs.getString("default_zoom_url"),
-                rs.getString("primary_teacher_name")
+                rs.getString("primary_teacher_name"),
+                rs.getString("cover_image_url"),
+                rs.getString("cover_image_alt_text")
         ), courseId);
 
         // 3. Fetch Enrollment Info
