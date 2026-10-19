@@ -24,11 +24,13 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.theieltsspells.billing.application.ProductionActivationService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,6 +39,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 @Slf4j
@@ -297,21 +300,9 @@ public class AdminBillingController {
     public ResponseEntity<byte[]> previewInvoicePdf(@PathVariable UUID id) {
         ElectronicInvoice invoice = invoiceRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hóa đơn: " + id));
-        String trackingCode = invoice.getIssueTrackingCode() != null && !invoice.getIssueTrackingCode().isBlank()
-                ? invoice.getIssueTrackingCode()
-                : invoice.getCreateTrackingCode();
-        if (trackingCode == null || trackingCode.isBlank()) {
-            throw new BusinessRuleException("Hóa đơn chưa có mã theo dõi để tải PDF chính thức");
-        }
-
         BillingSetting setting = settingsRepository.findLatest()
                 .orElseThrow(() -> new BusinessRuleException("Chưa cấu hình SePay eInvoice"));
-        SepayEInvoiceClient.DownloadResult pdf = sepayEInvoiceClient.downloadInvoiceFile(setting, trackingCode, "pdf");
-        if (!pdf.success() || pdf.content() == null || pdf.content().length == 0) {
-            throw new BusinessRuleException(pdf.errorMessage() != null
-                    ? pdf.errorMessage()
-                    : "Không thể tải PDF hóa đơn từ SePay");
-        }
+        SepayEInvoiceClient.DownloadResult pdf = downloadInvoicePdf(setting, invoice);
 
         String number = invoice.getInvoiceNumber() != null && !invoice.getInvoiceNumber().isBlank()
                 ? invoice.getInvoiceNumber().replaceAll("[^A-Za-z0-9_-]", "-")
@@ -321,6 +312,62 @@ public class AdminBillingController {
                 .contentLength(pdf.content().length)
                 .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=hoa-don-" + number + ".pdf")
                 .body(pdf.content());
+    }
+
+    private SepayEInvoiceClient.DownloadResult downloadInvoicePdf(
+            BillingSetting setting,
+            ElectronicInvoice invoice
+    ) {
+        List<String> identifiers = new ArrayList<>();
+        addDistinctIdentifier(identifiers, invoice.getIssueTrackingCode());
+        addDistinctIdentifier(identifiers, invoice.getCreateTrackingCode());
+        addDistinctIdentifier(identifiers, invoice.getReferenceCode());
+        if (identifiers.isEmpty()) {
+            throw new BusinessRuleException(
+                    "Hóa đơn thiếu mã tham chiếu để tải PDF. Hãy đồng bộ lại trạng thái từ SePay."
+            );
+        }
+
+        SepayEInvoiceClient.DownloadResult lastResult = null;
+        for (String identifier : identifiers) {
+            lastResult = sepayEInvoiceClient.downloadInvoiceFile(setting, identifier, "pdf");
+            if (lastResult.success() && lastResult.content() != null && lastResult.content().length > 0) {
+                return lastResult;
+            }
+            if (isTransientDownloadFailure(lastResult)) {
+                throw new ResponseStatusException(
+                        HttpStatus.SERVICE_UNAVAILABLE,
+                        "SePay tạm thời chưa cung cấp được file PDF. Hóa đơn vẫn đã phát hành; vui lòng thử lại sau."
+                );
+            }
+        }
+
+        String providerMessage = lastResult != null ? lastResult.errorMessage() : null;
+        throw new BusinessRuleException(providerMessage != null && !providerMessage.isBlank()
+                ? "Chưa thể tải PDF từ SePay: " + providerMessage
+                : "Chưa thể tải PDF từ SePay. Hãy đồng bộ lại hóa đơn rồi thử lại.");
+    }
+
+    private static void addDistinctIdentifier(List<String> identifiers, String identifier) {
+        if (identifier != null && !identifier.isBlank() && !identifiers.contains(identifier.trim())) {
+            identifiers.add(identifier.trim());
+        }
+    }
+
+    private static boolean isTransientDownloadFailure(SepayEInvoiceClient.DownloadResult result) {
+        if (result == null) {
+            return true;
+        }
+        String code = result.errorCode() == null ? "" : result.errorCode().toUpperCase(Locale.ROOT);
+        if (code.equals("EXCEPTION") || code.equals("HTTP_408") || code.equals("HTTP_429")
+                || code.equals("HTTP_500") || code.equals("HTTP_502")
+                || code.equals("HTTP_503") || code.equals("HTTP_504")) {
+            return true;
+        }
+        String message = result.errorMessage() == null ? "" : result.errorMessage().toLowerCase(Locale.ROOT);
+        return message.contains("timeout") || message.contains("timed out")
+                || message.contains("tạm thời") || message.contains("temporar")
+                || message.contains("unavailable");
     }
 
     @PostMapping("/invoices/{id}/issue")
