@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.theieltsspells.reporting.application.dto.StudentAttemptDetailResponse;
 import com.theieltsspells.reporting.application.dto.StudentAttemptDetailResponse.QuestionDetail;
 import com.theieltsspells.reporting.application.dto.StudentLearningInsightsResponse;
+import com.theieltsspells.reporting.application.dto.StudentLearningInsightsResponse.MonthlyCompletedAttempts;
 import com.theieltsspells.reporting.application.dto.StudentLearningInsightsResponse.RecurringMistake;
 import com.theieltsspells.reporting.application.dto.StudentLearningInsightsResponse.SkillInsight;
 import com.theieltsspells.reporting.application.dto.StudentLearningInsightsResponse.Summary;
@@ -41,7 +42,37 @@ public class StudentLearningInsightsService {
         List<TestAttemptInsight> attempts = attempts(studentId);
         List<SkillInsight> skills = skills(studentId);
         List<RecurringMistake> mistakes = recurringMistakes(studentId);
-        return new StudentLearningInsightsResponse(summary(studentId, mistakes), skills, attempts, mistakes);
+        return new StudentLearningInsightsResponse(summary(studentId, mistakes), skills, monthlyCompletedAttempts(studentId), attempts, mistakes);
+    }
+
+    private List<MonthlyCompletedAttempts> monthlyCompletedAttempts(UUID studentId) {
+        return jdbc.query("""
+                with months as (
+                  select generate_series(
+                    date_trunc('month', now() at time zone 'Asia/Ho_Chi_Minh') - interval '5 months',
+                    date_trunc('month', now() at time zone 'Asia/Ho_Chi_Minh'),
+                    interval '1 month'
+                  )::date month_bucket
+                ), skill_names(skill) as (
+                  values ('LISTENING'), ('READING'), ('WRITING'), ('SPEAKING')
+                ), monthly_counts as (
+                  select date_trunc('month', coalesce(attempt.submitted_at, attempt.last_saved_at, attempt.started_at)
+                    at time zone 'Asia/Ho_Chi_Minh')::date month_bucket,
+                    version.primary_skill::text skill, count(*)::int completed_attempts
+                  from public.test_attempts attempt
+                  join public.test_versions version on version.id = attempt.test_version_id
+                  where attempt.student_id = ? and attempt.status in ('SUBMITTED', 'GRADED', 'EXPIRED')
+                  group by 1, 2
+                )
+                select to_char(months.month_bucket, 'YYYY-MM') month_key, skill_names.skill,
+                  coalesce(monthly_counts.completed_attempts, 0) completed_attempts
+                from months cross join skill_names
+                left join monthly_counts on monthly_counts.month_bucket = months.month_bucket
+                  and monthly_counts.skill = skill_names.skill
+                order by months.month_bucket, skill_names.skill
+                """, (rs, ignored) -> new MonthlyCompletedAttempts(
+                rs.getString("month_key"), rs.getString("skill"), rs.getInt("completed_attempts")
+        ), studentId);
     }
 
     public StudentAttemptDetailResponse getAttemptDetail(UUID studentId, UUID attemptId) {

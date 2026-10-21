@@ -10,7 +10,11 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.YearMonth;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,6 +44,71 @@ class StudentLearningInsightsServiceIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbc;
+
+    @Test
+    void countsCompletedAttemptsByVietnamMonthBeyondRecentAttemptLimit() {
+        UUID studentId = UUID.randomUUID();
+        UUID publisherId = UUID.randomUUID();
+        UUID testId = UUID.randomUUID();
+        UUID versionId = UUID.randomUUID();
+        ZoneId vietnam = ZoneId.of("Asia/Ho_Chi_Minh");
+        OffsetDateTime monthStart = LocalDate.now(vietnam).withDayOfMonth(1).atStartOfDay(vietnam).toOffsetDateTime();
+        OffsetDateTime currentMonth = monthStart.plusMinutes(30).withOffsetSameInstant(ZoneOffset.UTC);
+        OffsetDateTime previousMonth = monthStart.minusMinutes(30).withOffsetSameInstant(ZoneOffset.UTC);
+
+        jdbc.update("insert into public.profiles(id, full_name, email) values (?, 'Monthly student', ?)",
+                studentId, studentId + "@example.test");
+        jdbc.update("insert into public.profiles(id, full_name, email) values (?, 'Monthly publisher', ?)",
+                publisherId, publisherId + "@example.test");
+        jdbc.update("insert into public.student_profiles(user_id, student_code) values (?, ?)",
+                studentId, "HV-" + studentId.toString().substring(0, 8));
+        jdbc.update("""
+                insert into public.tests(id, title, duration_minutes, status, created_by, primary_skill, test_type)
+                values (?, 'Monthly reading', 60, 'PUBLISHED', ?, 'READING', 'SINGLE_SKILL')
+                """, testId, publisherId);
+        jdbc.update("""
+                insert into public.test_versions(
+                  id, test_id, version_number, version_label, title, duration_minutes,
+                  primary_skill, test_type, published_by
+                ) values (?, ?, 1, 'v1', 'Monthly reading', 60, 'READING', 'SINGLE_SKILL', ?)
+                """, versionId, testId, publisherId);
+
+        for (short attemptNo = 1; attemptNo <= 52; attemptNo++) {
+            jdbc.update("""
+                    insert into public.test_attempts(
+                      test_version_id, student_id, attempt_no, status, attempt_origin,
+                      started_at, submitted_at, expires_at, last_saved_at
+                    ) values (?, ?, ?, 'SUBMITTED', 'SELF_PRACTICE', ?, ?, ?, ?)
+                    """, versionId, studentId, attemptNo, currentMonth.minusMinutes(20), currentMonth,
+                    currentMonth.plusMinutes(40), currentMonth);
+        }
+        jdbc.update("""
+                insert into public.test_attempts(
+                  test_version_id, student_id, attempt_no, status, attempt_origin,
+                  started_at, expires_at, last_saved_at
+                ) values (?, ?, 53, 'EXPIRED', 'SELF_PRACTICE', ?, ?, ?)
+                """, versionId, studentId, previousMonth.minusMinutes(20),
+                previousMonth.plusMinutes(10), previousMonth);
+        jdbc.update("""
+                insert into public.test_attempts(
+                  test_version_id, student_id, attempt_no, status, attempt_origin,
+                  started_at, expires_at, last_saved_at
+                ) values (?, ?, 54, 'IN_PROGRESS', 'SELF_PRACTICE', ?, ?, ?)
+                """, versionId, studentId, currentMonth, currentMonth.plusMinutes(60), currentMonth);
+
+        var insights = service.get(studentId);
+        assertThat(insights.attempts()).hasSize(50);
+        assertThat(insights.monthlyCompletedAttempts()).hasSize(24);
+        assertThat(insights.monthlyCompletedAttempts().stream()
+                .filter(item -> item.skill().equals("READING") && item.month().equals(YearMonth.from(monthStart).toString()))
+                .findFirst().orElseThrow().completedAttempts()).isEqualTo(52);
+        assertThat(insights.monthlyCompletedAttempts().stream()
+                .filter(item -> item.skill().equals("READING") && item.month().equals(YearMonth.from(monthStart.minusMonths(1)).toString()))
+                .findFirst().orElseThrow().completedAttempts()).isEqualTo(1);
+        assertThat(insights.monthlyCompletedAttempts().stream()
+                .filter(item -> item.skill().equals("WRITING"))
+                .allMatch(item -> item.completedAttempts() == 0)).isTrue();
+    }
 
     @Test
     void includesRecordedTestAttemptTimeInStudyMinutes() {

@@ -26,7 +26,7 @@ public class StudentLearningInsightsController {
 
     @GetMapping
     @PreAuthorize("@permissionPolicy.has(authentication, 'student.profile.read')")
-    @Operation(summary = "Tổng hợp lịch sử làm bài, năng lực và lỗi lặp lại của học viên")
+    @Operation(summary = "Tổng hợp lịch sử, số bài theo tháng, năng lực và lỗi lặp lại của học viên")
     public StudentLearningInsightsResponse get(@PathVariable UUID studentId) {
         return service.get(studentId);
     }
