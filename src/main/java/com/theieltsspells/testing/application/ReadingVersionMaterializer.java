@@ -321,6 +321,7 @@ class ReadingVersionMaterializer {
         copy(group, config, "wordLimitRule");
         copy(group, config, "requiredAnswerCount");
         copy(group, config, "allowOptionReused");
+        copy(group, config, "gapFillTitle");
         copy(group, config, "gapFillTemplate");
         copy(group, config, "gapFillLayout");
         copy(group, config, "illustration");

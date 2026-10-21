@@ -459,9 +459,12 @@ final class StrictReadingDraftValidator {
             placeholders.add(Integer.parseInt(matcher.group(1)));
         }
         var unique = new LinkedHashSet<>(placeholders);
-        if (unique.size() != placeholders.size() || !unique.equals(questionNumbers)) {
+        var relativeSlots = new LinkedHashSet<Integer>();
+        for (int slot = 1; slot <= questionNumbers.size(); slot++) relativeSlots.add(slot);
+        if (unique.size() != placeholders.size()
+                || (!unique.equals(questionNumbers) && !unique.equals(relativeSlots))) {
             error(issues, targetId + "-gap-template", sectionTitle, null,
-                    "Mẫu Gap filling phải chứa đúng một vị trí [[n]] cho từng số câu hỏi của nhóm.", targetId);
+                    "Mẫu Gap filling phải chứa đúng một vị trí [[n]] cho từng ô trống của nhóm.", targetId);
         }
     }
 
