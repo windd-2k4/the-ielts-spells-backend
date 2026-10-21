@@ -6,8 +6,10 @@ import com.theieltsspells.shared.storage.FileStorage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -15,6 +17,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
+import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -30,7 +33,15 @@ public class FileStorageService implements FileStorage {
 
     public FileStorageService(FileStorageProperties properties, RestClient.Builder restClientBuilder) {
         this.properties = properties;
-        this.httpClient = restClientBuilder.build();
+        HttpClient jdkClient = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_2)
+                .connectTimeout(Duration.ofSeconds(60))
+                .build();
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(jdkClient);
+        factory.setReadTimeout(Duration.ofMinutes(10));
+        this.httpClient = restClientBuilder
+                .requestFactory(factory)
+                .build();
     }
 
     @Value("${app.supabase.url:}")
@@ -105,8 +116,8 @@ public class FileStorageService implements FileStorage {
                     throw new BusinessRuleException("Không thể xóa tệp trên Supabase Storage");
                 }
             }
-        } catch (IOException | RestClientResponseException exception) {
-            throw new BusinessRuleException("Không thể xóa tệp lưu trữ");
+        } catch (IOException | RestClientException exception) {
+            throw new BusinessRuleException("Không thể xóa tệp lưu trữ: " + exception.getMessage());
         }
     }
 
@@ -129,7 +140,7 @@ public class FileStorageService implements FileStorage {
                     .uri(objectUri(properties.getSupabaseBucket(), objectPath))
                     .header("Authorization", "Bearer " + key)
                     .header("apikey", key)
-                    .header("x-upsert", "false")
+                    .header("x-upsert", "true")
                     .contentType(MediaType.parseMediaType(contentType(file)))
                     .body(body)
                     .exchange((request, response) -> response.getStatusCode().value());
@@ -137,8 +148,8 @@ public class FileStorageService implements FileStorage {
                 throw new BusinessRuleException("Supabase Storage từ chối tải tệp lên: HTTP " + status);
             }
             return new StoredFile("SUPABASE", properties.getSupabaseBucket(), objectPath);
-        } catch (IOException | RestClientResponseException exception) {
-            throw new BusinessRuleException("Không thể tải tệp lên Supabase Storage");
+        } catch (IOException | RestClientException exception) {
+            throw new BusinessRuleException("Không thể tải tệp lên Supabase Storage: " + exception.getMessage());
         }
     }
 
@@ -161,8 +172,8 @@ public class FileStorageService implements FileStorage {
                     .body(byte[].class);
             if (body == null) throw new BusinessRuleException("Supabase Storage trả về tệp rỗng");
             return new ByteArrayInputStream(body);
-        } catch (RestClientResponseException exception) {
-            throw new BusinessRuleException("Không thể tải tệp từ Supabase Storage");
+        } catch (RestClientException exception) {
+            throw new BusinessRuleException("Không thể tải tệp từ Supabase Storage: " + exception.getMessage());
         }
     }
 
