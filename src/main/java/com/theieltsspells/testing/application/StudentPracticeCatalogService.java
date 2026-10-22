@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.persistence.enums.SkillType;
+import com.theieltsspells.shared.util.HtmlSanitizer;
 import com.theieltsspells.shared.web.PageResponse;
 import com.theieltsspells.testing.application.dto.StudentPracticeCatalogItemResponse;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +26,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class StudentPracticeCatalogService {
+    private static final int CATALOG_DESCRIPTION_MAX_LENGTH = 160;
     private static final Set<SkillType> IELTS_SKILLS = Set.of(
             SkillType.READING, SkillType.LISTENING, SkillType.WRITING, SkillType.SPEAKING
     );
@@ -192,7 +194,7 @@ public class StudentPracticeCatalogService {
                 rs.getObject("test_version_id", UUID.class),
                 rs.getString("code"),
                 rs.getString("title"),
-                rs.getString("description"),
+                catalogDescription(skill, content),
                 skill,
                 rs.getString("test_type"),
                 text(content.get("format"), rs.getString("test_type")),
@@ -317,6 +319,69 @@ public class StudentPracticeCatalogService {
 
     private String text(Object value, String fallback) {
         return value instanceof String text && !text.isBlank() ? text : fallback;
+    }
+
+    String catalogDescription(SkillType skill, Map<String, Object> content) {
+        String source = switch (skill) {
+            case READING -> firstField(maps(content.get("passages")), "content");
+            case LISTENING -> listeningDescription(content);
+            case WRITING -> firstField(
+                    maps(content.containsKey("tasks") ? content.get("tasks") : content.get("writingTasks")),
+                    "promptHtml"
+            );
+            case SPEAKING -> speakingDescription(content);
+            default -> "";
+        };
+        String plainText = HtmlSanitizer.stripToPlainText(source).replaceAll("\\s+", " ").trim();
+        if (plainText.isBlank()) return "Đề luyện " + skill.name().toLowerCase(Locale.ROOT) + " theo định dạng IELTS.";
+        if (plainText.length() <= CATALOG_DESCRIPTION_MAX_LENGTH) return plainText;
+
+        int end = plainText.lastIndexOf(' ', CATALOG_DESCRIPTION_MAX_LENGTH - 1);
+        if (end < CATALOG_DESCRIPTION_MAX_LENGTH / 2) end = CATALOG_DESCRIPTION_MAX_LENGTH - 1;
+        return plainText.substring(0, end).stripTrailing() + "…";
+    }
+
+    private String listeningDescription(Map<String, Object> content) {
+        Object source = content.containsKey("parts") ? content.get("parts") : content.get("listeningParts");
+        for (var part : maps(source)) {
+            for (var group : maps(part.get("questionGroups"))) {
+                String groupContent = firstNonBlank(
+                        text(group.get("gapFillTitle"), ""),
+                        text(group.get("gapFillTemplate"), ""),
+                        firstField(maps(group.get("questions")), "prompt"),
+                        text(group.get("instructions"), "")
+                );
+                if (!groupContent.isBlank()) return groupContent;
+            }
+        }
+        return "";
+    }
+
+    private String speakingDescription(Map<String, Object> content) {
+        for (var part : maps(content.get("parts"))) {
+            String partContent = firstNonBlank(
+                    firstField(maps(part.get("questions")), "promptText"),
+                    text(part.get("cueCardPromptHtml"), ""),
+                    text(part.get("topicTitle"), "")
+            );
+            if (!partContent.isBlank()) return partContent;
+        }
+        return "";
+    }
+
+    private String firstField(List<Map<String, Object>> items, String field) {
+        return items.stream()
+                .map(item -> text(item.get(field), ""))
+                .filter(value -> !value.isBlank())
+                .findFirst()
+                .orElse("");
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) return value;
+        }
+        return "";
     }
 
     Map<String, Object> catalogCover(SkillType skill, Map<String, Object> content) {

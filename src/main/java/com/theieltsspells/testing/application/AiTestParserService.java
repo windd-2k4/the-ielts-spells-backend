@@ -336,6 +336,7 @@ public class AiTestParserService {
                     ? positiveInt(source.get("requiredAnswerCount"), 2) : null);
             group.put("sharedOptions", sharedOptions);
             group.put("allowOptionReused", booleanValue(source.get("allowOptionReused")));
+            if (source.get("gapFillTitle") != null) group.put("gapFillTitle", text(source.get("gapFillTitle")));
             if (source.get("gapFillTemplate") != null) group.put("gapFillTemplate", text(source.get("gapFillTemplate")));
             group.put("gapFillLayout", "LIST".equals(text(source.get("gapFillLayout"))) ? "LIST" : "PARAGRAPH");
             group.put("questions", questions);
