@@ -112,6 +112,12 @@ class TestDraftValidationService {
                         "Chưa tải biểu đồ, bản đồ hoặc hình quy trình của đề bài.", "test-builder-workspace");
             }
             if (taskNo == 1 && !isBlank(text(task.get("imageUrl")))
+                    && isBlank(text(task.get("imageAssetId")))) {
+                error(issues, "writing-1-image-asset", title, null,
+                        "Ảnh Task 1 phải được tải vào thư viện để AI có thể đọc trực tiếp.",
+                        "test-builder-workspace");
+            }
+            if (taskNo == 1 && !isBlank(text(task.get("imageUrl")))
                     && isBlank(text(task.get("imageAltText")))) {
                 error(issues, "writing-1-image-alt", title, null,
                         "Chưa nhập mô tả cho hình đề bài.", "test-builder-workspace");

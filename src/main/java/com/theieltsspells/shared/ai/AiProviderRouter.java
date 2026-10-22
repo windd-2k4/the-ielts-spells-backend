@@ -37,6 +37,7 @@ public class AiProviderRouter {
                          AiGenerationRequest request, AiResultDecoder<T> decoder) {
         Throwable lastFailure = null;
         boolean configuredProviderFound = false;
+        boolean capableProviderFound = false;
 
         for (AiProvider provider : providerOrder) {
             AiModelClient client = clients.get(provider);
@@ -45,6 +46,11 @@ public class AiProviderRouter {
                 continue;
             }
             configuredProviderFound = true;
+            if (!request.images().isEmpty() && !client.supportsImages()) {
+                log.debug("AI provider {} does not support image input; skipping it for {}", provider, taskType);
+                continue;
+            }
+            capableProviderFound = true;
             if (providerCircuitOpen(provider)) {
                 log.debug("AI provider circuit is open for {}; trying the next provider", provider);
                 continue;
@@ -108,6 +114,9 @@ public class AiProviderRouter {
 
         if (!configuredProviderFound) {
             throw new AiRoutingException("No AI provider is configured");
+        }
+        if (!capableProviderFound) {
+            throw new AiRoutingException("No configured AI provider supports image input");
         }
         throw new AiRoutingException("All configured AI routes failed", lastFailure);
     }

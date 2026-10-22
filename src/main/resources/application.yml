@@ -82,6 +82,10 @@ app:
     max-upload-bytes: ${FILE_STORAGE_MAX_UPLOAD_BYTES:52428800}
     local-directory: ${FILE_STORAGE_LOCAL_DIRECTORY:./data/uploads}
     supabase-bucket: ${SUPABASE_STORAGE_BUCKET:learning-library}
+  writing-evaluation:
+    enabled: ${WRITING_EVALUATION_ENABLED:true}
+    poll-millis: ${WRITING_EVALUATION_POLL_MILLIS:10000}
+    daily-limit: ${WRITING_EVALUATION_DAILY_LIMIT:5}
   ai:
     connect-timeout-seconds: ${AI_CONNECT_TIMEOUT_SECONDS:10}
     import-timeout-seconds: ${AI_IMPORT_TIMEOUT_SECONDS:${AI_READ_TIMEOUT_SECONDS:120}}

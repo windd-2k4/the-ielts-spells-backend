@@ -9,6 +9,7 @@ public record WritingTaskResponse(
         String imageAltText,
         int minWords,
         int suggestedTimeMinutes,
-        String responseMode
+        String responseMode,
+        String sampleBand8Answer
 ) {
 }

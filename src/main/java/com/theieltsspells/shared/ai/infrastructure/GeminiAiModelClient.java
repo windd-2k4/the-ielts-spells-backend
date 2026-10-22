@@ -14,6 +14,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientException;
 
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -35,6 +36,11 @@ public class GeminiAiModelClient extends AbstractHttpAiModelClient implements Ai
     }
 
     @Override
+    public boolean supportsImages() {
+        return true;
+    }
+
+    @Override
     public AiGenerationResult generate(String model, AiGenerationRequest request) {
         Map<String, Object> generationConfig = new LinkedHashMap<>();
         if (request.responseMimeType() != null && !request.responseMimeType().isBlank()) {
@@ -47,10 +53,12 @@ public class GeminiAiModelClient extends AbstractHttpAiModelClient implements Ai
         if (request.disableReasoning() && (model.startsWith("gemini-2.5") || model.startsWith("gemini-2.0"))) {
             generationConfig.put("thinkingConfig", Map.of("thinkingBudget", 0));
         }
+        var parts = new ArrayList<Map<String, Object>>();
+        parts.add(Map.of("text", request.systemPrompt() + "\n" + request.userPrompt()));
+        request.images().forEach(image -> parts.add(Map.of("inlineData", Map.of(
+                "mimeType", image.mimeType(), "data", image.base64Data()))));
         Map<String, Object> body = Map.of(
-                "contents", List.of(Map.of("parts", List.of(Map.of(
-                        "text", request.systemPrompt() + "\n" + request.userPrompt()
-                )))),
+                "contents", List.of(Map.of("parts", parts)),
                 "generationConfig", generationConfig
         );
 
@@ -76,13 +84,13 @@ public class GeminiAiModelClient extends AbstractHttpAiModelClient implements Ai
                 throw new AiProviderException(AiProviderException.Kind.INVALID_RESPONSE,
                         "Gemini response was truncated");
             }
-            List<?> parts = list(map(candidate.get("content")).get("parts"));
-            if (parts.isEmpty()) {
+            List<?> responseParts = list(map(candidate.get("content")).get("parts"));
+            if (responseParts.isEmpty()) {
                 throw new AiProviderException(AiProviderException.Kind.INVALID_RESPONSE,
                         "Gemini response has no content");
             }
             StringBuilder contentBuilder = new StringBuilder();
-            for (Object p : parts) {
+            for (Object p : responseParts) {
                 Map<?, ?> partMap = map(p);
                 if (Boolean.TRUE.equals(partMap.get("thought"))) {
                     continue;

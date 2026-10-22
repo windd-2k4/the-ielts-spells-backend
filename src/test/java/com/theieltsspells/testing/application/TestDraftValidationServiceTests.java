@@ -56,6 +56,7 @@ class TestDraftValidationServiceTests {
         var content = Map.<String, Object>of("tasks", List.of(
                 Map.of("taskNo", 1, "promptHtml", "<p>Summarise the chart.</p>", "minWords", 150,
                         "suggestedTimeMinutes", 20, "imageUrl", "/api/v1/admin/library/media/chart/content",
+                        "imageAssetId", "2a79c229-98d6-4b51-b303-822051b8d124",
                         "imageAltText", "Biểu đồ đường thể hiện số liệu theo thời gian"),
                 Map.of("taskNo", 2, "promptHtml", "<p>Discuss both views.</p>", "minWords", 250, "suggestedTimeMinutes", 40)
         ));

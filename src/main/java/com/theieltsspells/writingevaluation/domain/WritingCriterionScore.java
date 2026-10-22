@@ -48,7 +48,7 @@ public class WritingCriterionScore {
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "evidence", nullable = false)
-    private Map<String, Object> evidence;
+    private List<String> evidence;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "evaluation_id", insertable = false, updatable = false)

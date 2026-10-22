@@ -11,7 +11,8 @@ public enum EvaluationStatus {
     AI_COMPLETED("ai_completed"),
     TEACHER_REVIEWED("teacher_reviewed"),
     PUBLISHED("published"),
-    FAILED("failed");
+    FAILED("failed"),
+    NOT_ELIGIBLE("not_eligible");
 
     private final String databaseValue;
 }

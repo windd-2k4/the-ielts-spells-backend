@@ -6,7 +6,7 @@ import com.theieltsspells.shared.storage.FileStorage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -17,7 +17,6 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -33,11 +32,8 @@ public class FileStorageService implements FileStorage {
 
     public FileStorageService(FileStorageProperties properties, RestClient.Builder restClientBuilder) {
         this.properties = properties;
-        HttpClient jdkClient = HttpClient.newBuilder()
-                .version(HttpClient.Version.HTTP_2)
-                .connectTimeout(Duration.ofSeconds(60))
-                .build();
-        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(jdkClient);
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofSeconds(60));
         factory.setReadTimeout(Duration.ofMinutes(10));
         this.httpClient = restClientBuilder
                 .requestFactory(factory)

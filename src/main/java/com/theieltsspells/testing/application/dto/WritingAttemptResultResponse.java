@@ -1,5 +1,6 @@
 package com.theieltsspells.testing.application.dto;
 
+import com.theieltsspells.writingevaluation.application.dto.WritingTeacherAnnotation;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -11,18 +12,30 @@ public record WritingAttemptResultResponse(
         String status,
         OffsetDateTime submittedAt,
         boolean resultVisible,
+        String attemptOrigin,
+        boolean aiEligible,
+        BigDecimal overallBandAi,
+        BigDecimal overallBandTeacher,
         List<WritingTaskResponse> tasks,
         List<WritingSavedResponse> responses,
         List<Evaluation> evaluations
 ) {
     public record Evaluation(
             String taskKey,
-            String status,
-            BigDecimal overallBand,
-            Map<String, BigDecimal> criterionBands,
-            List<String> strengths,
-            List<String> improvements,
-            OffsetDateTime publishedAt
+            String aiStatus,
+            BigDecimal overallBandAi,
+            Map<String, BigDecimal> aiCriterionBands,
+            List<String> aiStrengths,
+            List<String> aiImprovements,
+            OffsetDateTime aiCompletedAt,
+            String teacherStatus,
+            BigDecimal overallBandTeacher,
+            Map<String, BigDecimal> teacherCriterionBands,
+            List<String> teacherStrengths,
+            List<String> teacherImprovements,
+            OffsetDateTime teacherPublishedAt,
+            String teacherEditedText,
+            List<WritingTeacherAnnotation> teacherAnnotations
     ) {
     }
 }

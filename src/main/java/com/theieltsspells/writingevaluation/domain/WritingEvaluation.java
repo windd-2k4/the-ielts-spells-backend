@@ -47,6 +47,24 @@ public class WritingEvaluation {
     @Column(name = "essay_text", nullable = false)
     private String essayText;
 
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "task_context", nullable = false)
+    private Map<String, Object> taskContext;
+
+    @Column(name = "processing_token")
+    private UUID processingToken;
+
+    @Column(name = "processing_started_at")
+    private OffsetDateTime processingStartedAt;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "ai_strengths", nullable = false)
+    private List<String> aiStrengths;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "ai_improvements", nullable = false)
+    private List<String> aiImprovements;
+
     @Enumerated(EnumType.STRING)
     @JdbcTypeCode(SqlTypes.NAMED_ENUM)
     @Column(name = "status", nullable = false)
@@ -78,6 +96,16 @@ public class WritingEvaluation {
     @Column(name = "improvements", nullable = false)
     private List<String> improvements;
 
+    @Column(name = "teacher_edited_text")
+    private String teacherEditedText;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "teacher_annotations", nullable = false)
+    private List<Map<String, Object>> teacherAnnotations;
+
+    @Column(name = "teacher_revision", nullable = false)
+    private Integer teacherRevision;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "detected_errors", nullable = false)
     private List<String> detectedErrors;
@@ -94,6 +122,12 @@ public class WritingEvaluation {
 
     @Column(name = "error_message")
     private String errorMessage;
+
+    @Column(name = "teacher_status", nullable = false)
+    private String teacherStatus;
+
+    @Column(name = "ai_completed_at")
+    private OffsetDateTime aiCompletedAt;
 
     @Column(name = "reviewed_by")
     private UUID reviewedBy;

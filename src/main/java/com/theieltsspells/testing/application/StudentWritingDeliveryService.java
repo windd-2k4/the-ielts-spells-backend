@@ -6,13 +6,17 @@ import com.theieltsspells.academic.application.AcademicMembershipService;
 import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.application.ConflictException;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
+import com.theieltsspells.shared.application.WritingSubmittedEvent;
+import com.theieltsspells.shared.WritingBandScorePolicy;
 import com.theieltsspells.testing.application.dto.SaveWritingResponsesRequest;
 import com.theieltsspells.testing.application.dto.StudentWritingAssignmentResponse;
 import com.theieltsspells.testing.application.dto.StudentWritingAttemptResponse;
 import com.theieltsspells.testing.application.dto.WritingAttemptResultResponse;
 import com.theieltsspells.testing.application.dto.WritingSavedResponse;
 import com.theieltsspells.testing.application.dto.WritingTaskResponse;
+import com.theieltsspells.writingevaluation.application.dto.WritingTeacherAnnotation;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,6 +40,7 @@ public class StudentWritingDeliveryService {
     private final JdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
     private final AcademicMembershipService memberships;
+    private final ApplicationEventPublisher events;
 
     public List<StudentWritingAssignmentResponse> listAssignments(UUID studentId) {
         return jdbc.query("""
@@ -230,12 +235,22 @@ public class StudentWritingDeliveryService {
             var task = tasks.get(response.taskKey());
             String text = response.text();
             if (task != null && !text.isBlank()) {
-                jdbc.update("""
-                        insert into public.writing_evaluations(test_attempt_response_id, task_type, essay_text,
-                          status, rubric_version, prompt_version)
-                        values (?, ?, ?, 'QUEUED', 'ielts-writing-v1', 'writing-evaluator-v1')
-                        on conflict (test_attempt_response_id) where test_attempt_response_id is not null do nothing
-                        """, response.id(), task.taskNo() == 1 ? "academic_task_1" : "task_2", text);
+                Map<String, Object> taskSource = taskSource(attempt.builderContent(), response.taskKey());
+                String type = task.taskNo() == 2 ? "task_2"
+                        : "GENERAL".equalsIgnoreCase(nullableText(taskSource.get("ieltsFormat")))
+                        ? "general_task_1" : "academic_task_1";
+                var context = new LinkedHashMap<String, Object>();
+                context.put("promptHtml", task.promptHtml());
+                context.put("imageUrl", task.imageUrl() == null ? "" : task.imageUrl());
+                context.put("imageAltText", task.imageAltText() == null ? "" : task.imageAltText());
+                if (nullableText(taskSource.get("imageAssetId")) != null) {
+                    context.put("imageAssetId", nullableText(taskSource.get("imageAssetId")));
+                }
+                context.put("taskNo", task.taskNo());
+                context.put("minWords", task.minWords());
+                context.put("testVersionId", attempt.testVersionId().toString());
+                context.put("taskKey", task.taskKey());
+                events.publishEvent(new WritingSubmittedEvent(response.id(), type, text, context));
             }
         }
     }
@@ -249,33 +264,98 @@ public class StudentWritingDeliveryService {
 
     private WritingAttemptResultResponse result(AttemptContext attempt) {
         boolean visible = attempt.showResultAfterSubmit();
+        List<WritingTaskResponse> tasks = tasks(attempt.builderContent(), visible);
+        List<WritingAttemptResultResponse.Evaluation> evaluations = evaluations(attempt.id());
+        if (!visible) evaluations = evaluations.stream().map(value -> new WritingAttemptResultResponse.Evaluation(
+                value.taskKey(), value.aiStatus(), null, Map.of(), List.of(), List.of(), null,
+                value.teacherStatus(), null, Map.of(), List.of(), List.of(), null, null, List.of())).toList();
+        int requestable = (int) evaluations.stream().filter(value -> "NOT_ELIGIBLE".equals(value.aiStatus())).count();
         return new WritingAttemptResultResponse(attempt.id(), attempt.status(), attempt.submittedAt(), visible,
-                tasks(attempt.builderContent()), responses(attempt.id()), visible ? publishedEvaluations(attempt.id()) : List.of());
+                attempt.origin(), visible && requestable > 0 && hasAiBudget(attempt.studentId(), requestable),
+                fullBand(tasks, evaluations, true), fullBand(tasks, evaluations, false),
+                tasks, responses(attempt.id()), evaluations);
     }
 
-    private List<WritingAttemptResultResponse.Evaluation> publishedEvaluations(UUID attemptId) {
+    private BigDecimal fullBand(List<WritingTaskResponse> tasks,
+                                List<WritingAttemptResultResponse.Evaluation> evaluations,
+                                boolean ai) {
+        if (tasks.size() != 2) return null;
+        var byTask = new java.util.HashMap<String, WritingAttemptResultResponse.Evaluation>();
+        evaluations.forEach(value -> byTask.put(value.taskKey(), value));
+        WritingAttemptResultResponse.Evaluation taskOne = null;
+        WritingAttemptResultResponse.Evaluation taskTwo = null;
+        for (var task : tasks) {
+            if (task.taskNo() == 1) taskOne = byTask.get(task.taskKey());
+            if (task.taskNo() == 2) taskTwo = byTask.get(task.taskKey());
+        }
+        if (taskOne == null || taskTwo == null) return null;
+        if (!ai && (!"PUBLISHED".equals(taskOne.teacherStatus()) || !"PUBLISHED".equals(taskTwo.teacherStatus()))) {
+            return null;
+        }
+        var first = ai ? taskOne.aiCriterionBands() : taskOne.teacherCriterionBands();
+        var second = ai ? taskTwo.aiCriterionBands() : taskTwo.teacherCriterionBands();
+        if (first.size() != 4 || second.size() != 4) return null;
+        return WritingBandScorePolicy.fullWritingBand(first.values(), second.values());
+    }
+
+    private List<WritingAttemptResultResponse.Evaluation> evaluations(UUID attemptId) {
         return jdbc.query("""
-                select response.question_key, evaluation.id, evaluation.status::text status,
-                  coalesce(evaluation.overall_band_teacher, evaluation.overall_band_ai) overall_band,
-                  evaluation.strengths::text strengths, evaluation.improvements::text improvements,
-                  evaluation.published_at
+                select response.question_key, evaluation.id, evaluation.status::text ai_status,
+                  evaluation.overall_band_ai, evaluation.ai_strengths::text ai_strengths,
+                  evaluation.ai_improvements::text ai_improvements, evaluation.ai_completed_at,
+                  evaluation.teacher_status,
+                  case when evaluation.teacher_status='PUBLISHED' then evaluation.overall_band_teacher end overall_band_teacher,
+                  case when evaluation.teacher_status='PUBLISHED' then evaluation.strengths else '[]'::jsonb end::text teacher_strengths,
+                  case when evaluation.teacher_status='PUBLISHED' then evaluation.improvements else '[]'::jsonb end::text teacher_improvements,
+                  case when evaluation.teacher_status='PUBLISHED' then evaluation.published_at end published_at,
+                  case when evaluation.teacher_status='PUBLISHED' then coalesce(evaluation.teacher_published_text, evaluation.teacher_edited_text) end teacher_edited_text,
+                  case when evaluation.teacher_status='PUBLISHED' then coalesce(evaluation.teacher_published_annotations, evaluation.teacher_annotations) else '[]'::jsonb end::text teacher_annotations
                 from public.writing_evaluations evaluation
                 join public.test_attempt_responses response on response.id=evaluation.test_attempt_response_id
-                where response.attempt_id=? and evaluation.status='PUBLISHED'
+                where response.attempt_id=?
                 order by response.question_key
                 """, (rs, ignored) -> new WritingAttemptResultResponse.Evaluation(
-                rs.getString("question_key"), rs.getString("status"), rs.getBigDecimal("overall_band"),
-                criterionBands(rs.getObject("id", UUID.class)), strings(rs.getString("strengths")),
-                strings(rs.getString("improvements")), rs.getObject("published_at", OffsetDateTime.class)
+                rs.getString("question_key"), rs.getString("ai_status"), rs.getBigDecimal("overall_band_ai"),
+                criterionBands(rs.getObject("id", UUID.class), "ai_band"), strings(rs.getString("ai_strengths")),
+                strings(rs.getString("ai_improvements")), rs.getObject("ai_completed_at", OffsetDateTime.class),
+                rs.getString("teacher_status"), rs.getBigDecimal("overall_band_teacher"),
+                "PUBLISHED".equals(rs.getString("teacher_status"))
+                        ? criterionBands(rs.getObject("id", UUID.class), "teacher_band") : Map.of(),
+                "PUBLISHED".equals(rs.getString("teacher_status"))
+                        ? strings(rs.getString("teacher_strengths")) : List.of(),
+                "PUBLISHED".equals(rs.getString("teacher_status"))
+                        ? strings(rs.getString("teacher_improvements")) : List.of(),
+                rs.getObject("published_at", OffsetDateTime.class),
+                rs.getString("teacher_edited_text"),
+                "PUBLISHED".equals(rs.getString("teacher_status")) ? annotations(rs.getString("teacher_annotations")) : List.of()
         ), attemptId);
     }
 
-    private Map<String, BigDecimal> criterionBands(UUID evaluationId) {
+    private boolean hasAiBudget(UUID studentId, int requestedCount) {
+        var entitlements = jdbc.query("""
+                select unlimited, monthly_limit from public.writing_ai_entitlements
+                where student_id=? and enabled and active_from <= now()
+                  and (expires_at is null or expires_at > now())
+                """, (rs, ignored) -> new AiBudget(rs.getBoolean("unlimited"),
+                rs.getObject("monthly_limit", Integer.class)), studentId);
+        if (entitlements.isEmpty()) return false;
+        if (entitlements.getFirst().unlimited()) return true;
+        Long used = jdbc.queryForObject("""
+                select count(*) from public.writing_evaluations evaluation
+                join public.test_attempt_responses response on response.id=evaluation.test_attempt_response_id
+                join public.test_attempts attempt on attempt.id=response.attempt_id
+                where attempt.student_id=?
+                  and evaluation.ai_requested_at >= date_trunc('month', now())
+                """, Long.class, studentId);
+        Integer limit = entitlements.getFirst().monthlyLimit();
+        return used != null && limit != null && used + requestedCount <= limit;
+    }
+
+    private Map<String, BigDecimal> criterionBands(UUID evaluationId, String column) {
         var result = new LinkedHashMap<String, BigDecimal>();
-        jdbc.query("""
-                select criterion, coalesce(teacher_band, ai_band) band from public.writing_criterion_scores
-                where evaluation_id=? order by criterion
-                """, (org.springframework.jdbc.core.RowCallbackHandler) rs ->
+        jdbc.query("select criterion, " + column + " band from public.writing_criterion_scores " +
+                "where evaluation_id=? and " + column + " is not null order by criterion",
+                (org.springframework.jdbc.core.RowCallbackHandler) rs ->
                 result.put(rs.getString("criterion"), rs.getBigDecimal("band")), evaluationId);
         return result;
     }
@@ -294,6 +374,11 @@ public class StudentWritingDeliveryService {
 
     @SuppressWarnings("unchecked")
     private List<WritingTaskResponse> tasks(Map<String, Object> content) {
+        return tasks(content, false);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<WritingTaskResponse> tasks(Map<String, Object> content, boolean includeSample) {
         Object source = content.containsKey("tasks") ? content.get("tasks") : content.get("writingTasks");
         if (!(source instanceof List<?> values)) return List.of();
         var tasks = new ArrayList<WritingTaskResponse>();
@@ -307,10 +392,27 @@ public class StudentWritingDeliveryService {
                     text(task.get("promptHtml"), ""), nullableText(task.get("imageUrl")),
                     nullableText(task.get("imageAltText")), number(task.get("minWords"), taskNo == 1 ? 150 : 250),
                     number(task.get("suggestedTimeMinutes"), taskNo == 1 ? 20 : 40),
-                    text(task.get("responseMode"), "FREEFORM")));
+                    text(task.get("responseMode"), "FREEFORM"), includeSample
+                        ? com.theieltsspells.shared.util.HtmlSanitizer.sanitize(nullableText(task.get("sampleBand8Answer"))) : null));
             index++;
         }
         return List.copyOf(tasks);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> taskSource(Map<String, Object> content, String taskKey) {
+        Object source = content.containsKey("tasks") ? content.get("tasks") : content.get("writingTasks");
+        if (!(source instanceof List<?> values)) return Map.of();
+        int index = 0;
+        for (Object value : values) {
+            if (value instanceof Map<?, ?> raw) {
+                var task = (Map<String, Object>) raw;
+                int taskNo = number(task.get("taskNo"), index + 1);
+                if (taskKey.equals(text(task.get("id"), "writing-task-" + taskNo))) return task;
+            }
+            index++;
+        }
+        return Map.of();
     }
 
     private UUID activeAttempt(String predicate, UUID value, UUID studentId) {
@@ -446,6 +548,11 @@ public class StudentWritingDeliveryService {
         }
     }
 
+    private List<WritingTeacherAnnotation> annotations(String value) {
+        try { return objectMapper.readValue(value, new TypeReference<>() {}); }
+        catch (Exception ignored) { return List.of(); }
+    }
+
     private String json(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
@@ -460,6 +567,7 @@ public class StudentWritingDeliveryService {
     private OffsetDateTime now() { return OffsetDateTime.now(ZoneOffset.UTC); }
 
     private record VersionContext(UUID id, int durationMinutes, String skill) { }
+    private record AiBudget(boolean unlimited, Integer monthlyLimit) { }
     private record SubmittedResponse(UUID id, String taskKey, String text) { }
     private record AssignmentContext(UUID id, UUID testVersionId, UUID courseId, OffsetDateTime opensAt,
                                      OffsetDateTime closesAt, short maxAttempts, Integer durationSeconds,

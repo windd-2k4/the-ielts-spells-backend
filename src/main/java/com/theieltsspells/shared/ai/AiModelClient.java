@@ -5,5 +5,9 @@ public interface AiModelClient {
 
     boolean isConfigured();
 
+    default boolean supportsImages() {
+        return false;
+    }
+
     AiGenerationResult generate(String model, AiGenerationRequest request);
 }
