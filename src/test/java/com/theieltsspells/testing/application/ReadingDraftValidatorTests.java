@@ -207,6 +207,27 @@ class ReadingDraftValidatorTests {
     }
 
     @Test
+    void acceptsRelativeGapPlaceholdersForALaterQuestionGroup() {
+        var content = content(group(
+                "TABLE_COMPLETION",
+                Map.of(
+                        "id", "group-8",
+                        "answerSource", "PASSAGE",
+                        "wordLimitRule", "NO MORE THAN TWO WORDS",
+                        "gapFillTemplate", "Row [[1]], then [[2]]"
+                ),
+                List.of(
+                        question("q-8", 8, List.of("water")),
+                        question("q-9", 9, List.of("steam"))
+                )
+        ));
+
+        var issues = new ArrayList<TestValidationIssueResponse>();
+        ReadingDraftValidator.validate(testResponse(content, "SINGLE_SKILL", 20), issues);
+        assertFalse(issues.stream().anyMatch(issue -> issue.id().contains("gap-template")));
+    }
+
+    @Test
     void reportsAllIndependentValidationErrors() {
         var content = content(group(
                 "MULTIPLE_CHOICE",

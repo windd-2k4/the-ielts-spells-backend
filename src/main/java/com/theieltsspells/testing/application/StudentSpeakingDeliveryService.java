@@ -78,7 +78,7 @@ public class StudentSpeakingDeliveryService {
                   and attempt_origin='SELF_PRACTICE'
                 """, Integer.class, testVersionId, studentId);
         var now = now();
-        var expiresAt = now.plusMinutes(Math.max(15, versions.getFirst().durationMinutes()));
+        var expiresAt = now.plusMinutes(Math.max(90, Math.max(1, versions.getFirst().durationMinutes()) * 3));
         UUID attemptId = jdbc.queryForObject("""
                 insert into public.test_attempts(test_assignment_id, test_version_id, student_id, attempt_no,
                   status, started_at, expires_at, last_saved_at, attempt_origin)
@@ -123,7 +123,12 @@ public class StudentSpeakingDeliveryService {
         var pausedRemaining = attempt.pausedRemainingSeconds();
         if ("SELF_PRACTICE".equals(attempt.origin()) && pausedRemaining != null) {
             if (pausedRemaining <= 0) {
-                finalizeAttempt(attempt, "EXPIRED");
+                jdbc.update("""
+                        update public.test_attempts
+                        set expires_at = now() + interval '30 minutes',
+                          paused_remaining_seconds = null, updated_at = now()
+                        where id = ? and status = 'IN_PROGRESS'
+                        """, attempt.id());
             } else {
                 jdbc.update("""
                         update public.test_attempts
@@ -152,10 +157,23 @@ public class StudentSpeakingDeliveryService {
     @Transactional
     public StudentSpeakingAttemptResponse saveResponses(UUID attemptId, SaveSpeakingResponsesRequest request, UUID studentId) {
         var attempt = loadAttempt(attemptId, studentId, true);
+        if ("EXPIRED".equals(attempt.status()) && "SELF_PRACTICE".equals(attempt.origin())) {
+            var extendedExpiresAt = now().plusMinutes(60);
+            jdbc.update("update public.test_attempts set expires_at = ?, status = 'IN_PROGRESS', updated_at = now() where id = ?",
+                    extendedExpiresAt, attempt.id());
+            attempt = loadAttempt(attemptId, studentId, true);
+        }
         assertInProgress(attempt);
         if (isExpired(attempt)) {
-            finalizeAttempt(attempt, "EXPIRED");
-            throw new BusinessRuleException("Đã hết thời gian làm bài");
+            if ("SELF_PRACTICE".equals(attempt.origin())) {
+                var extendedExpiresAt = now().plusMinutes(60);
+                jdbc.update("update public.test_attempts set expires_at = ?, status = 'IN_PROGRESS', updated_at = now() where id = ?",
+                        extendedExpiresAt, attempt.id());
+                attempt = loadAttempt(attemptId, studentId, true);
+            } else {
+                finalizeAttempt(attempt, "EXPIRED");
+                throw new BusinessRuleException("Đã hết thời gian làm bài");
+            }
         }
 
         for (var item : request.responses()) {
@@ -188,6 +206,10 @@ public class StudentSpeakingDeliveryService {
         if ("SUBMITTED".equals(attempt.status()) || "GRADED".equals(attempt.status())) {
             evaluationService.registerAttempt(attemptId, studentId);
             return getResult(attemptId, studentId);
+        }
+        if ("EXPIRED".equals(attempt.status()) && "SELF_PRACTICE".equals(attempt.origin())) {
+            jdbc.update("update public.test_attempts set status = 'IN_PROGRESS', updated_at = now() where id = ?", attempt.id());
+            attempt = loadAttempt(attemptId, studentId, true);
         }
         assertInProgress(attempt);
         finalizeAttempt(attempt, "SUBMITTED");
@@ -459,8 +481,9 @@ public class StudentSpeakingDeliveryService {
     private void finalizeAttempt(AttemptContext attempt, String status) {
         jdbc.update("""
                 update public.test_attempts
-                set status = cast(? as public.test_attempt_status),
+                set status = cast(? as public.attempt_status),
                   submitted_at = coalesce(submitted_at, now()),
+                  last_saved_at = now(),
                   updated_at = now()
                 where id = ?
                 """, status, attempt.id());
