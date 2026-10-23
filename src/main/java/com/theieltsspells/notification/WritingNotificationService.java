@@ -32,15 +32,31 @@ public class WritingNotificationService {
                 evaluationId, teacher ? "WRITING_TEACHER" : "WRITING_TIS");
     }
 
+    @Transactional
+    public void speakingCompleted(UUID evaluationId, boolean teacher) {
+        jdbc.update("""
+                insert into public.notifications(user_id, type, title, body, data)
+                select evaluation.student_id, ?, ?, ?,
+                  jsonb_build_object('attemptId', evaluation.attempt_id, 'evaluationId', evaluation.id, 'skill', 'SPEAKING')
+                from public.speaking_evaluations evaluation where evaluation.id=?
+                  and not exists(select 1 from public.notifications notice
+                    where notice.type=? and notice.data->>'evaluationId'=cast(evaluation.id as text))
+                """, teacher ? "SPEAKING_TEACHER" : "SPEAKING_TIS",
+                teacher ? "Giáo viên đã công bố bài chấm Speaking" : "TIS đã chấm xong bài Speaking",
+                "Điểm và nhận xét bài nói của bạn đã sẵn sàng.", evaluationId,
+                teacher ? "SPEAKING_TEACHER" : "SPEAKING_TIS");
+    }
+
     @Transactional(readOnly = true)
     public List<Notice> unread(UUID studentId) {
         return jdbc.query("""
-                select id, title, body, data->>'attemptId' attempt_id
+                select id, title, body, data->>'attemptId' attempt_id,
+                  coalesce(data->>'skill', 'WRITING') skill
                 from public.notifications where user_id=? and read_at is null
-                  and type in ('WRITING_TIS', 'WRITING_TEACHER')
+                  and type in ('WRITING_TIS', 'WRITING_TEACHER', 'SPEAKING_TIS', 'SPEAKING_TEACHER')
                 order by created_at limit 20
                 """, (rs, row) -> new Notice(rs.getObject("id", UUID.class), rs.getString("title"),
-                rs.getString("body"), rs.getString("attempt_id")), studentId);
+                rs.getString("body"), rs.getString("attempt_id"), rs.getString("skill")), studentId);
     }
 
     @Transactional
@@ -48,5 +64,5 @@ public class WritingNotificationService {
         jdbc.update("update public.notifications set read_at=now() where id=? and user_id=? and read_at is null", id, studentId);
     }
 
-    public record Notice(UUID id, String title, String body, String attemptId) {}
+    public record Notice(UUID id, String title, String body, String attemptId, String skill) {}
 }

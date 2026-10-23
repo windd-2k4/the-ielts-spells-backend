@@ -129,6 +129,31 @@ class AiProviderRouterTests {
         assertThat(gemini.modelsCalled).containsExactly("gemini-chat");
     }
 
+    @Test
+    void audioRequestSkipsTextOnlyProviderAndKeepsOriginalMimeType() {
+        AiRoutingProperties properties = properties();
+        FakeClient nvidia = new FakeClient(AiProvider.NVIDIA,
+                (model, request) -> new AiGenerationResult(AiProvider.NVIDIA, model, "wrong"));
+        FakeClient gemini = new FakeClient(AiProvider.GEMINI,
+                (model, request) -> new AiGenerationResult(AiProvider.GEMINI, model,
+                        request.audio().getFirst().mimeType()));
+        AiProviderRouter router = new AiProviderRouter(List.of(nvidia, gemini), properties);
+        var audio = AiAudioInput.fromDataUrl("data:audio/webm;base64,AQID");
+        var request = new AiGenerationRequest("system", "user", 256, 0.1, "application/json", false,
+                Duration.ofSeconds(2), List.of(), List.of(audio));
+
+        assertThat(router.execute(AiTaskType.CHAT, request, AiGenerationResult::content)).isEqualTo("audio/webm");
+        assertThat(nvidia.modelsCalled).isEmpty();
+        assertThat(gemini.modelsCalled).containsExactly("gemini-chat");
+    }
+
+    @Test
+    void malformedAudioDataUrlIsRejected() {
+        assertThatThrownBy(() -> AiAudioInput.fromDataUrl("https://example.test/audio.webm"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("base64 data URL");
+    }
+
     private AiRoutingProperties properties() {
         AiRoutingProperties properties = new AiRoutingProperties();
         properties.setChatProviders(new ArrayList<>(List.of(AiProvider.NVIDIA, AiProvider.GEMINI)));
@@ -164,6 +189,11 @@ class AiProviderRouterTests {
 
         @Override
         public boolean supportsImages() {
+            return provider == AiProvider.GEMINI;
+        }
+
+        @Override
+        public boolean supportsAudio() {
             return provider == AiProvider.GEMINI;
         }
 

@@ -40,4 +40,23 @@ class HtmlSanitizerTests {
         assertTrue(sanitized.contains("https://example.test/diagram.png"));
         assertTrue(sanitized.contains("rel=\"nofollow noopener noreferrer\""));
     }
+
+    @Test
+    void preservesSupportedWritingFormattingAndRemovesUnsafeCss() {
+        String sanitized = HtmlSanitizer.sanitizeWritingReview("""
+                <p style="text-align: center; position: fixed">
+                  <strong>Clear</strong> <span style="background-color: #fef08a; font-size: 18px; background-image: url(javascript:alert(1))">overview</span>
+                  <script>alert(1)</script>
+                </p>
+                """);
+
+        assertTrue(sanitized.contains("<strong>Clear</strong>"));
+        assertTrue(sanitized.contains("text-align: center"));
+        assertTrue(sanitized.contains("background-color: #fef08a"));
+        assertTrue(sanitized.contains("font-size: 18px"));
+        assertFalse(sanitized.contains("position"));
+        assertFalse(sanitized.contains("background-image"));
+        assertFalse(sanitized.contains("javascript"));
+        assertFalse(sanitized.contains("<script"));
+    }
 }

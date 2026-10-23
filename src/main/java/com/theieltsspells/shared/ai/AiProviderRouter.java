@@ -50,6 +50,10 @@ public class AiProviderRouter {
                 log.debug("AI provider {} does not support image input; skipping it for {}", provider, taskType);
                 continue;
             }
+            if (!request.audio().isEmpty() && !client.supportsAudio()) {
+                log.debug("AI provider {} does not support audio input; skipping it for {}", provider, taskType);
+                continue;
+            }
             capableProviderFound = true;
             if (providerCircuitOpen(provider)) {
                 log.debug("AI provider circuit is open for {}; trying the next provider", provider);
@@ -116,7 +120,7 @@ public class AiProviderRouter {
             throw new AiRoutingException("No AI provider is configured");
         }
         if (!capableProviderFound) {
-            throw new AiRoutingException("No configured AI provider supports image input");
+            throw new AiRoutingException("No configured AI provider supports the requested media input");
         }
         throw new AiRoutingException("All configured AI routes failed", lastFailure);
     }

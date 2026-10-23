@@ -11,7 +11,8 @@ public record AiGenerationRequest(
         String responseMimeType,
         boolean disableReasoning,
         Duration timeout,
-        List<AiImageInput> images
+        List<AiImageInput> images,
+        List<AiAudioInput> audio
 ) {
     public AiGenerationRequest {
         if (systemPrompt == null) systemPrompt = "";
@@ -21,11 +22,19 @@ public record AiGenerationRequest(
             throw new IllegalArgumentException("timeout must be positive");
         }
         images = images == null ? List.of() : List.copyOf(images);
+        audio = audio == null ? List.of() : List.copyOf(audio);
     }
 
     public AiGenerationRequest(String systemPrompt, String userPrompt, int maxOutputTokens, Double temperature,
                                String responseMimeType, boolean disableReasoning, Duration timeout) {
         this(systemPrompt, userPrompt, maxOutputTokens, temperature, responseMimeType, disableReasoning, timeout,
-                List.of());
+                List.of(), List.of());
+    }
+
+    public AiGenerationRequest(String systemPrompt, String userPrompt, int maxOutputTokens, Double temperature,
+                               String responseMimeType, boolean disableReasoning, Duration timeout,
+                               List<AiImageInput> images) {
+        this(systemPrompt, userPrompt, maxOutputTokens, temperature, responseMimeType, disableReasoning, timeout,
+                images, List.of());
     }
 }

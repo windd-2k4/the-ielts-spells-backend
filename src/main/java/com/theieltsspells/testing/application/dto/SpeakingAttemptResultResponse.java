@@ -9,6 +9,7 @@ public record SpeakingAttemptResultResponse(
         String status,
         OffsetDateTime submittedAt,
         boolean resultVisible,
+        boolean aiEligible,
         List<SpeakingPartResponse> parts,
         List<SpeakingSavedResponse> responses,
         List<SpeakingEvaluationResponse> evaluations

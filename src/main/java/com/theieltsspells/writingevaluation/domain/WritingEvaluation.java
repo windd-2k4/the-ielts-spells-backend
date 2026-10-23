@@ -99,6 +99,9 @@ public class WritingEvaluation {
     @Column(name = "teacher_edited_text")
     private String teacherEditedText;
 
+    @Column(name = "teacher_edited_html")
+    private String teacherEditedHtml;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "teacher_annotations", nullable = false)
     private List<Map<String, Object>> teacherAnnotations;

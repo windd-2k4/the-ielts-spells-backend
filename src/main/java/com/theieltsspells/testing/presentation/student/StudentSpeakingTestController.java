@@ -13,6 +13,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -81,13 +82,9 @@ public class StudentSpeakingTestController {
         return deliveryService.saveResponses(attemptId, request, studentId(jwt));
     }
 
-    @PostMapping("/attempts/{attemptId}/evaluate")
-    public SpeakingEvaluationResponse evaluate(
-            @PathVariable UUID attemptId,
-            @Valid @RequestBody SpeakingEvaluationRequest request,
-            @AuthenticationPrincipal Jwt jwt
-    ) {
-        return deliveryService.evaluateQuestion(attemptId, request, studentId(jwt));
+    @PostMapping("/attempts/{attemptId}/ai-evaluation")
+    public Map<String, Integer> requestAi(@PathVariable UUID attemptId, @AuthenticationPrincipal Jwt jwt) {
+        return Map.of("queuedCount", deliveryService.requestAi(attemptId, studentId(jwt)));
     }
 
     @PostMapping("/attempts/{attemptId}/submit")

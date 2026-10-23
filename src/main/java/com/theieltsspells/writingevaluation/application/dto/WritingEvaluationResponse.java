@@ -36,6 +36,7 @@ public record WritingEvaluationResponse(
         OffsetDateTime createdAt,
         Map<String, Object> taskContext,
         String teacherEditedText,
+        String teacherEditedHtml,
         List<WritingTeacherAnnotation> teacherAnnotations,
         Integer teacherRevision
 ) {

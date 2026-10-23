@@ -15,6 +15,7 @@ public record AdminSpeakingEvaluationResponse(
         String questionKey,
         String audioUrl,
         String transcript,
+        List<Segment> segments,
         String aiStatus,
         BigDecimal overallBandAi,
         Map<String, Criterion> criteria,
@@ -29,5 +30,6 @@ public record AdminSpeakingEvaluationResponse(
         OffsetDateTime publishedAt,
         OffsetDateTime createdAt
 ) {
-    public record Criterion(BigDecimal aiBand, BigDecimal teacherBand, String aiFeedback) { }
+    public record Criterion(BigDecimal aiBand, BigDecimal teacherBand, String aiFeedback, String teacherFeedback) { }
+    public record Segment(String questionKey, String audioUrl, String transcript) { }
 }

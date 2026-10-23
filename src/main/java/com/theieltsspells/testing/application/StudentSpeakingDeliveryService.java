@@ -183,35 +183,15 @@ public class StudentSpeakingDeliveryService {
     }
 
     @Transactional
-    public SpeakingEvaluationResponse evaluateQuestion(UUID attemptId, SpeakingEvaluationRequest request, UUID studentId) {
-        var attempt = loadAttempt(attemptId, studentId, false);
-        // Automatically save the latest transcript/audio response before evaluation
-        Map<String, Object> answerMap = new LinkedHashMap<>();
-        if (request.audioUrl() != null) answerMap.put("audioUrl", request.audioUrl());
-        if (request.transcript() != null) answerMap.put("transcript", request.transcript());
-        String answerJson = json(answerMap);
-
-        jdbc.update("""
-                insert into public.test_attempt_responses(attempt_id, question_key, question_type, answer,
-                  normalized_answer, max_score, client_revision, answered_at, updated_at)
-                values (?, ?, 'SPEAKING_QUESTION', cast(? as jsonb), '[]'::jsonb, 9, 1, now(), now())
-                on conflict (attempt_id, question_key) do update set
-                  answer = excluded.answer,
-                  answered_at = now(),
-                  updated_at = now()
-                """, attempt.id(), request.questionKey(), answerJson);
-
-        return evaluationService.evaluateAndSave(attemptId, studentId, request);
-    }
-
-    @Transactional
     public SpeakingAttemptResultResponse submit(UUID attemptId, UUID studentId) {
         var attempt = loadAttempt(attemptId, studentId, true);
         if ("SUBMITTED".equals(attempt.status()) || "GRADED".equals(attempt.status())) {
+            evaluationService.registerAttempt(attemptId, studentId);
             return getResult(attemptId, studentId);
         }
         assertInProgress(attempt);
         finalizeAttempt(attempt, "SUBMITTED");
+        evaluationService.registerAttempt(attemptId, studentId);
         return getResult(attemptId, studentId);
     }
 
@@ -219,17 +199,22 @@ public class StudentSpeakingDeliveryService {
         var attempt = loadAttempt(attemptId, studentId, false);
         var parts = parseParts(attempt.builderContent());
         var responses = responses(attempt.id());
-        var evaluations = evaluations(attempt.id());
+        var evaluations = attempt.showResult() ? evaluations(attempt.id()) : List.<SpeakingEvaluationResponse>of();
 
         return new SpeakingAttemptResultResponse(
                 attempt.id(),
                 attempt.status(),
                 attempt.submittedAt(),
                 attempt.showResult(),
+                attempt.showResult() && evaluationService.isAiEligible(studentId),
                 parts,
                 responses,
                 evaluations
         );
+    }
+
+    public int requestAi(UUID attemptId, UUID studentId) {
+        return evaluationService.requestAi(attemptId, studentId);
     }
 
     private StudentSpeakingAttemptResponse payload(AttemptContext attempt) {
@@ -287,9 +272,13 @@ public class StudentSpeakingDeliveryService {
                 select question_key, status, overall_band, fluency_band, lexical_band,
                        grammar_band, pronunciation_band, fluency_feedback, lexical_feedback,
                        grammar_feedback, pronunciation_feedback, strengths::text, improvements::text,
-                       updated_at
+                       updated_at, teacher_status, overall_band_teacher, fluency_band_teacher,
+                       lexical_band_teacher, grammar_band_teacher, pronunciation_band_teacher,
+                       fluency_feedback_teacher, lexical_feedback_teacher, grammar_feedback_teacher,
+                       pronunciation_feedback_teacher, teacher_feedback, teacher_strengths::text,
+                       teacher_improvements::text, published_at
                 from public.speaking_evaluations
-                where attempt_id = ?
+                where attempt_id = ? and question_key = ?
                 order by created_at asc
                 """, (rs, ignored) -> {
             Map<String, String> criteria = new LinkedHashMap<>();
@@ -300,6 +289,14 @@ public class StudentSpeakingDeliveryService {
 
             List<String> strengths = readList(rs.getString("strengths"));
             List<String> improvements = readList(rs.getString("improvements"));
+            boolean published = "PUBLISHED".equals(rs.getString("teacher_status"));
+            Map<String, String> teacherCriteria = new LinkedHashMap<>();
+            if (published) {
+                teacherCriteria.put("fluency_coherence", rs.getString("fluency_feedback_teacher"));
+                teacherCriteria.put("lexical_resource", rs.getString("lexical_feedback_teacher"));
+                teacherCriteria.put("grammatical_range_accuracy", rs.getString("grammar_feedback_teacher"));
+                teacherCriteria.put("pronunciation", rs.getString("pronunciation_feedback_teacher"));
+            }
 
             return new SpeakingEvaluationResponse(
                     rs.getString("question_key"),
@@ -312,9 +309,20 @@ public class StudentSpeakingDeliveryService {
                     criteria,
                     strengths,
                     improvements,
-                    rs.getObject("updated_at", OffsetDateTime.class)
+                    rs.getObject("updated_at", OffsetDateTime.class),
+                    rs.getString("teacher_status"),
+                    published ? rs.getBigDecimal("overall_band_teacher") : null,
+                    published ? rs.getBigDecimal("fluency_band_teacher") : null,
+                    published ? rs.getBigDecimal("lexical_band_teacher") : null,
+                    published ? rs.getBigDecimal("grammar_band_teacher") : null,
+                    published ? rs.getBigDecimal("pronunciation_band_teacher") : null,
+                    teacherCriteria,
+                    published ? rs.getString("teacher_feedback") : null,
+                    published ? readList(rs.getString("teacher_strengths")) : List.of(),
+                    published ? readList(rs.getString("teacher_improvements")) : List.of(),
+                    published ? rs.getObject("published_at", OffsetDateTime.class) : null
             );
-        }, attemptId);
+        }, attemptId, SpeakingEvaluationService.ATTEMPT_KEY);
     }
 
     @SuppressWarnings("unchecked")

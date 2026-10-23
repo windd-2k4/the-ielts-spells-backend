@@ -16,5 +16,16 @@ public record SpeakingEvaluationResponse(
         Map<String, String> criteriaFeedback,
         List<String> strengths,
         List<String> improvements,
-        OffsetDateTime evaluatedAt
+        OffsetDateTime evaluatedAt,
+        String teacherStatus,
+        BigDecimal overallBandTeacher,
+        BigDecimal fluencyBandTeacher,
+        BigDecimal lexicalBandTeacher,
+        BigDecimal grammarBandTeacher,
+        BigDecimal pronunciationBandTeacher,
+        Map<String, String> teacherCriteriaFeedback,
+        String teacherFeedback,
+        List<String> teacherStrengths,
+        List<String> teacherImprovements,
+        OffsetDateTime teacherPublishedAt
 ) {}

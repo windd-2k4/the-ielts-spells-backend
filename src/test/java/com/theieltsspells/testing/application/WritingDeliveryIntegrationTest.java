@@ -311,6 +311,7 @@ class WritingDeliveryIntegrationTest {
                 new BigDecimal("6.5"), criteria, List.of("Clear overview"),
                 List.of("Develop comparisons"), true,
                 "Edited teacher version with a clearer comparison.",
+                "<p><strong>Edited teacher version</strong> with a clearer comparison.</p><script>alert(1)</script>",
                 List.of(new com.theieltsspells.writingevaluation.application.dto.WritingTeacherAnnotation(
                         "annotation-1", 0, 12, "A newer answer", "The response", "Use a precise opening", "task_achievement", "REPLACE", "SUGGESTION"))), reviewerId);
 
@@ -322,6 +323,8 @@ class WritingDeliveryIntegrationTest {
         assertEquals(4, result.evaluations().getFirst().teacherCriterionBands().size());
         assertEquals(List.of("Clear overview"), result.evaluations().getFirst().teacherStrengths());
         assertEquals("Edited teacher version with a clearer comparison.", result.evaluations().getFirst().teacherEditedText());
+        assertTrue(result.evaluations().getFirst().teacherEditedHtml().contains("<strong>Edited teacher version</strong>"));
+        assertFalse(result.evaluations().getFirst().teacherEditedHtml().contains("<script"));
         assertEquals(1, result.evaluations().getFirst().teacherAnnotations().size());
         var notifications = new com.theieltsspells.notification.WritingNotificationService(jdbc);
         var notice = notifications.unread(studentId).getFirst();

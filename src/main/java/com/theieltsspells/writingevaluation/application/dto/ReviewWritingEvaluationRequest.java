@@ -18,6 +18,7 @@ public record ReviewWritingEvaluationRequest(
         List<String> improvements,
         boolean publish,
         @Size(max = 50000) String editedText,
+        @Size(max = 200000) String editedHtml,
         @Size(max = 500) List<@Valid WritingTeacherAnnotation> annotations
 ) {
     public ReviewWritingEvaluationRequest(BigDecimal overallBand,
@@ -25,7 +26,7 @@ public record ReviewWritingEvaluationRequest(
                                           List<String> strengths,
                                           List<String> improvements,
                                           boolean publish) {
-        this(overallBand, criteria, strengths, improvements, publish, null, List.of());
+        this(overallBand, criteria, strengths, improvements, publish, null, null, List.of());
     }
 
     public record CriterionReview(

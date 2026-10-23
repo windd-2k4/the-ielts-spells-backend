@@ -35,6 +35,7 @@ public record WritingAttemptResultResponse(
             List<String> teacherImprovements,
             OffsetDateTime teacherPublishedAt,
             String teacherEditedText,
+            String teacherEditedHtml,
             List<WritingTeacherAnnotation> teacherAnnotations
     ) {
     }

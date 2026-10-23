@@ -268,7 +268,7 @@ public class StudentWritingDeliveryService {
         List<WritingAttemptResultResponse.Evaluation> evaluations = evaluations(attempt.id());
         if (!visible) evaluations = evaluations.stream().map(value -> new WritingAttemptResultResponse.Evaluation(
                 value.taskKey(), value.aiStatus(), null, Map.of(), List.of(), List.of(), null,
-                value.teacherStatus(), null, Map.of(), List.of(), List.of(), null, null, List.of())).toList();
+                value.teacherStatus(), null, Map.of(), List.of(), List.of(), null, null, null, List.of())).toList();
         int requestable = (int) evaluations.stream().filter(value -> "NOT_ELIGIBLE".equals(value.aiStatus())).count();
         return new WritingAttemptResultResponse(attempt.id(), attempt.status(), attempt.submittedAt(), visible,
                 attempt.origin(), visible && requestable > 0 && hasAiBudget(attempt.studentId(), requestable),
@@ -309,6 +309,7 @@ public class StudentWritingDeliveryService {
                   case when evaluation.teacher_status='PUBLISHED' then evaluation.improvements else '[]'::jsonb end::text teacher_improvements,
                   case when evaluation.teacher_status='PUBLISHED' then evaluation.published_at end published_at,
                   case when evaluation.teacher_status='PUBLISHED' then coalesce(evaluation.teacher_published_text, evaluation.teacher_edited_text) end teacher_edited_text,
+                  case when evaluation.teacher_status='PUBLISHED' then coalesce(evaluation.teacher_published_html, evaluation.teacher_edited_html) end teacher_edited_html,
                   case when evaluation.teacher_status='PUBLISHED' then coalesce(evaluation.teacher_published_annotations, evaluation.teacher_annotations) else '[]'::jsonb end::text teacher_annotations
                 from public.writing_evaluations evaluation
                 join public.test_attempt_responses response on response.id=evaluation.test_attempt_response_id
@@ -327,6 +328,7 @@ public class StudentWritingDeliveryService {
                         ? strings(rs.getString("teacher_improvements")) : List.of(),
                 rs.getObject("published_at", OffsetDateTime.class),
                 rs.getString("teacher_edited_text"),
+                rs.getString("teacher_edited_html"),
                 "PUBLISHED".equals(rs.getString("teacher_status")) ? annotations(rs.getString("teacher_annotations")) : List.of()
         ), attemptId);
     }

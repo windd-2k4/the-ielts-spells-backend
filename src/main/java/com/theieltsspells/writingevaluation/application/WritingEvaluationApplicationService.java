@@ -7,6 +7,7 @@ import com.theieltsspells.shared.application.ConflictException;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
 import com.theieltsspells.shared.application.WritingSubmittedEvent;
 import com.theieltsspells.shared.WritingBandScorePolicy;
+import com.theieltsspells.shared.util.HtmlSanitizer;
 import com.theieltsspells.writingevaluation.application.dto.ReviewWritingEvaluationRequest;
 import com.theieltsspells.writingevaluation.application.dto.UpdateWritingAiEntitlementRequest;
 import com.theieltsspells.writingevaluation.application.dto.WritingAiEntitlementResponse;
@@ -223,7 +224,8 @@ public class WritingEvaluationApplicationService {
         if (request.criteria().values().stream().anyMatch(java.util.Objects::isNull)) {
             throw new BusinessRuleException("Thiếu điểm tiêu chí Writing");
         }
-        validateTeacherEdit(request.editedText(), request.annotations());
+        validateTeacherEdit(request.editedText(), request.editedHtml(), request.annotations());
+        String editedHtml = blankToNull(HtmlSanitizer.sanitizeWritingReview(request.editedHtml()));
         BigDecimal calculatedOverall = WritingBandScorePolicy.taskBand(request.criteria().values().stream()
                 .map(ReviewWritingEvaluationRequest.CriterionReview::band).toList());
         if (request.overallBand().compareTo(calculatedOverall) != 0) {
@@ -242,23 +244,28 @@ public class WritingEvaluationApplicationService {
         if ("PUBLISHED".equals(evaluation.teacherStatus()) && !request.publish()) {
             throw new ConflictException("Bài đã công bố phải được lưu và công bố lại khi chỉnh sửa");
         }
+        var sanitizedRequest = new ReviewWritingEvaluationRequest(request.overallBand(), request.criteria(),
+                request.strengths(), request.improvements(), request.publish(), request.editedText(), editedHtml,
+                request.annotations());
         jdbc.update("insert into public.writing_evaluation_reviews(evaluation_id, reviewer_id, review) values (?, ?, cast(? as jsonb))",
-                id, reviewerId, json(request));
+                id, reviewerId, json(sanitizedRequest));
         String nextStatus = request.publish() ? "PUBLISHED" : "REVIEWED";
         jdbc.update("""
                 update public.writing_evaluations set overall_band_teacher=?, strengths=cast(? as jsonb),
                   improvements=cast(? as jsonb), teacher_status=?, reviewed_by=?,
                   reviewed_at=now(), published_at=case when ? then now() else null end,
                   teacher_edited_text=coalesce(?, coalesce(teacher_edited_text, essay_text)),
+                  teacher_edited_html=coalesce(?, teacher_edited_html),
                   teacher_annotations=cast(? as jsonb), teacher_revision=teacher_revision+1,
                   teacher_published_text=case when ? then coalesce(?, coalesce(teacher_edited_text, essay_text)) else teacher_published_text end,
+                  teacher_published_html=case when ? then coalesce(?, teacher_edited_html) else teacher_published_html end,
                   teacher_published_annotations=case when ? then cast(? as jsonb) else teacher_published_annotations end,
                   updated_at=now()
                 where id=?
                 """, request.overallBand(), json(safe(request.strengths())), json(safe(request.improvements())),
                 nextStatus, reviewerId, request.publish(), blankToNull(request.editedText()),
-                json(request.annotations() == null ? List.of() : request.annotations()), request.publish(),
-                blankToNull(request.editedText()), request.publish(),
+                editedHtml, json(request.annotations() == null ? List.of() : request.annotations()), request.publish(),
+                blankToNull(request.editedText()), request.publish(), editedHtml, request.publish(),
                 json(request.annotations() == null ? List.of() : request.annotations()), id);
         if (request.publish()) notifications.completed(id, true);
         return get(id);
@@ -267,15 +274,18 @@ public class WritingEvaluationApplicationService {
     @Transactional
     public WritingEvaluationResponse saveDraft(UUID id, WritingTeacherDraftRequest request, UUID reviewerId) {
         jdbc.queryForList("select id from public.writing_evaluations where id=? for update", id);
-        validateTeacherEdit(request.editedText(), request.annotations());
+        validateTeacherEdit(request.editedText(), request.editedHtml(), request.annotations());
+        String editedHtml = blankToNull(HtmlSanitizer.sanitizeWritingReview(request.editedHtml()));
         jdbc.update("""
                 update public.writing_evaluations
                 set teacher_edited_text=coalesce(?, coalesce(teacher_edited_text, essay_text)),
+                    teacher_edited_html=coalesce(?, teacher_edited_html),
                     teacher_annotations=cast(? as jsonb), teacher_revision=teacher_revision+1,
                     teacher_status=case when teacher_status='PUBLISHED' then teacher_status else 'REVIEWED' end,
                     reviewed_by=?, reviewed_at=coalesce(reviewed_at, now()), updated_at=now()
                 where id=?
-                """, blankToNull(request.editedText()), json(request.annotations() == null ? List.of() : request.annotations()), reviewerId, id);
+                """, blankToNull(request.editedText()), editedHtml,
+                json(request.annotations() == null ? List.of() : request.annotations()), reviewerId, id);
         return get(id);
     }
 
@@ -389,7 +399,8 @@ public class WritingEvaluationApplicationService {
                   evaluation.ai_completed_at,
                   evaluation.reviewed_at, evaluation.published_at, evaluation.created_at,
                   evaluation.task_context::text task_context,
-                  evaluation.teacher_edited_text, evaluation.teacher_annotations::text teacher_annotations,
+                  evaluation.teacher_edited_text, evaluation.teacher_edited_html,
+                  evaluation.teacher_annotations::text teacher_annotations,
                   evaluation.teacher_revision
                 """ + fromSql();
     }
@@ -421,7 +432,8 @@ public class WritingEvaluationApplicationService {
                 rs.getObject("reviewed_at", java.time.OffsetDateTime.class),
                 rs.getObject("published_at", java.time.OffsetDateTime.class),
                 rs.getObject("created_at", java.time.OffsetDateTime.class), context(rs.getString("task_context")),
-                rs.getString("teacher_edited_text"), annotations(rs.getString("teacher_annotations")),
+                rs.getString("teacher_edited_text"), rs.getString("teacher_edited_html"),
+                annotations(rs.getString("teacher_annotations")),
                 rs.getObject("teacher_revision", Integer.class));
     }
 
@@ -494,8 +506,9 @@ public class WritingEvaluationApplicationService {
     private long number(Object value) { return value instanceof Number number ? number.longValue() : 0; }
     private List<String> strings(String value) { try { return objectMapper.readValue(value, new TypeReference<>() {}); } catch (Exception ignored) { return List.of(); } }
     private List<WritingTeacherAnnotation> annotations(String value) { try { return objectMapper.readValue(value, new TypeReference<>() {}); } catch (Exception ignored) { return List.of(); } }
-    private void validateTeacherEdit(String editedText, List<WritingTeacherAnnotation> values) {
+    private void validateTeacherEdit(String editedText, String editedHtml, List<WritingTeacherAnnotation> values) {
         if (editedText != null && editedText.length() > 50_000) throw new BusinessRuleException("Bản sửa Writing quá dài");
+        if (editedHtml != null && editedHtml.length() > 200_000) throw new BusinessRuleException("Định dạng bản sửa Writing quá dài");
         if (values == null) return;
         for (var value : values) {
             if (value == null || value.start() == null || value.end() == null || value.start() < 0 || value.end() < value.start()) {

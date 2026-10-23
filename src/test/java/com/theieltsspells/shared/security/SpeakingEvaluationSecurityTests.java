@@ -40,4 +40,11 @@ class SpeakingEvaluationSecurityTests {
                 .andExpect(status().isOk());
         verify(service).list();
     }
+
+    @Test
+    void teacherCannotManageSpeakingAiEntitlements() throws Exception {
+        mvc.perform(get("/api/v1/admin/speaking-evaluations/entitlements")
+                .with(jwt().authorities(new SimpleGrantedAuthority("teacher"))))
+                .andExpect(status().isForbidden());
+    }
 }

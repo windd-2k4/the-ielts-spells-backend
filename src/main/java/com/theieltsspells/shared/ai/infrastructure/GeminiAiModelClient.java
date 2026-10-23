@@ -41,6 +41,11 @@ public class GeminiAiModelClient extends AbstractHttpAiModelClient implements Ai
     }
 
     @Override
+    public boolean supportsAudio() {
+        return true;
+    }
+
+    @Override
     public AiGenerationResult generate(String model, AiGenerationRequest request) {
         Map<String, Object> generationConfig = new LinkedHashMap<>();
         if (request.responseMimeType() != null && !request.responseMimeType().isBlank()) {
@@ -57,6 +62,8 @@ public class GeminiAiModelClient extends AbstractHttpAiModelClient implements Ai
         parts.add(Map.of("text", request.systemPrompt() + "\n" + request.userPrompt()));
         request.images().forEach(image -> parts.add(Map.of("inlineData", Map.of(
                 "mimeType", image.mimeType(), "data", image.base64Data()))));
+        request.audio().forEach(audio -> parts.add(Map.of("inlineData", Map.of(
+                "mimeType", audio.mimeType(), "data", audio.base64Data()))));
         Map<String, Object> body = Map.of(
                 "contents", List.of(Map.of("parts", parts)),
                 "generationConfig", generationConfig

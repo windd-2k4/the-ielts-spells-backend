@@ -9,5 +9,9 @@ public interface AiModelClient {
         return false;
     }
 
+    default boolean supportsAudio() {
+        return false;
+    }
+
     AiGenerationResult generate(String model, AiGenerationRequest request);
 }
