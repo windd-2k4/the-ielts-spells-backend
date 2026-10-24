@@ -178,7 +178,7 @@ class StudentLearningInsightsServiceIntegrationTest {
         jdbc.update("""
                 insert into public.test_version_sections(
                   id, test_version_id, section_key, section_no, title, content_html, display_order
-                ) values (?, ?, 'passage-1', 1, 'Reading Passage 1', '', 0)
+                ) values (?, ?, 'passage-1', 1, 'Reading Passage 1', '<p>The complete reading passage.</p>', 0)
                 """, sectionId, versionId);
         jdbc.update("""
                 insert into public.test_version_question_groups(
@@ -220,5 +220,8 @@ class StudentLearningInsightsServiceIntegrationTest {
         assertThat(detail.questions().getFirst().correct()).isTrue();
         assertThat(detail.questions().getFirst().explanation()).isEqualTo("B is the matching heading.");
         assertThat(detail.questions().get(1).studentAnswers()).isEmpty();
+        assertThat(detail.sections()).hasSize(1);
+        assertThat(detail.sections().getFirst().sectionNo()).isEqualTo(1);
+        assertThat(detail.sections().getFirst().contentHtml()).isEqualTo("<p>The complete reading passage.</p>");
     }
 }

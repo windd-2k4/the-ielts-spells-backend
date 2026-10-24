@@ -22,7 +22,8 @@ public record StudentAttemptDetailResponse(
         int correctCount,
         int incorrectCount,
         int unansweredCount,
-        List<QuestionDetail> questions
+        List<QuestionDetail> questions,
+        List<SectionDetail> sections
 ) {
     public record QuestionDetail(
             String questionKey,
@@ -30,6 +31,7 @@ public record StudentAttemptDetailResponse(
             String questionType,
             String sectionTitle,
             String groupTitle,
+            String groupInstructions,
             String prompt,
             List<String> studentAnswers,
             List<String> correctAnswers,
@@ -37,5 +39,11 @@ public record StudentAttemptDetailResponse(
             BigDecimal score,
             BigDecimal maxScore,
             String explanation
+    ) {}
+
+    public record SectionDetail(
+            int sectionNo,
+            String title,
+            String contentHtml
     ) {}
 }

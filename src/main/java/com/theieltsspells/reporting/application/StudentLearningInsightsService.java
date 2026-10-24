@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.theieltsspells.reporting.application.dto.StudentAttemptDetailResponse;
 import com.theieltsspells.reporting.application.dto.StudentAttemptDetailResponse.QuestionDetail;
+import com.theieltsspells.reporting.application.dto.StudentAttemptDetailResponse.SectionDetail;
 import com.theieltsspells.reporting.application.dto.StudentLearningInsightsResponse;
 import com.theieltsspells.reporting.application.dto.StudentLearningInsightsResponse.MonthlyCompletedAttempts;
 import com.theieltsspells.reporting.application.dto.StudentLearningInsightsResponse.RecurringMistake;
@@ -129,6 +130,16 @@ public class StudentLearningInsightsService {
 
         AttemptDetailHeader header = headers.getFirst();
         List<QuestionDetail> questions = attemptQuestions(header.versionId(), attemptId);
+        List<SectionDetail> sections = jdbc.query("""
+                select section_no, title, coalesce(content_html, '') content_html
+                from public.test_version_sections
+                where test_version_id = ?
+                order by section_no
+                """, (rs, ignored) -> new SectionDetail(
+                rs.getInt("section_no"),
+                rs.getString("title"),
+                rs.getString("content_html")
+        ), header.versionId());
         int correctCount = (int) questions.stream().filter(item -> Boolean.TRUE.equals(item.correct())).count();
         int incorrectCount = (int) questions.stream().filter(item -> Boolean.FALSE.equals(item.correct())).count();
         int unansweredCount = (int) questions.stream().filter(item -> item.studentAnswers().isEmpty()).count();
@@ -139,7 +150,7 @@ public class StudentLearningInsightsService {
                 header.id(), header.title(), header.skill(), header.status(), header.origin(), header.attemptNo(),
                 header.startedAt(), header.submittedAt(), header.lastActivityAt(), header.durationSeconds(),
                 header.allowedDurationSeconds(), header.score(), maxScore, correctCount, incorrectCount,
-                unansweredCount, questions
+                unansweredCount, questions, sections
         );
     }
 
@@ -148,7 +159,9 @@ public class StudentLearningInsightsService {
                 with items as (
                   select question.question_key, question.question_no::int question_no,
                     question.type_format question_type, section.title section_title,
-                    question_group.title group_title, question.prompt,
+                    question_group.title group_title,
+                    coalesce(question_group.instructions, '') group_instructions,
+                    question.prompt,
                     question.correct_answers::text correct_answers, question.explanation,
                     question.max_score,
                     coalesce((
@@ -165,7 +178,7 @@ public class StudentLearningInsightsService {
                   join public.test_version_sections section on section.id = question_group.section_id
                   where question.test_version_id = ?
                   union all
-                  select response.question_key, null, response.question_type, null, null, null,
+                  select response.question_key, null, response.question_type, null, null, '', null,
                     '[]', null, response.max_score, '{}'
                   from public.test_attempt_responses response
                   where response.attempt_id = ? and not exists (
@@ -175,7 +188,7 @@ public class StudentLearningInsightsService {
                 )
                 select item.question_key,
                   row_number() over(order by item.question_no nulls last, item.question_key)::int display_no,
-                  item.question_type, item.section_title, item.group_title, item.prompt,
+                  item.question_type, item.section_title, item.group_title, item.group_instructions, item.prompt,
                   item.correct_answers, item.explanation, item.max_score, item.option_map,
                   response.answer::text student_answer, response.is_correct,
                   coalesce(response.auto_score, 0) score
@@ -189,6 +202,7 @@ public class StudentLearningInsightsService {
                 rs.getString("question_type"),
                 rs.getString("section_title"),
                 rs.getString("group_title"),
+                rs.getString("group_instructions"),
                 rs.getString("prompt"),
                 displayAnswers(answerValues(rs.getString("student_answer")), rs.getString("option_map")),
                 displayAnswers(answerValues(rs.getString("correct_answers")), rs.getString("option_map")),
