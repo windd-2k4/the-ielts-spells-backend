@@ -35,14 +35,17 @@ create index if not exists idx_student_placement_tests_student on public.student
 
 alter table public.student_placement_tests enable row level security;
 
+drop policy if exists "Students can view their own placement tests" on public.student_placement_tests;
 create policy "Students can view their own placement tests"
     on public.student_placement_tests for select
     using (auth.uid() = student_id);
 
+drop policy if exists "Students can insert their own placement tests" on public.student_placement_tests;
 create policy "Students can insert their own placement tests"
     on public.student_placement_tests for insert
     with check (auth.uid() = student_id);
 
+drop policy if exists "Students can update their own placement tests" on public.student_placement_tests;
 create policy "Students can update their own placement tests"
     on public.student_placement_tests for update
     using (auth.uid() = student_id)
