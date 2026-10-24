@@ -29,6 +29,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /** Student Writing delivery pinned to the immutable published test version. */
@@ -267,9 +268,10 @@ public class StudentWritingDeliveryService {
         List<WritingTaskResponse> tasks = tasks(attempt.builderContent(), visible);
         List<WritingAttemptResultResponse.Evaluation> evaluations = evaluations(attempt.id());
         if (!visible) evaluations = evaluations.stream().map(value -> new WritingAttemptResultResponse.Evaluation(
-                value.taskKey(), value.aiStatus(), null, Map.of(), List.of(), List.of(), null,
+                value.taskKey(), value.aiStatus(), null, null, Map.of(), List.of(), List.of(), null,
                 value.teacherStatus(), null, Map.of(), List.of(), List.of(), null, null, null, List.of())).toList();
-        int requestable = (int) evaluations.stream().filter(value -> "NOT_ELIGIBLE".equals(value.aiStatus())).count();
+        int requestable = (int) evaluations.stream()
+                .filter(value -> Set.of("NOT_ELIGIBLE", "FAILED").contains(value.aiStatus())).count();
         return new WritingAttemptResultResponse(attempt.id(), attempt.status(), attempt.submittedAt(), visible,
                 attempt.origin(), visible && requestable > 0 && hasAiBudget(attempt.studentId(), requestable),
                 fullBand(tasks, evaluations, true), fullBand(tasks, evaluations, false),
@@ -301,6 +303,7 @@ public class StudentWritingDeliveryService {
     private List<WritingAttemptResultResponse.Evaluation> evaluations(UUID attemptId) {
         return jdbc.query("""
                 select response.question_key, evaluation.id, evaluation.status::text ai_status,
+                  evaluation.error_message,
                   evaluation.overall_band_ai, evaluation.ai_strengths::text ai_strengths,
                   evaluation.ai_improvements::text ai_improvements, evaluation.ai_completed_at,
                   evaluation.teacher_status,
@@ -316,7 +319,8 @@ public class StudentWritingDeliveryService {
                 where response.attempt_id=?
                 order by response.question_key
                 """, (rs, ignored) -> new WritingAttemptResultResponse.Evaluation(
-                rs.getString("question_key"), rs.getString("ai_status"), rs.getBigDecimal("overall_band_ai"),
+                rs.getString("question_key"), rs.getString("ai_status"), rs.getString("error_message"),
+                rs.getBigDecimal("overall_band_ai"),
                 criterionBands(rs.getObject("id", UUID.class), "ai_band"), strings(rs.getString("ai_strengths")),
                 strings(rs.getString("ai_improvements")), rs.getObject("ai_completed_at", OffsetDateTime.class),
                 rs.getString("teacher_status"), rs.getBigDecimal("overall_band_teacher"),
@@ -347,6 +351,7 @@ public class StudentWritingDeliveryService {
                 join public.test_attempt_responses response on response.id=evaluation.test_attempt_response_id
                 join public.test_attempts attempt on attempt.id=response.attempt_id
                 where attempt.student_id=?
+                  and evaluation.status <> 'FAILED'
                   and evaluation.ai_requested_at >= date_trunc('month', now())
                 """, Long.class, studentId);
         Integer limit = entitlements.getFirst().monthlyLimit();

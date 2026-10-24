@@ -92,8 +92,8 @@ app:
     chat-timeout-seconds: ${AI_CHAT_TIMEOUT_SECONDS:30}
     quiz-timeout-seconds: ${AI_QUIZ_TIMEOUT_SECONDS:60}
     import-providers: ${AI_IMPORT_PROVIDERS:GEMINI,NVIDIA}
-    chat-providers: ${AI_CHAT_PROVIDERS:NVIDIA,GEMINI}
-    quiz-providers: ${AI_QUIZ_PROVIDERS:NVIDIA,GEMINI}
+    chat-providers: ${AI_CHAT_PROVIDERS:GEMINI,NVIDIA}
+    quiz-providers: ${AI_QUIZ_PROVIDERS:GEMINI,NVIDIA}
     retry:
       max-retries-per-model: ${AI_MAX_RETRIES_PER_MODEL:1}
       initial-backoff-millis: ${AI_INITIAL_BACKOFF_MILLIS:250}

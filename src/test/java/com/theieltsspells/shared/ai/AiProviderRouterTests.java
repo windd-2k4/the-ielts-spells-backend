@@ -18,6 +18,38 @@ class AiProviderRouterTests {
     );
 
     @Test
+    void defaultRoutesPreferGeminiBeforeNvidia() {
+        AiRoutingProperties properties = new AiRoutingProperties();
+
+        assertThat(properties.providersFor(AiTaskType.IMPORT))
+                .containsExactly(AiProvider.GEMINI, AiProvider.NVIDIA);
+        assertThat(properties.providersFor(AiTaskType.CHAT))
+                .containsExactly(AiProvider.GEMINI, AiProvider.NVIDIA);
+        assertThat(properties.providersFor(AiTaskType.QUIZ))
+                .containsExactly(AiProvider.GEMINI, AiProvider.NVIDIA);
+    }
+
+    @Test
+    void geminiFailureFallsBackToNvidia() {
+        AiRoutingProperties properties = new AiRoutingProperties();
+        properties.getGemini().setChatModels(new ArrayList<>(List.of("gemini-chat")));
+        properties.getNvidia().setChatModels(new ArrayList<>(List.of("nvidia-chat")));
+        properties.getRetry().setMaxRetriesPerModel(0);
+        FakeClient gemini = new FakeClient(AiProvider.GEMINI, (model, request) -> {
+            throw new AiProviderException(AiProviderException.Kind.TRANSIENT, "quota exhausted");
+        });
+        FakeClient nvidia = new FakeClient(AiProvider.NVIDIA,
+                (model, request) -> new AiGenerationResult(AiProvider.NVIDIA, model, "nvidia-result"));
+
+        AiProviderRouter router = new AiProviderRouter(List.of(gemini, nvidia), properties);
+
+        assertThat(router.execute(AiTaskType.CHAT, REQUEST, AiGenerationResult::content))
+                .isEqualTo("nvidia-result");
+        assertThat(gemini.modelsCalled).containsExactly("gemini-chat");
+        assertThat(nvidia.modelsCalled).containsExactly("nvidia-chat");
+    }
+
+    @Test
     void timeoutRetriesThenFallsBackToNextProvider() {
         AiRoutingProperties properties = properties();
         AtomicInteger nvidiaCalls = new AtomicInteger();

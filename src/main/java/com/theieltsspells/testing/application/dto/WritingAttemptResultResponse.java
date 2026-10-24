@@ -23,6 +23,7 @@ public record WritingAttemptResultResponse(
     public record Evaluation(
             String taskKey,
             String aiStatus,
+            String aiErrorMessage,
             BigDecimal overallBandAi,
             Map<String, BigDecimal> aiCriterionBands,
             List<String> aiStrengths,

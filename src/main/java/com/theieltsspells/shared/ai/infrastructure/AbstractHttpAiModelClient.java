@@ -58,7 +58,7 @@ abstract class AbstractHttpAiModelClient {
         }
         if (exception instanceof HttpStatusCodeException statusException) {
             HttpStatusCode status = statusException.getStatusCode();
-            if (status.value() == 404) {
+            if (status.value() == 404 || status.value() == 410) {
                 return new AiProviderException(AiProviderException.Kind.MODEL_UNAVAILABLE,
                         prefix + " because the model was not found", exception);
             }

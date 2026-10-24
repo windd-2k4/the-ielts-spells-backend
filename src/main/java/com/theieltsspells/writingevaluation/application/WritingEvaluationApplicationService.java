@@ -83,10 +83,16 @@ public class WritingEvaluationApplicationService {
             }
         }
         jdbc.queryForObject("select user_id from public.student_profiles where user_id=? for update", UUID.class, studentId);
+        jdbc.update("""
+                update public.writing_evaluations evaluation set ai_requested_at=null
+                from public.test_attempt_responses response
+                where evaluation.test_attempt_response_id=response.id and response.attempt_id=?
+                  and evaluation.status='FAILED'
+                """, attemptId);
         var requestable = jdbc.queryForList("""
                 select evaluation.id from public.writing_evaluations evaluation
                 join public.test_attempt_responses response on response.id=evaluation.test_attempt_response_id
-                where response.attempt_id=? and evaluation.status='NOT_ELIGIBLE'
+                where response.attempt_id=? and evaluation.status in ('NOT_ELIGIBLE','FAILED')
                 order by evaluation.created_at for update of evaluation
                 """, UUID.class, attemptId);
         if (requestable.isEmpty()) return 0;
@@ -97,7 +103,7 @@ public class WritingEvaluationApplicationService {
                 update public.writing_evaluations evaluation set status='QUEUED', error_message=null, ai_requested_at=now(), updated_at=now()
                 from public.test_attempt_responses response
                 where evaluation.test_attempt_response_id=response.id and response.attempt_id=?
-                  and evaluation.status='NOT_ELIGIBLE'
+                  and evaluation.status in ('NOT_ELIGIBLE','FAILED')
                 """, attemptId);
     }
 
@@ -300,6 +306,7 @@ public class WritingEvaluationApplicationService {
                    join public.test_attempt_responses response on response.id=evaluation.test_attempt_response_id
                    join public.test_attempts attempt on attempt.id=response.attempt_id
                    where attempt.student_id=student.user_id
+                     and evaluation.status <> 'FAILED'
                      and evaluation.ai_requested_at >= date_trunc('month', now())) used_this_month
                 from public.student_profiles student
                 join public.profiles profile on profile.id=student.user_id
@@ -452,6 +459,7 @@ public class WritingEvaluationApplicationService {
                 join public.test_attempt_responses response on response.id=evaluation.test_attempt_response_id
                 join public.test_attempts attempt on attempt.id=response.attempt_id
                 where attempt.student_id=?
+                  and evaluation.status <> 'FAILED'
                   and evaluation.ai_requested_at >= date_trunc('month', now())
                 """, Long.class, studentId);
         return used != null && entitlement.monthlyLimit() != null

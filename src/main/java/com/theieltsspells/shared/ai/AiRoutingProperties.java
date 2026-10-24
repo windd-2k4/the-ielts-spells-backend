@@ -20,8 +20,8 @@ public class AiRoutingProperties {
     private int chatTimeoutSeconds = 30;
     private int quizTimeoutSeconds = 60;
     private List<AiProvider> importProviders = new ArrayList<>(List.of(AiProvider.GEMINI, AiProvider.NVIDIA));
-    private List<AiProvider> chatProviders = new ArrayList<>(List.of(AiProvider.NVIDIA, AiProvider.GEMINI));
-    private List<AiProvider> quizProviders = new ArrayList<>(List.of(AiProvider.NVIDIA, AiProvider.GEMINI));
+    private List<AiProvider> chatProviders = new ArrayList<>(List.of(AiProvider.GEMINI, AiProvider.NVIDIA));
+    private List<AiProvider> quizProviders = new ArrayList<>(List.of(AiProvider.GEMINI, AiProvider.NVIDIA));
     private Retry retry = new Retry();
     private CircuitBreaker circuitBreaker = new CircuitBreaker();
     private Gemini gemini = new Gemini();

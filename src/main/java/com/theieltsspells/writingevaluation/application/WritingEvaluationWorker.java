@@ -43,7 +43,7 @@ public class WritingEvaluationWorker {
                     : "AI chưa thể hoàn tất đánh giá. Giáo viên có thể chấm thủ công hoặc thử lại.";
             new TransactionTemplate(transactionManager).executeWithoutResult(status -> jdbc.update("""
                     update public.writing_evaluations set status='FAILED', error_message=?, processing_ms=?,
-                      processing_token=null, updated_at=now()
+                      processing_token=null, ai_requested_at=null, updated_at=now()
                     where id=? and status='PROCESSING' and processing_token=?
                     """, message, elapsed(started), source.id(), source.token()));
         }
