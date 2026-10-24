@@ -64,6 +64,20 @@ where p.is_active = true
   and r.role = 'ADMIN';
 ```
 
+### K26 Speaking & Writing workspace demo
+
+`seed_k26_course_workspace_demo.sql` populates course
+`6347839e-6c4f-49db-a63a-de654bba1855` with every active existing student,
+20 sessions, nine attendance sheets, attendance records, and verified
+Speaking/Writing results. It also aligns the course skill pair with its name.
+The script is deterministic, idempotent, and does not create user accounts.
+
+Run it against the configured development database:
+
+```powershell
+psql $env:DATABASE_URL -v ON_ERROR_STOP=1 -f src/main/resources/db/seed/seed_k26_course_workspace_demo.sql
+```
+
 ## Legacy JUNE cohort seed
 
 `seed_june_cohorts.sql` is an idempotent development/demo seed generated from:
