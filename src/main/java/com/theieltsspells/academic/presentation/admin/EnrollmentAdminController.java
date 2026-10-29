@@ -38,7 +38,7 @@ public class EnrollmentAdminController {
     public EnrollmentResponse get(@PathVariable UUID id) { return service.get(id); }
 
     @GetMapping
-    @PreAuthorize("@permissionPolicy.hasAdministrativeScope(authentication, 'enrollment.read')")
+    @PreAuthorize("@permissionPolicy.hasEnrollmentReadScope(authentication, #courseId)")
     @Operation(summary = "Danh sách ghi danh theo lớp hoặc học viên")
     public PageResponse<EnrollmentResponse> list(
             @RequestParam(required = false) UUID courseId,

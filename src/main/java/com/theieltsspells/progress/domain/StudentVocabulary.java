@@ -35,6 +35,9 @@ public class StudentVocabulary {
     @Column(name = "attempt_id")
     private UUID attemptId;
 
+    @Column(name = "topic_id", nullable = false)
+    private UUID topicId;
+
     @Column(name = "term", nullable = false)
     private String term;
 
@@ -44,6 +47,15 @@ public class StudentVocabulary {
     @Column(name = "example_sentence")
     private String exampleSentence;
 
+    @Column(name = "part_of_speech")
+    private String partOfSpeech;
+
+    @Column(name = "note")
+    private String note;
+
+    @Column(name = "source_label")
+    private String sourceLabel;
+
     @Column(name = "mastery_level", nullable = false)
     private Short masteryLevel;
 
@@ -52,6 +64,9 @@ public class StudentVocabulary {
 
     @Column(name = "last_reviewed_at")
     private OffsetDateTime lastReviewedAt;
+
+    @Column(name = "updated_at", nullable = false)
+    private OffsetDateTime updatedAt;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "student_id", insertable = false, updatable = false)

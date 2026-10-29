@@ -109,7 +109,12 @@ public class WritingEvaluationApplicationService {
 
     @Transactional
     public WritingEvaluationResponse retry(UUID id) {
-        var evaluation = get(id);
+        return retry(id, null, true);
+    }
+
+    @Transactional
+    public WritingEvaluationResponse retry(UUID id, UUID teacherId, boolean globalScope) {
+        var evaluation = get(id, teacherId, globalScope);
         if (!"FAILED".equals(evaluation.status())) {
             throw new ConflictException("Chỉ có thể thử lại bài AI chấm lỗi");
         }
@@ -122,11 +127,17 @@ public class WritingEvaluationApplicationService {
                 where id=? and status='FAILED'
                 """, id);
         if (updated != 1) throw new ConflictException("Chỉ có thể thử lại bài AI chấm lỗi");
-        return get(id);
+        return get(id, teacherId, globalScope);
     }
 
     public PageResponse<WritingEvaluationResponse> list(String status, String origin, UUID courseId,
                                                          String teacherStatus, String query, int page, int size) {
+        return list(status, origin, courseId, teacherStatus, query, page, size, null, true);
+    }
+
+    public PageResponse<WritingEvaluationResponse> list(String status, String origin, UUID courseId,
+                                                         String teacherStatus, String query, int page, int size,
+                                                         UUID teacherId, boolean globalScope) {
         String aiFilter = normalize(status);
         String originFilter = normalize(origin);
         String teacherFilter = normalize(teacherStatus);
@@ -167,6 +178,14 @@ public class WritingEvaluationApplicationService {
             String pattern = "%" + search + "%";
             parameters.add(pattern); parameters.add(pattern); parameters.add(pattern); parameters.add(pattern);
         }
+        where.append(" and (attempt.attempt_origin='SELF_PRACTICE' or not exists (select 1 from public.test_attempts newer "
+                + "where newer.test_assignment_id=attempt.test_assignment_id and newer.student_id=attempt.student_id "
+                + "and newer.attempt_no > attempt.attempt_no))");
+        if (!globalScope) {
+            where.append(" and exists (select 1 from public.course_teachers teacher_scope "
+                    + "where teacher_scope.course_id=assignment.course_id and teacher_scope.teacher_id=?)");
+            parameters.add(teacherId);
+        }
         Long total = jdbc.queryForObject("select count(*)" + fromSql() + where, Long.class, parameters.toArray());
         var pageParameters = new ArrayList<>(parameters);
         pageParameters.add(pageSize);
@@ -179,6 +198,12 @@ public class WritingEvaluationApplicationService {
     }
 
     public WritingEvaluationFilterOptionsResponse filterOptions() {
+        return filterOptions(null, true);
+    }
+
+    public WritingEvaluationFilterOptionsResponse filterOptions(UUID teacherId, boolean globalScope) {
+        String courseScope = globalScope ? "" : " and exists (select 1 from public.course_teachers teacher_scope "
+                + "where teacher_scope.course_id=course.id and teacher_scope.teacher_id=?)";
         var courses = jdbc.query("""
                 select course.id, course.code, course.name, course.status::text status,
                   count(distinct attempt.student_id) student_count,
@@ -190,13 +215,29 @@ public class WritingEvaluationApplicationService {
                 join public.test_attempt_responses response on response.attempt_id=attempt.id
                 join public.writing_evaluations evaluation on evaluation.test_attempt_response_id=response.id
                 where course.skill_pair='SPEAKING_WRITING'
+                  and (attempt.attempt_origin='SELF_PRACTICE' or not exists (
+                    select 1 from public.test_attempts newer
+                    where newer.test_assignment_id=attempt.test_assignment_id
+                      and newer.student_id=attempt.student_id
+                      and newer.attempt_no > attempt.attempt_no
+                  ))
+                """ + courseScope + """
                 group by course.id, course.code, course.name, course.status, course.starts_on
                 order by case when course.status::text in ('active', 'open') then 0 else 1 end,
                   course.starts_on desc, course.code
                 """, (rs, ignored) -> new WritingEvaluationFilterOptionsResponse.CourseOption(
                 rs.getObject("id", UUID.class), rs.getString("code"), rs.getString("name"),
                 rs.getString("status"), rs.getLong("student_count"), rs.getLong("evaluation_count"),
-                rs.getLong("awaiting_teacher_count")));
+                rs.getLong("awaiting_teacher_count")), globalScope ? new Object[]{} : new Object[]{teacherId});
+        String countScope = " where (attempt.attempt_origin='SELF_PRACTICE' or not exists ("
+                + "select 1 from public.test_attempts newer "
+                + "where newer.test_assignment_id=attempt.test_assignment_id "
+                + "and newer.student_id=attempt.student_id "
+                + "and newer.attempt_no > attempt.attempt_no))";
+        if (!globalScope) {
+            countScope += " and exists (select 1 from public.course_teachers teacher_scope "
+                    + "where teacher_scope.course_id=course.id and teacher_scope.teacher_id=?)";
+        }
         var counts = jdbc.queryForMap("""
                 select count(*) total_count,
                   count(*) filter (where attempt.attempt_origin='SELF_PRACTICE') self_practice_count,
@@ -206,21 +247,34 @@ public class WritingEvaluationApplicationService {
                 join public.test_attempts attempt on attempt.id=response.attempt_id
                 left join public.test_assignments assignment on assignment.id=attempt.test_assignment_id
                 left join public.courses course on course.id=assignment.course_id
-                """);
+                """ + countScope, globalScope ? new Object[]{} : new Object[]{teacherId});
         return new WritingEvaluationFilterOptionsResponse(number(counts.get("total_count")),
                 number(counts.get("self_practice_count")), number(counts.get("course_count")), courses);
     }
 
     public WritingEvaluationResponse get(UUID id) {
-        var values = jdbc.query(selectSql() + " where evaluation.id=?", this::map, id);
+        return get(id, null, true);
+    }
+
+    public WritingEvaluationResponse get(UUID id, UUID teacherId, boolean globalScope) {
+        String scope = globalScope ? "" : " and exists (select 1 from public.course_teachers teacher_scope "
+                + "where teacher_scope.course_id=assignment.course_id and teacher_scope.teacher_id=?)";
+        var parameters = globalScope ? new Object[]{id} : new Object[]{id, teacherId};
+        var values = jdbc.query(selectSql() + " where evaluation.id=?" + scope, this::map, parameters);
         if (values.isEmpty()) throw new ResourceNotFoundException("Không tìm thấy bài Writing cần chấm");
         return values.getFirst();
     }
 
     @Transactional
     public WritingEvaluationResponse review(UUID id, ReviewWritingEvaluationRequest request, UUID reviewerId) {
+        return review(id, request, reviewerId, true);
+    }
+
+    @Transactional
+    public WritingEvaluationResponse review(UUID id, ReviewWritingEvaluationRequest request, UUID reviewerId,
+                                            boolean globalScope) {
         jdbc.queryForList("select id from public.writing_evaluations where id=? for update", id);
-        var evaluation = get(id);
+        var evaluation = get(id, reviewerId, globalScope);
         validateBand(request.overallBand());
         var expected = new java.util.HashSet<>(List.of("coherence_cohesion", "lexical_resource", "grammatical_range_accuracy"));
         expected.add("task_2".equals(evaluation.taskType()) ? "task_response" : "task_achievement");
@@ -274,12 +328,19 @@ public class WritingEvaluationApplicationService {
                 blankToNull(request.editedText()), request.publish(), editedHtml, request.publish(),
                 json(request.annotations() == null ? List.of() : request.annotations()), id);
         if (request.publish()) notifications.completed(id, true);
-        return get(id);
+        return get(id, reviewerId, globalScope);
     }
 
     @Transactional
     public WritingEvaluationResponse saveDraft(UUID id, WritingTeacherDraftRequest request, UUID reviewerId) {
+        return saveDraft(id, request, reviewerId, true);
+    }
+
+    @Transactional
+    public WritingEvaluationResponse saveDraft(UUID id, WritingTeacherDraftRequest request, UUID reviewerId,
+                                               boolean globalScope) {
         jdbc.queryForList("select id from public.writing_evaluations where id=? for update", id);
+        get(id, reviewerId, globalScope);
         validateTeacherEdit(request.editedText(), request.editedHtml(), request.annotations());
         String editedHtml = blankToNull(HtmlSanitizer.sanitizeWritingReview(request.editedHtml()));
         jdbc.update("""
@@ -292,7 +353,7 @@ public class WritingEvaluationApplicationService {
                 where id=?
                 """, blankToNull(request.editedText()), editedHtml,
                 json(request.annotations() == null ? List.of() : request.annotations()), reviewerId, id);
-        return get(id);
+        return get(id, reviewerId, globalScope);
     }
 
     public List<WritingAiEntitlementResponse> listEntitlements(String query) {

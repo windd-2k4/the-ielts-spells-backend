@@ -3,6 +3,7 @@ package com.theieltsspells.testing.application.dto;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 public record ReadingAttemptResultResponse(
@@ -21,6 +22,7 @@ public record ReadingAttemptResultResponse(
     public record QuestionResult(
             String questionKey,
             int questionNo,
+            Map<String, Object> answer,
             boolean answered,
             Boolean correct,
             BigDecimal score,

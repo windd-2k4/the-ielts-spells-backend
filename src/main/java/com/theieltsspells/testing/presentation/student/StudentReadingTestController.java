@@ -1,13 +1,16 @@
 package com.theieltsspells.testing.presentation.student;
 
 import com.theieltsspells.testing.application.StudentReadingDeliveryService;
+import com.theieltsspells.testing.application.TestAttemptQuestionReviewService;
 import com.theieltsspells.testing.application.dto.ReadingAttemptResultResponse;
 import com.theieltsspells.testing.application.dto.ReadingAnnotationResponse;
 import com.theieltsspells.testing.application.dto.SaveReadingAnnotationRequest;
 import com.theieltsspells.testing.application.dto.SaveReadingResponsesRequest;
+import com.theieltsspells.testing.application.dto.SaveTestAttemptQuestionReviewRequest;
 import com.theieltsspells.testing.application.dto.StudentReadingAssignmentResponse;
 import com.theieltsspells.testing.application.dto.StudentReadingAttemptResponse;
 import com.theieltsspells.testing.application.dto.StudentReadingCatalogItemResponse;
+import com.theieltsspells.testing.application.dto.TestAttemptQuestionReviewResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -25,6 +28,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.ResponseStatus;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 
 import java.util.List;
@@ -39,10 +43,13 @@ import java.util.UUID;
 public class StudentReadingTestController {
 
     private final StudentReadingDeliveryService service;
+    private final TestAttemptQuestionReviewService questionReviews;
 
     @GetMapping("/assignments")
-    public List<StudentReadingAssignmentResponse> assignments(@AuthenticationPrincipal Jwt jwt) {
-        return service.listAssignments(studentId(jwt));
+    public List<StudentReadingAssignmentResponse> assignments(@AuthenticationPrincipal Jwt jwt,
+                                                              HttpServletRequest request) {
+        String skill = request.getRequestURI().contains("/listening/") ? "LISTENING" : "READING";
+        return service.listAssignments(studentId(jwt), skill);
     }
 
     @GetMapping("/catalog")
@@ -111,6 +118,28 @@ public class StudentReadingTestController {
     @PreAuthorize("@permissionPolicy.has(authentication, 'assessment.result.read')")
     public ReadingAttemptResultResponse result(@PathVariable UUID attemptId, @AuthenticationPrincipal Jwt jwt) {
         return service.getResult(attemptId, studentId(jwt));
+    }
+
+    @GetMapping("/attempts/{attemptId}/reviews")
+    public List<TestAttemptQuestionReviewResponse> reviews(@PathVariable UUID attemptId,
+                                                            @AuthenticationPrincipal Jwt jwt) {
+        return questionReviews.listForStudent(attemptId, studentId(jwt));
+    }
+
+    @PutMapping("/attempts/{attemptId}/reviews/{questionKey}")
+    public TestAttemptQuestionReviewResponse saveReview(@PathVariable UUID attemptId,
+                                                         @PathVariable String questionKey,
+                                                         @Valid @RequestBody SaveTestAttemptQuestionReviewRequest request,
+                                                         @AuthenticationPrincipal Jwt jwt) {
+        return questionReviews.save(attemptId, questionKey, request, studentId(jwt));
+    }
+
+    @DeleteMapping("/attempts/{attemptId}/reviews/{questionKey}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteReview(@PathVariable UUID attemptId,
+                             @PathVariable String questionKey,
+                             @AuthenticationPrincipal Jwt jwt) {
+        questionReviews.delete(attemptId, questionKey, studentId(jwt));
     }
 
     private UUID studentId(Jwt jwt) {

@@ -11,8 +11,11 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.util.UUID;
+
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -35,10 +38,12 @@ class SpeakingEvaluationSecurityTests {
 
     @Test
     void teacherMayOpenSpeakingGradingQueue() throws Exception {
+        UUID teacherId = UUID.randomUUID();
         mvc.perform(get("/api/v1/admin/speaking-evaluations")
-                .with(jwt().authorities(new SimpleGrantedAuthority("teacher"))))
+                .with(jwt().jwt(value -> value.subject(teacherId.toString()))
+                        .authorities(new SimpleGrantedAuthority("teacher"))))
                 .andExpect(status().isOk());
-        verify(service).list();
+        verify(service).list(eq(teacherId), eq(false));
     }
 
     @Test

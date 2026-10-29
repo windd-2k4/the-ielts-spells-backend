@@ -59,6 +59,13 @@ public class CourseApplicationService {
     }
 
     @Transactional
+    public Page<CourseResponse> listAssignedToTeacher(UUID teacherId, Boolean active, Pageable pageable) {
+        var page = courses.findAssignedToTeacher(teacherId, active, pageable);
+        synchronizeLifecycle(page.getContent());
+        return page.map(AcademicMapper::toResponse);
+    }
+
+    @Transactional
     public Page<CourseResponse> listByStatus(ClassStatus status, Pageable pageable) {
         synchronizeLifecycle(courses.findByIsActive(true, Pageable.unpaged()).getContent());
         var effectiveStatus = normalizeRequestedStatus(status);

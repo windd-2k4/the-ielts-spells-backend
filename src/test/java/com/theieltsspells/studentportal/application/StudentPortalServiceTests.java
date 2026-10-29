@@ -70,7 +70,8 @@ class StudentPortalServiceTests {
                     "listening": 0,
                     "writing": 0,
                     "speaking": 0,
-                    "totalAttempts": 1
+                    "totalAttempts": 1,
+                    "durationSeconds": 900
                   }],
                   "readingAssignments": [],
                   "recommendedCourses": [],
@@ -89,6 +90,7 @@ class StudentPortalServiceTests {
                     assertThat(activity.activityDate()).isEqualTo(java.time.LocalDate.of(2026, 1, 2));
                     assertThat(activity.reading()).isEqualTo(1);
                     assertThat(activity.totalAttempts()).isEqualTo(1);
+                    assertThat(activity.durationSeconds()).isEqualTo(900);
                 });
         assertThat(result.readingAssignments()).isEmpty();
         verify(jdbc).queryForObject(any(String.class), eq(String.class), eq(studentId));
@@ -99,7 +101,7 @@ class StudentPortalServiceTests {
     void loadsActivityForTheSelectedCalendarMonth() {
         UUID studentId = UUID.randomUUID();
         var expected = List.of(new com.theieltsspells.studentportal.application.dto.StudentPortalOverviewResponse.DailyActivity(
-                LocalDate.of(2026, 9, 14), 2, 0, 1, 0, 3
+                LocalDate.of(2026, 9, 14), 2, 0, 1, 0, 3, 3_600
         ));
         when(jdbc.query(
                 any(String.class),

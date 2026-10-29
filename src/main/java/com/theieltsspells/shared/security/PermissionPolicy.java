@@ -62,6 +62,26 @@ public class PermissionPolicy {
                 || roles.contains(AppRole.MANAGER);
     }
 
+    public boolean hasCourseListScope(Authentication authentication) {
+        return hasAdministrativeScope(authentication, "course.read")
+                || (has(authentication, "course.read") && isTeacher(authentication));
+    }
+
+    public boolean hasEnrollmentReadScope(Authentication authentication, UUID courseId) {
+        return hasAdministrativeScope(authentication, "enrollment.read")
+                || (courseId != null && hasForCourse(authentication, courseId, "enrollment.read"));
+    }
+
+    public boolean isTeacher(Authentication authentication) {
+        return roles(authentication).contains(AppRole.TEACHER)
+                || roles(authentication).contains(AppRole.TEACHING_ASSISTANT);
+    }
+
+    public boolean canGradeAcrossCourses(Authentication authentication) {
+        return has(authentication, ApplicationPermission.ASSESSMENT_GRADE)
+                && hasGlobalCourseScope(roles(authentication), ApplicationPermission.ASSESSMENT_GRADE);
+    }
+
     /**
      * The current library API is an authoring/back-office surface. Learner
      * access to published material will use a separate student-facing route.

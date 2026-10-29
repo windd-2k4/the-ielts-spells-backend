@@ -1,5 +1,6 @@
 package com.theieltsspells.identity.domain;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.theieltsspells.shared.persistence.enums.*;
 import jakarta.persistence.*;
 import lombok.Getter;
@@ -40,7 +41,7 @@ public class TeacherProfile {
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "certificates", nullable = false)
-    private Map<String, Object> certificates;
+    private JsonNode certificates;
 
     @Column(name = "years_experience")
     private Short yearsExperience;

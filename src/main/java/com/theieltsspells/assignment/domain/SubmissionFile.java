@@ -43,6 +43,15 @@ public class SubmissionFile {
     @Column(name = "size_bytes")
     private Long sizeBytes;
 
+    @Column(name = "prompt_key")
+    private String promptKey;
+
+    @Column(name = "prompt_title")
+    private String promptTitle;
+
+    @Column(name = "sort_order", nullable = false)
+    private int sortOrder;
+
     @Column(name = "uploaded_at", nullable = false)
     private OffsetDateTime uploadedAt;
 

@@ -137,6 +137,20 @@ public class EnrollmentApplicationService {
         return enrollments.findByCourseId(courseId, pageable).map(AcademicMapper::toResponse);
     }
 
+    public Page<CourseStudentResponse> listCourseStudents(UUID courseId, Pageable pageable) {
+        return enrollments.findByCourseId(courseId, pageable).map(enrollment -> {
+            var student = enrollment.getStudentRef();
+            var profile = student.getUserRef();
+            var course = enrollment.getCourseRef();
+            return new CourseStudentResponse(
+                    student.getUserId(), student.getStudentCode(), profile.getFullName(), profile.getEmail(),
+                    profile.getPhone(), profile.getAvatarPath(), student.getCurrentBand(), student.getTargetBand(),
+                    Boolean.TRUE.equals(profile.getIsActive()), enrollment.getStatus(), enrollment.getCourseId(),
+                    course == null ? null : course.getCode(), course == null ? null : course.getName(), 1,
+                    student.getJoinedAt());
+        });
+    }
+
     public Page<EnrollmentResponse> listByStudent(UUID studentId, Pageable pageable) {
         return enrollments.findByStudentId(studentId, pageable).map(AcademicMapper::toResponse);
     }

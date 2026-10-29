@@ -57,6 +57,15 @@ public class Assignment {
     @Column(name = "allow_resubmission", nullable = false)
     private Boolean allowResubmission;
 
+    @Column(name = "late_policy", nullable = false)
+    private String latePolicy;
+
+    @Column(name = "late_grace_minutes", nullable = false)
+    private Integer lateGraceMinutes;
+
+    @Column(name = "reflection_due_at")
+    private OffsetDateTime reflectionDueAt;
+
     @Enumerated(EnumType.STRING)
     @JdbcTypeCode(SqlTypes.NAMED_ENUM)
     @Column(name = "status", nullable = false)

@@ -44,9 +44,11 @@ class WritingEvaluationSecurityTests {
     @Test
     void teacherMayRetryThroughExistingAssessmentPermission() throws Exception {
         UUID id = UUID.randomUUID();
+        UUID teacherId = UUID.randomUUID();
         mvc.perform(post("/api/v1/admin/writing-evaluations/" + id + "/retry")
-                .with(jwt().authorities(new SimpleGrantedAuthority("teacher")))).andExpect(status().isOk());
-        verify(service).retry(id);
+                .with(jwt().jwt(value -> value.subject(teacherId.toString()))
+                        .authorities(new SimpleGrantedAuthority("teacher")))).andExpect(status().isOk());
+        verify(service).retry(eq(id), eq(teacherId), eq(false));
     }
 
     @Test

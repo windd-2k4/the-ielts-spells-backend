@@ -25,7 +25,7 @@ import java.util.regex.Pattern;
 @Component
 @RequiredArgsConstructor
 public class WritingAiEvaluator {
-    public static final String PROMPT_VERSION = "writing-evaluator-v3";
+    public static final String PROMPT_VERSION = "writing-evaluator-v4";
     public static final String RUBRIC_VERSION = "ielts-writing-public-may-2023-v1";
     private static final long MAX_IMAGE_BYTES = 10L * 1024 * 1024;
     private static final Pattern MEDIA_URL = Pattern.compile("/admin/library/files/([0-9a-fA-F-]{36})/content(?:[?#].*)?$");
@@ -71,6 +71,9 @@ public class WritingAiEvaluator {
                 throw new IllegalArgumentException("Missing Writing criterion feedback: " + key);
             }
             List<String> evidence = strings(item.path("evidence"));
+            if (evidence.isEmpty()) {
+                throw new IllegalArgumentException("Missing Writing criterion evidence: " + key);
+            }
             if (evidence.stream().anyMatch(quote -> !essay.contains(quote))) {
                 throw new IllegalArgumentException("Evidence must quote the submitted essay verbatim");
             }
@@ -222,12 +225,14 @@ public class WritingAiEvaluator {
                 without inventing an automatic deduction; consider off-topic content, notes/bullets instead of connected prose,
                 formulaic language and memorised material where visible.
 
-                Give concise Vietnamese feedback. Every evidence item must be a short exact English quote from the essay.
+                Give concise Vietnamese feedback. Every criterion must include 1-3 evidence items. Every evidence item
+                must be a short exact English quote copied verbatim from the essay; positive evidence is valid when the
+                criterion has no major error.
                 Return JSON only, exactly this shape and exactly four criteria:
                 {"criteria":{"%s":{"band":6.5,"feedback":"...","evidence":["exact essay quote"]},
-                "coherence_cohesion":{"band":6.5,"feedback":"...","evidence":[]},
-                "lexical_resource":{"band":6.5,"feedback":"...","evidence":[]},
-                "grammatical_range_accuracy":{"band":6.5,"feedback":"...","evidence":[]}},
+                "coherence_cohesion":{"band":6.5,"feedback":"...","evidence":["exact essay quote"]},
+                "lexical_resource":{"band":6.5,"feedback":"...","evidence":["exact essay quote"]},
+                "grammatical_range_accuracy":{"band":6.5,"feedback":"...","evidence":["exact essay quote"]}},
                 "strengths":["..."],"improvements":["..."],"detectedErrors":["..."],"confidence":0.8}
                 Confidence is optional, between 0 and 1, and is a self-assessment rather than a calibrated probability.
                 """.formatted(taskFocus, achievement);

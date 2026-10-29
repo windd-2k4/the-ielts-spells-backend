@@ -14,6 +14,7 @@ public record StudentPortalOverviewResponse(
         List<RecentAttempt> recentAttempts,
         List<DailyActivity> activityCalendar,
         List<ReadingAssignment> readingAssignments,
+        List<CourseAssignment> courseAssignments,
         List<CourseRecommendation> recommendedCourses,
         String aiStatus
 ) {
@@ -40,6 +41,7 @@ public record StudentPortalOverviewResponse(
     public record Metrics(
             int assignedTests,
             int pendingTests,
+            int pendingCourseAssignments,
             int completedAttempts,
             int currentStreakDays,
             OffsetDateTime lastActivityAt
@@ -107,7 +109,8 @@ public record StudentPortalOverviewResponse(
             int listening,
             int writing,
             int speaking,
-            int totalAttempts
+            int totalAttempts,
+            long durationSeconds
     ) {
     }
 
@@ -125,6 +128,31 @@ public record StudentPortalOverviewResponse(
             int attemptsUsed,
             Integer durationSeconds,
             OffsetDateTime activeAttemptExpiresAt
+    ) {
+    }
+
+    public record CourseAssignment(
+            UUID assignmentId,
+            UUID classActivityId,
+            UUID courseId,
+            String courseCode,
+            String courseName,
+            Integer sessionNo,
+            String sessionTitle,
+            String title,
+            String skill,
+            OffsetDateTime dueAt,
+            OffsetDateTime effectiveDueAt,
+            OffsetDateTime extensionDueAt,
+            String latePolicy,
+            int lateGraceMinutes,
+            boolean canEdit,
+            boolean canSubmit,
+            String lockReason,
+            String status,
+            String reviewStatus,
+            BigDecimal score,
+            BigDecimal maxScore
     ) {
     }
 

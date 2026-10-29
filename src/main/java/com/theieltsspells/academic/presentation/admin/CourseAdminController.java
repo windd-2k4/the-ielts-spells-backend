@@ -3,8 +3,10 @@ package com.theieltsspells.academic.presentation.admin;
 import com.theieltsspells.academic.application.CourseApplicationService;
 import com.theieltsspells.academic.application.CourseStudentSupportApplicationService;
 import com.theieltsspells.academic.application.CourseTeacherApplicationService;
+import com.theieltsspells.academic.application.EnrollmentApplicationService;
 import com.theieltsspells.academic.application.dto.*;
 import com.theieltsspells.shared.web.PageResponse;
+import com.theieltsspells.shared.security.PermissionPolicy;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -22,6 +24,7 @@ import java.time.LocalDate;
 import java.util.List;
 import com.theieltsspells.shared.persistence.enums.ClassStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.jwt.Jwt;
 
 @RestController
@@ -31,8 +34,10 @@ import org.springframework.security.oauth2.jwt.Jwt;
 @SecurityRequirement(name = "bearerAuth")
 public class CourseAdminController {
     private final CourseApplicationService service;
+    private final EnrollmentApplicationService enrollments;
     private final CourseStudentSupportApplicationService studentSupports;
     private final CourseTeacherApplicationService teachers;
+    private final PermissionPolicy permissionPolicy;
 
     @PostMapping
     @PreAuthorize("@permissionPolicy.has(authentication, 'course.manage')")
@@ -48,13 +53,37 @@ public class CourseAdminController {
     public CourseResponse get(@PathVariable UUID id) { return service.get(id); }
 
     @GetMapping
-    @PreAuthorize("@permissionPolicy.hasAdministrativeScope(authentication, 'course.read')")
+    @PreAuthorize("@permissionPolicy.hasCourseListScope(authentication)")
     @Operation(summary = "Danh sách khóa học")
     public PageResponse<CourseResponse> list(
             @RequestParam(required = false) Boolean active,
             @RequestParam(required = false) ClassStatus status,
-            @PageableDefault(size = 20, sort = "createdAt") Pageable pageable) {
+            @PageableDefault(size = 20, sort = "createdAt") Pageable pageable,
+            @AuthenticationPrincipal Jwt jwt,
+            Authentication authentication) {
+        if (permissionPolicy.isTeacher(authentication)) {
+            return PageResponse.from(service.listAssignedToTeacher(UUID.fromString(jwt.getSubject()), active, pageable));
+        }
         return PageResponse.from(status == null ? service.list(active, pageable) : service.listByStatus(status, pageable));
+    }
+
+    @GetMapping("/assigned")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'course.read') && @permissionPolicy.isTeacher(authentication)")
+    @Operation(summary = "Danh sách khóa học được phân công cho giáo viên")
+    public PageResponse<CourseResponse> assigned(
+            @RequestParam(required = false) Boolean active,
+            @PageableDefault(size = 20, sort = "createdAt") Pageable pageable,
+            @AuthenticationPrincipal Jwt jwt) {
+        return PageResponse.from(service.listAssignedToTeacher(UUID.fromString(jwt.getSubject()), active, pageable));
+    }
+
+    @GetMapping("/{id}/students")
+    @PreAuthorize("@permissionPolicy.hasForCourse(authentication, #id, 'course.read')")
+    @Operation(summary = "Danh sách học viên của khóa học theo phạm vi được phân công")
+    public PageResponse<CourseStudentResponse> students(
+            @PathVariable UUID id,
+            @PageableDefault(size = 100, sort = "enrolledAt") Pageable pageable) {
+        return PageResponse.from(enrollments.listCourseStudents(id, pageable));
     }
 
     @GetMapping("/upcoming")

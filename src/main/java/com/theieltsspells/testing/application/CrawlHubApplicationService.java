@@ -227,6 +227,24 @@ public class CrawlHubApplicationService {
         return new PageResponse<>(content, safePage, safeSize, count, totalPages, safePage == 0, safePage + 1 >= totalPages);
     }
 
+    public Map<String, Long> getStagingStats() {
+        var total = jdbc.queryForObject("select count(*) from public.raw_crawled_tests", Long.class);
+        var reading = jdbc.queryForObject("select count(*) from public.raw_crawled_tests where skill = 'READING'", Long.class);
+        var listening = jdbc.queryForObject("select count(*) from public.raw_crawled_tests where skill = 'LISTENING'", Long.class);
+        var parsed = jdbc.queryForObject("select count(*) from public.raw_crawled_tests where status = 'parsed'", Long.class);
+        var imported = jdbc.queryForObject("select count(*) from public.raw_crawled_tests where status = 'imported'", Long.class);
+        var pending = jdbc.queryForObject("select count(*) from public.raw_crawled_tests where status = 'pending'", Long.class);
+
+        return Map.of(
+                "total", total != null ? total : 0L,
+                "reading", reading != null ? reading : 0L,
+                "listening", listening != null ? listening : 0L,
+                "parsed", parsed != null ? parsed : 0L,
+                "imported", imported != null ? imported : 0L,
+                "pending", pending != null ? pending : 0L
+        );
+    }
+
     public RawCrawledTestDto getRawTest(UUID id) {
         var list = jdbc.query("""
                 select r.*, s.name as source_name
@@ -291,8 +309,8 @@ public class CrawlHubApplicationService {
                 rawTest.title(),
                 "Nhập tự động từ kho Crawl Hub: " + (rawTest.sourceName() != null ? rawTest.sourceName() : "Nguồn Open Source"),
                 rawTest.skill(),
-                "FULL_TEST",
-                60,
+                (rawTest.parsedStructure() != null && rawTest.parsedStructure().get("testType") instanceof String s && !s.isBlank()) ? s : "FULL_TEST",
+                (rawTest.parsedStructure() != null && rawTest.parsedStructure().get("durationMinutes") instanceof Number n && n.intValue() > 0) ? n.intValue() : 60,
                 "v1.0",
                 List.of("CRAWLED", rawTest.skill().name()),
                 builderContent,
@@ -315,6 +333,11 @@ public class CrawlHubApplicationService {
         getRawTest(id);
         jdbc.update("update public.raw_crawled_tests set status = ? where id = ?", status.trim().toLowerCase(Locale.ROOT), id);
         return getRawTest(id);
+    }
+
+    @Transactional
+    public void deleteRawTest(UUID id) {
+        jdbc.update("delete from public.raw_crawled_tests where id = ?", id);
     }
 
     // -------------------------------------------------------------------------

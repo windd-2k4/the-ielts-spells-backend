@@ -12,6 +12,7 @@ import java.util.UUID;
 public record CreateTestAssignmentRequest(
         @NotNull UUID testVersionId,
         @NotNull UUID courseId,
+        UUID sessionId,
         OffsetDateTime opensAt,
         OffsetDateTime closesAt,
         @NotNull @Min(1) Short maxAttempts,

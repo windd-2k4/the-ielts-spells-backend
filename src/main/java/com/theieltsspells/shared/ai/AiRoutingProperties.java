@@ -88,7 +88,7 @@ public class AiRoutingProperties {
                     "gemini-2.5-flash", "gemini-flash-latest", "gemini-2.5-pro"
             )));
             setChatModels(new ArrayList<>(List.of(
-                    "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-flash-latest"
+                    "gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-flash-latest"
             )));
             setQuizModels(new ArrayList<>(List.of(
                     "gemini-2.5-flash", "gemini-flash-latest", "gemini-2.5-pro"

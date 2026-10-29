@@ -9,11 +9,13 @@ import com.theieltsspells.writingevaluation.application.dto.WritingEvaluationRes
 import com.theieltsspells.writingevaluation.application.dto.WritingTeacherDraftRequest;
 import com.theieltsspells.writingevaluation.application.dto.WritingCalibrationResponse;
 import com.theieltsspells.shared.web.PageResponse;
+import com.theieltsspells.shared.security.PermissionPolicy;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -36,6 +38,7 @@ import java.util.UUID;
 @PreAuthorize("@permissionPolicy.has(authentication, 'assessment.grade')")
 public class WritingEvaluationAdminController {
     private final WritingEvaluationApplicationService service;
+    private final PermissionPolicy permissionPolicy;
 
     @GetMapping
     public PageResponse<WritingEvaluationResponse> list(
@@ -45,34 +48,53 @@ public class WritingEvaluationAdminController {
             @RequestParam(required = false) String teacherStatus,
             @RequestParam(defaultValue = "") String q,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "30") int size) {
-        return service.list(status, origin, courseId, teacherStatus, q, page, size);
+            @RequestParam(defaultValue = "30") int size,
+            @AuthenticationPrincipal Jwt jwt,
+            Authentication authentication) {
+        return service.list(status, origin, courseId, teacherStatus, q, page, size,
+                UUID.fromString(jwt.getSubject()), permissionPolicy.canGradeAcrossCourses(authentication));
     }
 
     @GetMapping("/filter-options")
-    public WritingEvaluationFilterOptionsResponse filterOptions() { return service.filterOptions(); }
+    public WritingEvaluationFilterOptionsResponse filterOptions(@AuthenticationPrincipal Jwt jwt,
+                                                                Authentication authentication) {
+        return service.filterOptions(UUID.fromString(jwt.getSubject()),
+                permissionPolicy.canGradeAcrossCourses(authentication));
+    }
 
     @GetMapping("/calibration")
     public WritingCalibrationResponse calibration() { return service.calibration(); }
 
     @GetMapping("/{id}")
-    public WritingEvaluationResponse get(@PathVariable UUID id) { return service.get(id); }
+    public WritingEvaluationResponse get(@PathVariable UUID id,
+                                         @AuthenticationPrincipal Jwt jwt,
+                                         Authentication authentication) {
+        return service.get(id, UUID.fromString(jwt.getSubject()), permissionPolicy.canGradeAcrossCourses(authentication));
+    }
 
     @PostMapping("/{id}/retry")
-    public WritingEvaluationResponse retry(@PathVariable UUID id) { return service.retry(id); }
+    public WritingEvaluationResponse retry(@PathVariable UUID id,
+                                           @AuthenticationPrincipal Jwt jwt,
+                                           Authentication authentication) {
+        return service.retry(id, UUID.fromString(jwt.getSubject()), permissionPolicy.canGradeAcrossCourses(authentication));
+    }
 
     @PutMapping("/{id}/review")
     public WritingEvaluationResponse review(@PathVariable UUID id,
                                             @Valid @RequestBody ReviewWritingEvaluationRequest request,
-                                            @AuthenticationPrincipal Jwt jwt) {
-        return service.review(id, request, UUID.fromString(jwt.getSubject()));
+                                             @AuthenticationPrincipal Jwt jwt,
+                                             Authentication authentication) {
+        return service.review(id, request, UUID.fromString(jwt.getSubject()),
+                permissionPolicy.canGradeAcrossCourses(authentication));
     }
 
     @PutMapping("/{id}/draft")
     public WritingEvaluationResponse draft(@PathVariable UUID id,
                                            @Valid @RequestBody WritingTeacherDraftRequest request,
-                                           @AuthenticationPrincipal Jwt jwt) {
-        return service.saveDraft(id, request, UUID.fromString(jwt.getSubject()));
+                                           @AuthenticationPrincipal Jwt jwt,
+                                           Authentication authentication) {
+        return service.saveDraft(id, request, UUID.fromString(jwt.getSubject()),
+                permissionPolicy.canGradeAcrossCourses(authentication));
     }
 
     @GetMapping("/entitlements")

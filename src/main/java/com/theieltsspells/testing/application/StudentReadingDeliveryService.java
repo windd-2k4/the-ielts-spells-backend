@@ -46,10 +46,11 @@ public class StudentReadingDeliveryService {
     private final ReadingVersionMaterializer readingVersionMaterializer;
     private final ReadingAutoGrader grader = new ReadingAutoGrader();
 
-    public List<StudentReadingAssignmentResponse> listAssignments(UUID studentId) {
+    public List<StudentReadingAssignmentResponse> listAssignments(UUID studentId, String skill) {
         return jdbc.query("""
                 select assignment.id assignment_id, assignment.test_version_id, version.title,
                   version.version_label, assignment.course_id, course.name course_name,
+                  assignment.session_id, session.session_no, session.title session_title,
                   assignment.mode, assignment.opens_at, assignment.closes_at,
                   assignment.max_attempts, assignment.duration_seconds,
                   (select count(*) from public.test_attempts attempt
@@ -60,21 +61,23 @@ public class StudentReadingDeliveryService {
                 from public.test_assignments assignment
                 join public.test_versions version on version.id = assignment.test_version_id
                 join public.courses course on course.id = assignment.course_id
+                left join public.course_sessions session on session.id = assignment.session_id
                 join public.enrollments enrollment on enrollment.course_id = assignment.course_id
                 where enrollment.student_id = ?
                   and enrollment.status = 'ACTIVE'
-                  and version.primary_skill = 'READING'
+                  and version.primary_skill = cast(? as public.skill_type)
                   and assignment.archived_at is null
                 order by coalesce(assignment.opens_at, assignment.created_at) desc
                 """, (rs, ignored) -> new StudentReadingAssignmentResponse(
                 rs.getObject("assignment_id", UUID.class), rs.getObject("test_version_id", UUID.class),
                 rs.getString("title"), rs.getString("version_label"), rs.getObject("course_id", UUID.class),
-                rs.getString("course_name"), rs.getString("mode"),
+                rs.getString("course_name"), rs.getObject("session_id", UUID.class),
+                rs.getObject("session_no", Short.class), rs.getString("session_title"), rs.getString("mode"),
                 rs.getObject("opens_at", OffsetDateTime.class), rs.getObject("closes_at", OffsetDateTime.class),
                 rs.getShort("max_attempts"), rs.getInt("attempts_used"),
                 rs.getObject("duration_seconds", Integer.class),
                 rs.getObject("active_attempt_expires_at", OffsetDateTime.class)
-        ), studentId, studentId, studentId);
+        ), studentId, studentId, studentId, skill);
     }
 
     public List<StudentReadingCatalogItemResponse> listPublishedTests(UUID studentId) {
@@ -380,7 +383,7 @@ public class StudentReadingDeliveryService {
         if ("IN_PROGRESS".equals(attempt.status())) {
             finalizeAttempt(attempt, isExpired(attempt) ? "EXPIRED" : "GRADED");
         }
-        return result(loadAttempt(attemptId, studentId, false));
+        return result(loadAttempt(attemptId, studentId, false), false);
     }
 
     public ReadingAttemptResultResponse getResult(UUID attemptId, UUID studentId) {
@@ -388,7 +391,21 @@ public class StudentReadingDeliveryService {
         if ("IN_PROGRESS".equals(attempt.status())) {
             throw new ConflictException("Bài làm chưa được nộp");
         }
-        return result(attempt);
+        return result(attempt, false);
+    }
+
+    /** Teacher-only delivery of the immutable attempt payload, including saved answers. */
+    public StudentReadingAttemptResponse getAdminAttempt(UUID attemptId, UUID courseId) {
+        return attemptPayload(loadAttemptForCourse(attemptId, courseId));
+    }
+
+    /** Teacher-only result delivery. It deliberately ignores the student's result visibility flag. */
+    public ReadingAttemptResultResponse getAdminResult(UUID attemptId, UUID courseId) {
+        var attempt = loadAttemptForCourse(attemptId, courseId);
+        if ("IN_PROGRESS".equals(attempt.status())) {
+            throw new ConflictException("Bài làm chưa được nộp");
+        }
+        return result(attempt, true);
     }
 
     private void finalizeAttempt(AttemptContext attempt, String finalStatus) {
@@ -438,7 +455,7 @@ public class StudentReadingDeliveryService {
                 """, finalStatus, totalScore, totalScore, json(metadata), attempt.id());
     }
 
-    private ReadingAttemptResultResponse result(AttemptContext attempt) {
+    private ReadingAttemptResultResponse result(AttemptContext attempt, boolean privileged) {
         var definitions = definitions(attempt.testVersionId());
         var responses = storedResponses(attempt.id()).stream()
                 .collect(Collectors.toMap(StoredResponse::questionKey, value -> value));
@@ -446,6 +463,7 @@ public class StudentReadingDeliveryService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         var solutionsByQuestion = solutions(attempt.testVersionId());
         var evidenceByQuestion = evidenceSpans(attempt.testVersionId());
+        boolean visible = privileged || attempt.showResultAfterSubmit();
         int correct = 0;
         int incorrect = 0;
         int unanswered = 0;
@@ -461,16 +479,16 @@ public class StudentReadingDeliveryService {
                 incorrect++;
             }
             var solutionDelivery = solutionsByQuestion.get(definition.questionKey());
-            boolean solutionVisible = attempt.showResultAfterSubmit()
-                    && (solutionDelivery == null || solutionDelivery.visibleToStudent());
+            boolean solutionVisible = visible
+                    && (privileged || solutionDelivery == null || solutionDelivery.visibleToStudent());
             var evidence = solutionVisible
                     ? evidenceByQuestion.getOrDefault(definition.questionKey(), List.of())
                     : List.<ReadingAttemptResultResponse.EvidenceSpan>of();
             questions.add(new ReadingAttemptResultResponse.QuestionResult(
-                    definition.questionKey(), definition.questionNo(), answered,
+                    definition.questionKey(), definition.questionNo(), response == null ? Map.of() : readMap(response.answer()), answered,
                     response == null ? null : response.correct(),
                     response == null ? BigDecimal.ZERO : response.autoScore(), definition.maxScore(),
-                    attempt.showResultAfterSubmit() ? definition.correctAnswers() : List.of(),
+                    visible ? definition.correctAnswers() : List.of(),
                     solutionVisible ? definition.explanation() : null,
                     solutionVisible && solutionDelivery != null ? solutionDelivery.solution() : null,
                     evidence,
@@ -479,7 +497,7 @@ public class StudentReadingDeliveryService {
         }
         return new ReadingAttemptResultResponse(attempt.id(), attempt.status(), attempt.submittedAt(),
                 attempt.expiresAt(), attempt.autoScore(), maxScore, correct, incorrect, unanswered,
-                attempt.showResultAfterSubmit(), attempt.showResultAfterSubmit() ? questions : List.of());
+                visible, visible ? questions : List.of());
     }
 
     private StudentReadingAttemptResponse attemptPayload(AttemptContext attempt) {
@@ -878,6 +896,17 @@ public class StudentReadingDeliveryService {
         return attempt;
     }
 
+    private AttemptContext loadAttemptForCourse(UUID attemptId, UUID courseId) {
+        var values = jdbc.query(attemptSql() + " where attempt.id = ? and assignment.course_id = ?",
+                this::mapAttempt, attemptId, courseId);
+        if (values.isEmpty()) {
+            throw new ResourceNotFoundException("Không tìm thấy lượt làm bài trong khóa học");
+        }
+        var attempt = values.getFirst();
+        assertReadingAssignment(attempt);
+        return attempt;
+    }
+
     private AssignmentContext loadAssignment(UUID assignmentId, boolean lock) {
         var values = jdbc.query(assignmentSql() + " where assignment.id = ?" + (lock ? " for update of assignment" : ""),
                 this::mapAssignment, assignmentId);
@@ -890,6 +919,7 @@ public class StudentReadingDeliveryService {
     private String assignmentSql() {
         return """
                 select assignment.id assignment_id, assignment.test_version_id, assignment.course_id,
+                  assignment.session_id,
                   assignment.opens_at, assignment.closes_at, assignment.max_attempts, assignment.mode,
                   assignment.duration_seconds, assignment.show_result_after_submit, assignment.archived_at,
                   version.title, version.description, version.duration_minutes, version.primary_skill

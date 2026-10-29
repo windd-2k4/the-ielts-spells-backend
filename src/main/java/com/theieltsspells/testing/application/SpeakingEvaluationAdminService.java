@@ -31,20 +31,45 @@ public class SpeakingEvaluationAdminService {
     private final com.theieltsspells.notification.WritingNotificationService notifications;
 
     public List<AdminSpeakingEvaluationResponse> list() {
+        return list(null, true);
+    }
+
+    public List<AdminSpeakingEvaluationResponse> list(UUID teacherId, boolean globalScope) {
+        String scope = globalScope ? "" : " and exists (select 1 from public.test_assignments teacher_assignment "
+                + "where teacher_assignment.id=attempt.test_assignment_id and exists (select 1 from public.course_teachers teacher_scope "
+                + "where teacher_scope.course_id=teacher_assignment.course_id and teacher_scope.teacher_id=?))";
         return jdbc.query(selectSql() + " where evaluation.question_key='" + SpeakingEvaluationService.ATTEMPT_KEY
-                + "' order by evaluation.created_at desc limit 200", this::map);
+                + "' and (attempt.attempt_origin='SELF_PRACTICE' or not exists (select 1 from public.test_attempts newer "
+                + "where newer.test_assignment_id=attempt.test_assignment_id and newer.student_id=attempt.student_id "
+                + "and newer.attempt_no > attempt.attempt_no))" + scope
+                + " order by evaluation.created_at desc limit 200", this::map,
+                globalScope ? new Object[]{} : new Object[]{teacherId});
     }
 
     public AdminSpeakingEvaluationResponse get(UUID id) {
-        var values = jdbc.query(selectSql() + " where evaluation.id=?", this::map, id);
+        return get(id, null, true);
+    }
+
+    public AdminSpeakingEvaluationResponse get(UUID id, UUID teacherId, boolean globalScope) {
+        String scope = globalScope ? "" : " and exists (select 1 from public.test_assignments teacher_assignment "
+                + "where teacher_assignment.id=attempt.test_assignment_id and exists (select 1 from public.course_teachers teacher_scope "
+                + "where teacher_scope.course_id=teacher_assignment.course_id and teacher_scope.teacher_id=?))";
+        var values = jdbc.query(selectSql() + " where evaluation.id=?" + scope, this::map,
+                globalScope ? new Object[]{id} : new Object[]{id, teacherId});
         if (values.isEmpty()) throw new ResourceNotFoundException("Không tìm thấy bài Speaking cần chấm");
         return values.getFirst();
     }
 
     @Transactional
     public AdminSpeakingEvaluationResponse review(UUID id, ReviewSpeakingEvaluationRequest request, UUID reviewerId) {
+        return review(id, request, reviewerId, true);
+    }
+
+    @Transactional
+    public AdminSpeakingEvaluationResponse review(UUID id, ReviewSpeakingEvaluationRequest request, UUID reviewerId,
+                                                  boolean globalScope) {
         jdbc.queryForList("select id from public.speaking_evaluations where id=? for update", id);
-        var current = get(id);
+        var current = get(id, reviewerId, globalScope);
         List.of(request.fluencyBand(), request.lexicalBand(), request.grammarBand(),
                 request.pronunciationBand()).forEach(this::validateBand);
         BigDecimal overall = SpeakingBandScorePolicy.overall(List.of(request.fluencyBand(), request.lexicalBand(),
@@ -69,7 +94,7 @@ public class SpeakingEvaluationAdminService {
                 criterionFeedback(request, "grammatical_range_accuracy"),
                 criterionFeedback(request, "pronunciation"), request.publish(), id);
         if (request.publish()) notifications.speakingCompleted(id, true);
-        return get(id);
+        return get(id, reviewerId, globalScope);
     }
 
     public List<SpeakingAiEntitlementResponse> listEntitlements(String query) {

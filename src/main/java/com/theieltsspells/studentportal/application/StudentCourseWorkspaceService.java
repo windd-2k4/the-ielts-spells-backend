@@ -124,19 +124,38 @@ public class StudentCourseWorkspaceService {
                 new ArrayList<>()
         ), courseId);
 
+        sessions = attachAssignments(sessions, studentId, courseId);
+
         // 5. Fetch Learning Resources
         List<ResourceItem> resources = jdbc.query("""
                 select r.id, r.code, r.title, r.skill::text skill, r.resource_type,
                   coalesce(rf.file_role, 'MAIN') file_role,
-                  coalesce(rf.object_path, r.external_url) external_url,
+                  case when rf.id is not null
+                       then '/admin/library/files/' || rf.id || '/content'
+                       else r.external_url
+                  end external_url,
                   r.category,
-                  cs.session_no
+                  linked.session_no
                 from public.learning_resources r
-                left join public.learning_resource_files rf on rf.resource_id = r.id and rf.archived_at is null
-                left join public.course_session_items csi on csi.source_resource_id = r.id
-                left join public.course_sessions cs on cs.id = csi.session_id
+                left join lateral (
+                  select file.id, file.file_role, file.original_filename
+                  from public.learning_resource_files file
+                  where file.resource_id = r.id and file.archived_at is null
+                  order by case when file.file_role = 'MAIN' then 0 else 1 end, file.created_at desc
+                  limit 1
+                ) rf on true
+                left join (
+                  select csi.source_resource_id, min(cs.session_no) session_no
+                  from public.course_session_items csi
+                  join public.course_sessions cs on cs.id = csi.session_id
+                  where cs.course_id = ?
+                    and csi.item_type = 'MATERIAL'
+                    and csi.visibility = 'STUDENT'
+                  group by csi.source_resource_id
+                ) linked on linked.source_resource_id = r.id
                 where r.status = 'PUBLISHED'
-                  and (r.course_id = ? or (r.scope = 'GLOBAL' and (r.skill::text in ('LISTENING', 'READING', 'GENERAL'))))
+                  and r.teacher_only = false
+                  and (r.course_id = ? or linked.source_resource_id is not null)
                 order by r.created_at desc
                 """, (rs, i) -> new ResourceItem(
                 rs.getObject("id", UUID.class),
@@ -148,7 +167,7 @@ public class StudentCourseWorkspaceService {
                 rs.getString("external_url"),
                 rs.getString("category"),
                 rs.getObject("session_no", Short.class)
-        ), courseId);
+        ), courseId, courseId);
 
         // 6. Fetch Student's Course Assignments & Attempts
         List<StudyLogItem> studyLogs = jdbc.query("""
@@ -160,17 +179,18 @@ public class StudentCourseWorkspaceService {
                   count(q.id)::int total_questions,
                   'SYSTEM' source,
                   'Hệ thống' platform,
-                  case when att.submitted_at is not null
-                       then '/student/reading/attempts/' || att.id || '/result'
-                       else '/student/reading/attempts/' || att.id
-                  end review_url
+                  '/student/' || case tv.primary_skill::text
+                    when 'SPEAKING' then 'speaking'
+                    when 'WRITING' then 'writing'
+                    else 'reading'
+                  end || '/attempts/' || att.id ||
+                  case when att.submitted_at is not null then '/result' else '' end review_url
                 from public.test_attempts att
                 join public.test_versions tv on tv.id = att.test_version_id
-                left join public.test_assignments ta on ta.id = att.test_assignment_id
+                join public.test_assignments ta on ta.id = att.test_assignment_id
                 left join public.test_version_questions q on q.test_version_id = tv.id
                 left join public.test_attempt_responses resp on resp.attempt_id = att.id and resp.question_key = q.question_key
-                where att.student_id = ?
-                  and (ta.course_id = ? or att.attempt_origin = 'SELF_PRACTICE')
+                where att.student_id = ? and ta.course_id = ?
                 group by att.id, tv.title, tv.primary_skill, att.submitted_at, att.last_saved_at, att.started_at, att.final_score, att.auto_score
                 order by completed_at desc
                 limit 20
@@ -228,7 +248,68 @@ public class StudentCourseWorkspaceService {
             List<SessionItem> sessions,
             List<StudyLogItem> studyLogs
     ) {
-        // Priority 1: Pending assigned test / homework with upcoming deadline
+        // Priority 1: Generic course assignment that has not been completed.
+        try {
+            var pendingCourseAssignment = jdbc.query("""
+                    select assignment.title, deadline.effective_due_at, activity.id class_activity_id,
+                      latest.review_status, latest.attempt_status
+                    from public.course_activities activity
+                    join public.assignments assignment on assignment.id = activity.assignment_id
+                    left join lateral (
+                      select attempt.review_status::text review_status, attempt.status::text attempt_status,
+                        submission.extension_due_at
+                      from public.student_activity_attempts attempt
+                      left join public.submissions submission on submission.id = attempt.submission_id
+                      where attempt.class_activity_id = activity.id and attempt.student_id = ?
+                      order by attempt.attempt_no desc limit 1
+                    ) latest on true
+                    left join public.assignment_student_extensions student_extension
+                      on student_extension.assignment_id = assignment.id and student_extension.student_id = ?
+                    left join lateral (
+                      select greatest(
+                        assignment.due_at + make_interval(mins => coalesce(assignment.late_grace_minutes, 0)),
+                        latest.extension_due_at,
+                        student_extension.extension_due_at
+                      ) effective_due_at
+                    ) deadline on true
+                    where activity.course_id = ? and activity.is_published = true
+                      and assignment.status = 'PUBLISHED'
+                      and (assignment.opens_at is null or assignment.opens_at <= now())
+                      and (assignment.late_policy <> 'BLOCK' or deadline.effective_due_at is null
+                        or deadline.effective_due_at >= now())
+                      and (latest.attempt_status is null
+                        or latest.review_status in ('REVISION_REQUESTED', 'REJECTED')
+                        or latest.attempt_status in ('IN_PROGRESS', 'NEEDS_REVISION'))
+                    order by case when latest.review_status in ('REVISION_REQUESTED', 'REJECTED')
+                                      or latest.attempt_status = 'NEEDS_REVISION' then 0 else 1 end,
+                      coalesce(deadline.effective_due_at, 'infinity'::timestamptz)
+                    limit 1
+                    """, (rs, i) -> new Object() {
+                final String title = rs.getString("title");
+                final OffsetDateTime dueAt = rs.getObject("effective_due_at", OffsetDateTime.class);
+                final UUID classActivityId = rs.getObject("class_activity_id", UUID.class);
+                final String reviewStatus = rs.getString("review_status");
+                final String attemptStatus = rs.getString("attempt_status");
+            }, studentId, studentId, courseId);
+            if (!pendingCourseAssignment.isEmpty()) {
+                var p = pendingCourseAssignment.getFirst();
+                boolean revision = p.reviewStatus != null
+                        && List.of("REVISION_REQUESTED", "REJECTED").contains(p.reviewStatus.toUpperCase(Locale.ROOT));
+                return new NextAction(
+                        revision ? "REVISION_REQUIRED" : "ASSIGNMENT_DUE",
+                        revision ? "Cần sửa bài: " + p.title : "Làm bài được giao: " + p.title,
+                        revision ? "Giáo viên đã yêu cầu bạn xem feedback và nộp lại bản sửa."
+                                : "Bài assignment của khóa học đang chờ bạn hoàn thành.",
+                        p.dueAt,
+                        "HIGH",
+                        revision ? "Xem nhận xét & nộp lại" : "Làm bài ngay",
+                        "/student/courses/" + courseId + "?tab=assignments&activityId=" + p.classActivityId,
+                        revision ? "CẦN SỬA LẠI" : "BÀI ĐƯỢC GIAO"
+                );
+            }
+        } catch (Exception ignored) {}
+
+        // Priority 2: Pending assigned test / homework with upcoming deadline
         try {
             var pendingAssignment = jdbc.query("""
                     select ta.id, tv.title, ta.closes_at,
@@ -237,6 +318,8 @@ public class StudentCourseWorkspaceService {
                     from public.test_assignments ta
                     join public.test_versions tv on tv.id = ta.test_version_id
                     where ta.course_id = ? and ta.archived_at is null
+                      and ((? = 'SPEAKING_WRITING' and tv.primary_skill in ('SPEAKING', 'WRITING'))
+                        or (? = 'LISTENING_READING' and tv.primary_skill in ('LISTENING', 'READING')))
                       and (ta.opens_at is null or ta.opens_at <= now())
                       and (ta.closes_at is null or ta.closes_at > now())
                     order by coalesce(ta.closes_at, 'infinity'::timestamptz) asc
@@ -247,7 +330,7 @@ public class StudentCourseWorkspaceService {
                 final OffsetDateTime closesAt = rs.getObject("closes_at", OffsetDateTime.class);
                 final int used = rs.getInt("used_attempts");
                 final int max = rs.getInt("max_attempts");
-            }, studentId, courseId);
+            }, studentId, courseId, course.skillPair(), course.skillPair());
 
             if (!pendingAssignment.isEmpty() && pendingAssignment.get(0).used < pendingAssignment.get(0).max) {
                 var p = pendingAssignment.get(0);
@@ -299,6 +382,7 @@ public class StudentCourseWorkspaceService {
 
         // Priority 3: Low result attempt that should be retried (< 50% score or score 0)
         Optional<StudyLogItem> lowScoreAttempt = studyLogs.stream()
+                .filter(log -> skillAllowed(course.skillPair(), log.skill()))
                 .filter(log -> log.score() != null && log.maxScore() != null && log.maxScore().compareTo(BigDecimal.ZERO) > 0)
                 .filter(log -> log.score().divide(log.maxScore(), 2, java.math.RoundingMode.HALF_UP).doubleValue() < 0.5)
                 .findFirst();
@@ -352,6 +436,69 @@ public class StudentCourseWorkspaceService {
         );
     }
 
+    private List<SessionItem> attachAssignments(List<SessionItem> sessions, UUID studentId, UUID courseId) {
+        var assignments = jdbc.query("""
+                select activity.session_id, assignment.id assignment_id, activity.id class_activity_id,
+                  assignment.title, assignment.due_at, assignment.max_score,
+                  latest.submission_status, latest.review_status, latest.attempt_status, latest.score
+                from public.course_activities activity
+                join public.assignments assignment on assignment.id = activity.assignment_id
+                left join lateral (
+                  select submission.status::text submission_status, attempt.review_status::text review_status,
+                    attempt.status::text attempt_status, submission.score
+                  from public.student_activity_attempts attempt
+                  join public.submissions submission on submission.id = attempt.submission_id
+                  where attempt.class_activity_id = activity.id and attempt.student_id = ?
+                  order by attempt.attempt_no desc limit 1
+                ) latest on true
+                where activity.course_id = ? and activity.session_id is not null
+                  and activity.is_published = true and assignment.status = 'PUBLISHED'
+                  and (assignment.opens_at is null or assignment.opens_at <= now())
+                order by activity.session_id, coalesce(assignment.due_at, 'infinity'::timestamptz), assignment.title
+                """, (rs, i) -> new AssignmentAttachment(
+                rs.getObject("session_id", UUID.class),
+                new SessionItem.AttachedAssignment(
+                        rs.getObject("assignment_id", UUID.class),
+                        rs.getObject("class_activity_id", UUID.class),
+                        rs.getString("title"),
+                        assignmentStatus(rs.getString("attempt_status"), rs.getString("submission_status"), rs.getString("review_status")),
+                        rs.getBigDecimal("score"),
+                        rs.getBigDecimal("max_score"),
+                        rs.getObject("due_at", OffsetDateTime.class),
+                        upper(rs.getString("review_status"))
+                )
+        ), studentId, courseId);
+        var bySession = new HashMap<UUID, List<SessionItem.AttachedAssignment>>();
+        for (var item : assignments) bySession.computeIfAbsent(item.sessionId(), ignored -> new ArrayList<>()).add(item.assignment());
+        return sessions.stream().map(session -> new SessionItem(
+                session.id(), session.sessionNo(), session.title(), session.phaseName(), session.content(),
+                session.startsAt(), session.endsAt(), session.status(), session.teacherName(), session.zoomUrl(),
+                session.hasTest(), session.itemCount(), session.materials(),
+                bySession.getOrDefault(session.id(), List.of())
+        )).toList();
+    }
+
+    private String assignmentStatus(String attemptStatus, String submissionStatus, String reviewStatus) {
+        String review = upper(reviewStatus);
+        String attempt = upper(attemptStatus);
+        String submission = upper(submissionStatus);
+        if ("REVISION_REQUESTED".equals(review) || "REJECTED".equals(review) || "NEEDS_REVISION".equals(attempt)) return "NEEDS_REVISION";
+        if ("COMPLETED".equals(attempt) || "GRADED".equals(submission)) return "COMPLETED";
+        if ("WAITING_REVIEW".equals(attempt) || "SUBMITTED".equals(submission) || "LATE".equals(submission)) return "WAITING_REVIEW";
+        if (attempt == null && submission == null) return "NOT_STARTED";
+        return "IN_PROGRESS";
+    }
+
+    private String upper(String value) {
+        return value == null ? null : value.toUpperCase(Locale.ROOT);
+    }
+
+    static boolean skillAllowed(String skillPair, String skill) {
+        return "SPEAKING_WRITING".equalsIgnoreCase(skillPair)
+                ? "SPEAKING".equalsIgnoreCase(skill) || "WRITING".equalsIgnoreCase(skill)
+                : "LISTENING".equalsIgnoreCase(skill) || "READING".equalsIgnoreCase(skill);
+    }
+
     private NextSession computeNextSession(List<SessionItem> sessions, List<ResourceItem> resources) {
         OffsetDateTime now = OffsetDateTime.now();
         SessionItem next = sessions.stream()
@@ -402,9 +549,9 @@ public class StudentCourseWorkspaceService {
                       from public.test_attempt_responses resp
                       join public.test_attempts att on att.id = resp.attempt_id
                       left join public.test_version_questions q on q.question_key = resp.question_key and q.test_version_id = att.test_version_id
-                      left join public.test_assignments ta on ta.id = att.test_assignment_id
+                      join public.test_assignments ta on ta.id = att.test_assignment_id
                       where att.student_id = ? and resp.is_correct = false
-                        and (ta.course_id = ? or att.attempt_origin = 'SELF_PRACTICE')
+                        and ta.course_id = ?
                       group by resp.question_key, resp.question_type, q.type_format
                       having count(*) >= 2
                     )
@@ -474,9 +621,20 @@ public class StudentCourseWorkspaceService {
     private GoalProgress computeGoalProgress(UUID studentId, UUID courseId, EnrollmentInfo enrollment) {
         try {
             Long weeklyAttempts = jdbc.queryForObject("""
-                    select count(*) from public.test_attempts
-                    where student_id = ? and submitted_at >= now() - interval '7 days'
-                    """, Long.class, studentId);
+                    select count(*) from (
+                      select attempt.id
+                      from public.test_attempts attempt
+                      join public.test_assignments assignment on assignment.id = attempt.test_assignment_id
+                      where attempt.student_id = ? and assignment.course_id = ?
+                        and attempt.submitted_at >= now() - interval '7 days'
+                      union all
+                      select attempt.id
+                      from public.student_activity_attempts attempt
+                      join public.course_activities activity on activity.id = attempt.class_activity_id
+                      where attempt.student_id = ? and activity.course_id = ?
+                        and attempt.submitted_at >= now() - interval '7 days'
+                    ) completed
+                    """, Long.class, studentId, courseId, studentId, courseId);
 
             int completedSessions = enrollment.completedSessions();
             int totalSessions = Math.max(1, enrollment.totalSessions());
@@ -503,8 +661,9 @@ public class StudentCourseWorkspaceService {
                       case when tar.status::text in ('REVISION_REQUESTED', 'NEEDS_REVISION') then 'HIGH' else 'NORMAL' end priority
                     from public.teacher_activity_reviews tar
                     join public.student_activity_attempts saa on saa.id = tar.attempt_id
+                    join public.course_activities activity on activity.id = saa.class_activity_id
                     join public.profiles tp_prof on tp_prof.id = tar.reviewer_id
-                    where saa.student_id = ?
+                    where saa.student_id = ? and activity.course_id = ?
                     order by tar.reviewed_at desc
                     limit 5
                     """, (rs, i) -> new TeacherFeedbackItem(
@@ -517,7 +676,7 @@ public class StudentCourseWorkspaceService {
                     rs.getBoolean("is_revision"),
                     rs.getString("priority"),
                     true
-            ), studentId);
+            ), studentId, courseId);
         } catch (Exception ex) {
             return Collections.emptyList();
         }
@@ -541,5 +700,7 @@ public class StudentCourseWorkspaceService {
             return ids.get(0);
         }
     }
+
+    private record AssignmentAttachment(UUID sessionId, SessionItem.AttachedAssignment assignment) {}
 }
 

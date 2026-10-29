@@ -40,10 +40,16 @@ public class TestAssignmentApplicationService {
         if (!moderator && !memberships.isTeacherAssigned(request.courseId(), actor)) {
             throw new BusinessRuleException("Bạn không được phân công cho khóa học này");
         }
+        if (request.sessionId() != null && memberships.session(request.courseId(), request.sessionId()).isEmpty()) {
+            throw new BusinessRuleException("Session không thuộc khóa học đã chọn");
+        }
 
         var version = loadVersion(request.testVersionId());
-        if (version.skill() != SkillType.READING && version.skill() != SkillType.WRITING) {
-            throw new BusinessRuleException("Giao đề hiện hỗ trợ Reading và Writing đã xuất bản");
+        String skillPair = jdbc.queryForObject(
+                "select skill_pair::text from public.courses where id = ?", String.class, request.courseId());
+        boolean speakingWriting = version.skill() == SkillType.SPEAKING || version.skill() == SkillType.WRITING;
+        if (speakingWriting != "SPEAKING_WRITING".equals(skillPair)) {
+            throw new BusinessRuleException("Kỹ năng của đề không khớp với loại khóa học");
         }
         if (version.skill() == SkillType.READING) {
             readingVersionMaterializer.ensureMaterialized(version.id(), version.builderContent());
@@ -61,15 +67,18 @@ public class TestAssignmentApplicationService {
         try {
             id = jdbc.queryForObject("""
                     insert into public.test_assignments(
-                      test_id, test_version_id, course_id, assigned_by, opens_at, closes_at,
+                      test_id, test_version_id, course_id, session_id, assigned_by, opens_at, closes_at,
                       max_attempts, mode, duration_seconds, show_result_after_submit
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     returning id
-                    """, UUID.class, version.testId(), version.id(), request.courseId(), actor,
+                    """, UUID.class, version.testId(), version.id(), request.courseId(), request.sessionId(), actor,
                     request.opensAt(), request.closesAt(), request.maxAttempts(), mode(request.mode()),
                     request.durationSeconds(), request.showResultAfterSubmit() == null || request.showResultAfterSubmit());
         } catch (DataIntegrityViolationException exception) {
             throw new ConflictException("Phiên bản đề này đã được giao cho khóa học");
+        }
+        if (request.sessionId() != null) {
+            linkToCourseActivity(id, request.courseId(), request.sessionId(), version.skill().name());
         }
         return get(id);
     }
@@ -125,10 +134,12 @@ public class TestAssignmentApplicationService {
                   assignment.mode, assignment.opens_at, assignment.closes_at, assignment.max_attempts,
                   assignment.duration_seconds, assignment.show_result_after_submit, assignment.archived_at,
                   assignment.created_at, version.title test_title, version.version_label,
-                  version.primary_skill, course.name course_name
+                  version.primary_skill, course.name course_name, assignment.session_id,
+                  session.session_no, session.title session_title
                 from public.test_assignments assignment
                 join public.test_versions version on version.id = assignment.test_version_id
                 join public.courses course on course.id = assignment.course_id
+                left join public.course_sessions session on session.id = assignment.session_id
                 """;
     }
 
@@ -137,7 +148,9 @@ public class TestAssignmentApplicationService {
                 rs.getObject("id", UUID.class), rs.getObject("test_id", UUID.class),
                 rs.getObject("test_version_id", UUID.class), rs.getString("test_title"),
                 rs.getString("version_label"), rs.getString("primary_skill"),
-                rs.getObject("course_id", UUID.class), rs.getString("course_name"), rs.getString("mode"),
+                rs.getObject("course_id", UUID.class), rs.getString("course_name"),
+                rs.getObject("session_id", UUID.class), rs.getObject("session_no", Short.class),
+                rs.getString("session_title"), rs.getString("mode"),
                 rs.getObject("opens_at", OffsetDateTime.class), rs.getObject("closes_at", OffsetDateTime.class),
                 rs.getShort("max_attempts"), rs.getObject("duration_seconds", Integer.class),
                 rs.getBoolean("show_result_after_submit"), rs.getObject("archived_at", OffsetDateTime.class),
@@ -148,6 +161,32 @@ public class TestAssignmentApplicationService {
     private void validateSchedule(OffsetDateTime opensAt, OffsetDateTime closesAt) {
         if (opensAt != null && closesAt != null && !closesAt.isAfter(opensAt)) {
             throw new BusinessRuleException("Thời điểm đóng bài phải sau thời điểm mở bài");
+        }
+    }
+
+    /**
+     * Preserve the existing Course -> Session -> CourseActivity -> TestAssignment
+     * graph when a matching published activity already exists. The attempt tables
+     * remain the only evidence source; this update only attaches the assignment.
+     */
+    private void linkToCourseActivity(UUID assignmentId, UUID courseId, UUID sessionId, String skill) {
+        var activityIds = jdbc.query("""
+                select activity.id
+                from public.course_activities activity
+                join public.learning_activities learning on learning.id = activity.activity_id
+                where activity.course_id = ? and activity.session_id = ?
+                  and activity.is_published = true and activity.test_assignment_id is null
+                  and learning.skill = cast(? as public.skill_type)
+                order by activity.created_at, activity.id
+                limit 1
+                """, (rs, ignored) -> rs.getObject("id", UUID.class), courseId, sessionId, skill);
+        if (!activityIds.isEmpty()) {
+            jdbc.update("""
+                    update public.course_activities
+                    set test_assignment_id = ?, opens_at = coalesce(opens_at, (select opens_at from public.test_assignments where id = ?)),
+                        due_at = coalesce(due_at, (select closes_at from public.test_assignments where id = ?)), updated_at = now()
+                    where id = ? and test_assignment_id is null
+                    """, assignmentId, assignmentId, assignmentId, activityIds.getFirst());
         }
     }
 

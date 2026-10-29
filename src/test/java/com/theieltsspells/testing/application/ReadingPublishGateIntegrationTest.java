@@ -516,7 +516,7 @@ class ReadingPublishGateIntegrationTest {
         UUID versionOneId = publishedV1.publishedVersion().id();
 
         var assignment = assignmentService.create(new CreateTestAssignmentRequest(
-                versionOneId, courseId, null, null, (short) 1, "PRACTICE", 900, true
+                versionOneId, courseId, null, null, null, (short) 1, "PRACTICE", 900, true
         ), actorId, true);
 
         var revision = testBankService.createRevision(
@@ -542,6 +542,20 @@ class ReadingPublishGateIntegrationTest {
         @SuppressWarnings("unchecked")
         var questions = (List<Map<String, Object>>) groups.getFirst().get("questions");
         assertFalse(questions.getFirst().containsKey("correctAnswers"));
+    }
+
+    @Test
+    void publishedSpeakingCanBeAssignedToASpeakingWritingCourse() {
+        UUID courseId = createSpeakingWritingCourse();
+        var created = createSingleSpeaking("Speaking assignment");
+        var published = testBankService.changeStatus(created.id(), "PUBLISHED", created.draftRevision(), actorId, true);
+
+        var assignment = assignmentService.create(new CreateTestAssignmentRequest(
+                published.publishedVersion().id(), courseId, null, null, null, (short) 2, "PRACTICE", 900, true
+        ), actorId, true);
+
+        assertEquals("SPEAKING", assignment.skill());
+        assertEquals(courseId, assignment.courseId());
     }
 
     @Test
@@ -632,14 +646,36 @@ class ReadingPublishGateIntegrationTest {
         ), actorId);
     }
 
+    private TestBankResponse createSingleSpeaking(String title) {
+        var question = new LinkedHashMap<String, Object>();
+        question.put("id", "speaking-question-1");
+        question.put("promptText", "Tell me about your hometown.");
+        var part = new LinkedHashMap<String, Object>();
+        part.put("partNo", 1);
+        part.put("topicTitle", "Home town");
+        part.put("questions", List.of(question));
+        return testBankService.create(new TestBankRequest(
+                title, "Description", SkillType.SPEAKING, "SINGLE_SKILL", 15,
+                "v1.0-draft", List.of("SPEAKING"), Map.of("parts", List.of(part)), null
+        ), actorId);
+    }
+
     private UUID createCourse() {
+        return createCourse("LISTENING_READING");
+    }
+
+    private UUID createSpeakingWritingCourse() {
+        return createCourse("SPEAKING_WRITING");
+    }
+
+    private UUID createCourse(String skillPair) {
         UUID courseId = UUID.randomUUID();
         jdbc.update("""
                 insert into public.courses(
                   id, code, name, capacity, starts_on, status, created_by, skill_pair, total_sessions
-                ) values (?, ?, ?, 20, current_date, 'ACTIVE', ?, 'LISTENING_READING', 12)
+                ) values (?, ?, ?, 20, current_date, 'ACTIVE', ?, ?::public.skill_pair, 12)
                 """, courseId, "COURSE-" + courseId.toString().substring(0, 8),
-                "Reading Test Course", actorId);
+                skillPair.equals("SPEAKING_WRITING") ? "Speaking Writing Course" : "Reading Test Course", actorId, skillPair);
         return courseId;
     }
 

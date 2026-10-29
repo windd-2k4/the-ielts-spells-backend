@@ -8,6 +8,7 @@ import com.theieltsspells.studentportal.application.dto.StudentCourseResponse;
 import com.theieltsspells.studentportal.application.dto.StudentCourseSessionResponse;
 import com.theieltsspells.studentportal.application.dto.StudentExamPlanResponse;
 import com.theieltsspells.studentportal.application.dto.StudentPortalOverviewResponse;
+import com.theieltsspells.studentportal.application.dto.StudentPortfolioResponse;
 import com.theieltsspells.studentportal.application.dto.StudentTargetBandResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -16,11 +17,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.YearMonth;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.UUID;
 
 @Service
@@ -53,7 +56,11 @@ public class StudentPortalService {
                   count(*) filter (where version.primary_skill = 'LISTENING')::integer listening,
                   count(*) filter (where version.primary_skill = 'WRITING')::integer writing,
                   count(*) filter (where version.primary_skill = 'SPEAKING')::integer speaking,
-                  count(*)::integer total_attempts
+                  count(*)::integer total_attempts,
+                  coalesce(sum(least(
+                    greatest(0, extract(epoch from (attempt.submitted_at - attempt.started_at))),
+                    version.duration_minutes * 60
+                  )), 0)::bigint duration_seconds
                 from public.test_attempts attempt
                 join public.test_versions version on version.id = attempt.test_version_id
                 where attempt.student_id = ?
@@ -68,7 +75,8 @@ public class StudentPortalService {
                 rs.getInt("listening"),
                 rs.getInt("writing"),
                 rs.getInt("speaking"),
-                rs.getInt("total_attempts")
+                rs.getInt("total_attempts"),
+                rs.getLong("duration_seconds")
         ), studentId, monthStart, nextMonthStart);
     }
 
@@ -143,6 +151,190 @@ public class StudentPortalService {
                 rs.getString("phase_name"),
                 rs.getString("teacher_name")
         ), courseId);
+    }
+
+    public StudentPortfolioResponse portfolio(UUID studentId, UUID courseId) {
+        Boolean enrolled = jdbc.queryForObject("""
+                select exists (
+                  select 1 from public.enrollments
+                  where student_id = ? and course_id = ? and status in ('ACTIVE', 'PAUSED', 'COMPLETED')
+                )
+                """, Boolean.class, studentId, courseId);
+        if (!Boolean.TRUE.equals(enrolled)) {
+            throw new ResourceNotFoundException("Không tìm thấy quyền truy cập portfolio của khóa học");
+        }
+        var course = jdbc.query("""
+                select id, code, name, skill_pair::text skill_pair
+                from public.courses
+                where id = ?
+                """, (rs, ignored) -> new PortfolioCourse(
+                rs.getObject("id", UUID.class), rs.getString("code"), rs.getString("name"),
+                rs.getString("skill_pair")), courseId);
+        if (course.isEmpty()) throw new ResourceNotFoundException("Không tìm thấy khóa học");
+
+        var rows = jdbc.query("""
+                select assignment.id assignment_id, activity.id class_activity_id,
+                  submission.id submission_id, attempt.id attempt_id, submission.attempt_no,
+                  session.session_no, coalesce(session.title, 'Session ' || session.session_no) session_title,
+                  assignment.title assignment_title, learning_activity.skill::text skill,
+                  submission.status::text submission_status, attempt.status::text attempt_status,
+                  attempt.review_status::text review_status, submission.submitted_at,
+                  submission.score, assignment.max_score, submission.is_late late,
+                  case
+                    when submission.extension_due_at is null then student_extension.extension_due_at
+                    when student_extension.extension_due_at is null then submission.extension_due_at
+                    when submission.extension_due_at > student_extension.extension_due_at then submission.extension_due_at
+                    else student_extension.extension_due_at
+                  end extension_due_at,
+                  attempt.reflection,
+                  review.id review_id, review.feedback, review.reviewed_at,
+                  coalesce(review.reflection_due_at, assignment.reflection_due_at) reflection_due_at,
+                  exists (select 1 from public.submission_files audio
+                          where audio.submission_id = submission.id
+                            and lower(audio.mime_type) like 'audio/%') audio_submitted
+                from public.course_activities activity
+                join public.assignments assignment on assignment.id = activity.assignment_id
+                join public.course_sessions session on session.id = activity.session_id
+                join public.learning_activities learning_activity on learning_activity.id = activity.activity_id
+                join public.submissions submission on submission.assignment_id = assignment.id
+                  and submission.student_id = ?
+                join public.student_activity_attempts attempt on attempt.submission_id = submission.id
+                left join public.assignment_student_extensions student_extension
+                  on student_extension.assignment_id = assignment.id and student_extension.student_id = submission.student_id
+                left join lateral (
+                  select teacher_review.id, teacher_review.feedback, teacher_review.reviewed_at,
+                    teacher_review.reflection_due_at
+                  from public.teacher_activity_reviews teacher_review
+                  where teacher_review.attempt_id = attempt.id
+                  order by teacher_review.reviewed_at desc nulls last
+                  limit 1
+                ) review on true
+                where activity.course_id = ?
+                  and activity.is_published = true
+                  and assignment.status = 'PUBLISHED'
+                order by coalesce(submission.submitted_at, submission.updated_at, submission.created_at) desc,
+                  submission.attempt_no desc
+                """, (rs, ignored) -> new PortfolioEntryRow(
+                rs.getObject("assignment_id", UUID.class),
+                rs.getObject("class_activity_id", UUID.class),
+                rs.getObject("submission_id", UUID.class),
+                rs.getObject("attempt_id", UUID.class),
+                rs.getShort("attempt_no"),
+                rs.getInt("session_no"),
+                rs.getString("session_title"),
+                rs.getString("assignment_title"),
+                upper(rs.getString("skill")),
+                upper(rs.getString("submission_status")),
+                upper(rs.getString("attempt_status")),
+                upper(rs.getString("review_status")),
+                rs.getObject("submitted_at", OffsetDateTime.class),
+                rs.getBigDecimal("score"),
+                rs.getBigDecimal("max_score"),
+                rs.getBoolean("late"),
+                rs.getObject("extension_due_at", OffsetDateTime.class),
+                rs.getObject("reflection", String.class),
+                rs.getObject("review_id", UUID.class),
+                rs.getString("feedback"),
+                rs.getObject("reviewed_at", OffsetDateTime.class),
+                rs.getObject("reflection_due_at", OffsetDateTime.class),
+                rs.getBoolean("audio_submitted")
+        ), studentId, courseId);
+
+        var timeline = rows.stream().map(row -> new StudentPortfolioResponse.TimelineEntry(
+                row.assignmentId(), row.classActivityId(), row.submissionId(), row.attemptId(), row.attemptNo(),
+                row.sessionNo(), row.sessionTitle(), row.assignmentTitle(), row.skill(), row.submissionStatus(),
+                row.attemptStatus(), row.reviewStatus(), row.submittedAt(), row.score(), row.maxScore(), row.late(),
+                row.extensionDueAt(), row.feedback(), row.reviewedAt(), row.reflection(), row.reflectionDueAt(),
+                row.audioSubmitted(), rubric(row.reviewId()), annotations(row.reviewId())
+        )).toList();
+
+        var criterionRows = jdbc.query("""
+                select learning_activity.skill::text skill, criterion.criterion, criterion.score,
+                  review.reviewed_at
+                from public.course_activities activity
+                join public.assignments assignment on assignment.id = activity.assignment_id
+                join public.learning_activities learning_activity on learning_activity.id = activity.activity_id
+                join public.submissions submission on submission.assignment_id = assignment.id
+                  and submission.student_id = ?
+                join public.student_activity_attempts attempt on attempt.submission_id = submission.id
+                join public.teacher_activity_reviews review on review.attempt_id = attempt.id
+                join public.teacher_review_criteria criterion on criterion.review_id = review.id
+                where activity.course_id = ? and activity.is_published = true
+                  and criterion.score is not null
+                order by learning_activity.skill, criterion.criterion, review.reviewed_at nulls first
+                """, (rs, ignored) -> new CriterionRow(
+                upper(rs.getString("skill")), rs.getString("criterion"),
+                rs.getBigDecimal("score"), rs.getObject("reviewed_at", OffsetDateTime.class)
+        ), studentId, courseId);
+        var progress = new LinkedHashMap<String, CriterionAccumulator>();
+        criterionRows.forEach(row -> progress.computeIfAbsent(row.skill() + ":" + row.criterion(), ignored ->
+                new CriterionAccumulator(row.skill(), row.criterion())).add(row.score()));
+        var criterionProgress = progress.values().stream()
+                .map(item -> item.response(rubricLabel(item.criterion)))
+                .toList();
+
+        var latestByAssignment = new LinkedHashMap<UUID, StudentPortfolioResponse.TimelineEntry>();
+        timeline.forEach(item -> latestByAssignment.putIfAbsent(item.assignmentId(), item));
+        int totalAssignments = jdbc.queryForObject("""
+                select count(*) from public.course_activities activity
+                join public.assignments assignment on assignment.id = activity.assignment_id
+                where activity.course_id = ? and activity.is_published = true and assignment.status = 'PUBLISHED'
+                """, Integer.class, courseId);
+        int completedAssignments = (int) latestByAssignment.values().stream()
+                .filter(item -> "COMPLETED".equals(item.attemptStatus()) || "VERIFIED".equals(item.reviewStatus()))
+                .count();
+        int gradedSubmissions = (int) timeline.stream().filter(item -> item.reviewedAt() != null).count();
+        int revisionRequests = (int) timeline.stream().filter(item ->
+                "REVISION_REQUESTED".equals(item.reviewStatus()) || "REJECTED".equals(item.reviewStatus())).count();
+        int reflections = (int) timeline.stream().filter(item -> item.reflection() != null && !item.reflection().isBlank()).count();
+        return new StudentPortfolioResponse(
+                course.getFirst().id(), course.getFirst().code(), course.getFirst().name(), course.getFirst().skillPair(),
+                OffsetDateTime.now(),
+                new StudentPortfolioResponse.Summary(totalAssignments, completedAssignments, timeline.size(),
+                        gradedSubmissions, revisionRequests, reflections),
+                criterionProgress, timeline);
+    }
+
+    private List<StudentPortfolioResponse.Criterion> rubric(UUID reviewId) {
+        if (reviewId == null) return List.of();
+        return jdbc.query("""
+                select criterion, score, feedback, sort_order
+                from public.teacher_review_criteria
+                where review_id = ?
+                order by sort_order, criterion
+                """, (rs, ignored) -> new StudentPortfolioResponse.Criterion(
+                rs.getString("criterion"), rubricLabel(rs.getString("criterion")),
+                rs.getBigDecimal("score"), rs.getString("feedback"), rs.getInt("sort_order")), reviewId);
+    }
+
+    private List<StudentPortfolioResponse.Annotation> annotations(UUID reviewId) {
+        if (reviewId == null) return List.of();
+        return jdbc.query("""
+                select id, start_offset, end_offset, quoted_text, comment, suggestion, sort_order
+                from public.teacher_review_annotations
+                where review_id = ?
+                order by sort_order, start_offset
+                """, (rs, ignored) -> new StudentPortfolioResponse.Annotation(
+                rs.getObject("id", UUID.class), rs.getInt("start_offset"), rs.getInt("end_offset"),
+                rs.getString("quoted_text"), rs.getString("comment"), rs.getString("suggestion"),
+                rs.getInt("sort_order")), reviewId);
+    }
+
+    private String rubricLabel(String criterion) {
+        return switch (criterion == null ? "" : criterion.toUpperCase()) {
+            case "TASK_ACHIEVEMENT" -> "Task Achievement";
+            case "TASK_RESPONSE" -> "Task Achievement / Response";
+            case "COHERENCE_COHESION" -> "Coherence & Cohesion";
+            case "LEXICAL_RESOURCE" -> "Lexical Resource";
+            case "GRAMMATICAL_RANGE_ACCURACY" -> "Grammatical Range & Accuracy";
+            case "FLUENCY_COHERENCE" -> "Fluency & Coherence";
+            case "PRONUNCIATION" -> "Pronunciation";
+            default -> criterion;
+        };
+    }
+
+    private String upper(String value) {
+        return value == null ? null : value.toUpperCase();
     }
 
     private String overviewSql() {
@@ -249,6 +441,59 @@ public class StudentPortalService {
                     and version.primary_skill = 'READING'
                     and assignment.archived_at is null
                   order by coalesce(assignment.opens_at, assignment.created_at) desc
+                ), course_assignment_items as (
+                  select assignment.id assignment_id, activity.id class_activity_id,
+                    course.id course_id, course.code course_code, course.name course_name,
+                    session.session_no, session.title session_title, assignment.title,
+                    learning_activity.skill::text skill, assignment.due_at,
+                    assignment.late_policy, assignment.late_grace_minutes,
+                    assignment.allow_resubmission,
+                    case
+                      when latest.extension_due_at is null then student_extension.extension_due_at
+                      when student_extension.extension_due_at is null then latest.extension_due_at
+                      when latest.extension_due_at > student_extension.extension_due_at then latest.extension_due_at
+                      else student_extension.extension_due_at
+                    end extension_due_at,
+                    greatest(
+                      assignment.due_at + make_interval(mins => coalesce(assignment.late_grace_minutes, 0)),
+                      latest.extension_due_at,
+                      student_extension.extension_due_at
+                    ) effective_due_at,
+                    latest.submission_status, latest.review_status, latest.attempt_status,
+                    latest.score, assignment.max_score,
+                    case
+                      when latest.attempt_id is null then 'NOT_STARTED'
+                      when latest.review_status in ('REVISION_REQUESTED', 'REJECTED')
+                        or latest.attempt_status = 'NEEDS_REVISION' then 'NEEDS_REVISION'
+                      when latest.attempt_status = 'COMPLETED'
+                        or latest.submission_status = 'GRADED' then 'COMPLETED'
+                      when latest.attempt_status = 'WAITING_REVIEW'
+                        or latest.submission_status in ('SUBMITTED', 'LATE') then 'WAITING_REVIEW'
+                      else 'IN_PROGRESS'
+                    end status
+                  from public.course_activities activity
+                  join public.assignments assignment on assignment.id = activity.assignment_id
+                  join public.courses course on course.id = activity.course_id
+                  left join public.course_sessions session on session.id = activity.session_id
+                  join public.learning_activities learning_activity on learning_activity.id = activity.activity_id
+                  join public.enrollments enrollment on enrollment.course_id = activity.course_id
+                  join params on params.student_id = enrollment.student_id
+                  left join public.assignment_student_extensions student_extension
+                    on student_extension.assignment_id = assignment.id and student_extension.student_id = params.student_id
+                  left join lateral (
+                    select attempt.id attempt_id, submission.status::text submission_status,
+                      attempt.review_status::text review_status, attempt.status::text attempt_status,
+                      submission.score, submission.extension_due_at
+                    from public.student_activity_attempts attempt
+                    join public.submissions submission on submission.id = attempt.submission_id
+                    where attempt.class_activity_id = activity.id and attempt.student_id = params.student_id
+                    order by attempt.attempt_no desc
+                    limit 1
+                  ) latest on true
+                  where enrollment.status = 'ACTIVE'
+                    and activity.is_published = true
+                    and assignment.status = 'PUBLISHED'
+                    and (assignment.opens_at is null or assignment.opens_at <= now())
                 ), activity_days as (
                   select distinct (coalesce(attempt.submitted_at, attempt.last_saved_at, attempt.started_at)
                     at time zone 'Asia/Ho_Chi_Minh')::date activity_date
@@ -260,7 +505,11 @@ public class StudentPortalService {
                     count(*) filter (where version.primary_skill = 'LISTENING')::integer listening,
                     count(*) filter (where version.primary_skill = 'WRITING')::integer writing,
                     count(*) filter (where version.primary_skill = 'SPEAKING')::integer speaking,
-                    count(*)::integer total_attempts
+                    count(*)::integer total_attempts,
+                    coalesce(sum(least(
+                      greatest(0, extract(epoch from (attempt.submitted_at - attempt.started_at))),
+                      version.duration_minutes * 60
+                    )), 0)::bigint duration_seconds
                   from public.test_attempts attempt
                   join params on params.student_id = attempt.student_id
                   join public.test_versions version on version.id = attempt.test_version_id
@@ -336,6 +585,8 @@ public class StudentPortalService {
                       where (assignment.opens_at is null or assignment.opens_at <= now())
                         and (assignment.closes_at is null or assignment.closes_at > now())
                         and assignment.completed_attempts_used < assignment.max_attempts),
+                    'pendingCourseAssignments', (select count(*) from course_assignment_items assignment
+                      where assignment.status not in ('COMPLETED', 'WAITING_REVIEW')),
                     'completedAttempts', (select count(*) from public.test_attempts attempt
                       join params on params.student_id = attempt.student_id
                       where attempt.status in ('SUBMITTED', 'GRADED', 'EXPIRED')),
@@ -401,7 +652,8 @@ public class StudentPortalService {
                     'listening', item.listening,
                     'writing', item.writing,
                     'speaking', item.speaking,
-                    'totalAttempts', item.total_attempts
+                    'totalAttempts', item.total_attempts,
+                    'durationSeconds', item.duration_seconds
                   ) order by item.activity_date) from activity_summary_items item), '[]'::jsonb),
                   'readingAssignments', coalesce((select jsonb_agg(jsonb_build_object(
                     'assignmentId', item.assignment_id,
@@ -419,6 +671,48 @@ public class StudentPortalService {
                     'activeAttemptExpiresAt', item.active_attempt_expires_at
                   ) order by coalesce(item.opens_at, '-infinity'::timestamptz) desc)
                     from assignment_items item), '[]'::jsonb),
+                  'courseAssignments', coalesce((select jsonb_agg(jsonb_build_object(
+                    'assignmentId', item.assignment_id,
+                    'classActivityId', item.class_activity_id,
+                    'courseId', item.course_id,
+                    'courseCode', item.course_code,
+                    'courseName', item.course_name,
+                    'sessionNo', item.session_no,
+                    'sessionTitle', item.session_title,
+                    'title', item.title,
+                    'skill', item.skill,
+                    'dueAt', item.due_at,
+                    'effectiveDueAt', item.effective_due_at,
+                    'extensionDueAt', item.extension_due_at,
+                    'latePolicy', item.late_policy,
+                    'lateGraceMinutes', item.late_grace_minutes,
+                    'canEdit', case
+                      when item.status in ('COMPLETED', 'WAITING_REVIEW') then false
+                      when item.status = 'NEEDS_REVISION' and not item.allow_resubmission then false
+                      when item.effective_due_at < now() and item.late_policy = 'BLOCK' then false
+                      else true
+                    end,
+                    'canSubmit', case
+                      when item.status in ('COMPLETED', 'WAITING_REVIEW') then false
+                      when item.status = 'NEEDS_REVISION' and not item.allow_resubmission then false
+                      when item.effective_due_at < now() and item.late_policy = 'BLOCK' then false
+                      else true
+                    end,
+                    'lockReason', case
+                      when item.status in ('COMPLETED', 'WAITING_REVIEW') then 'Bài đã nộp và đang chờ giáo viên xử lý.'
+                      when item.status = 'NEEDS_REVISION' and not item.allow_resubmission then 'Assignment không cho phép nộp lại.'
+                      when item.effective_due_at < now() and item.late_policy = 'BLOCK' then 'Đã quá hạn nộp bài.'
+                      else null
+                    end,
+                    'status', item.status,
+                    'reviewStatus', item.review_status,
+                    'score', item.score,
+                    'maxScore', item.max_score
+                  ) order by case item.status
+                    when 'NEEDS_REVISION' then 0 when 'NOT_STARTED' then 1
+                    when 'IN_PROGRESS' then 2 else 3 end,
+                    coalesce(item.due_at, 'infinity'::timestamptz))
+                    from course_assignment_items item), '[]'::jsonb),
                   'recommendedCourses', coalesce((select jsonb_agg(jsonb_build_object(
                     'courseId', item.course_id,
                     'code', item.code,
@@ -721,9 +1015,29 @@ public class StudentPortalService {
                 order by activity_date desc
                 limit 366
                 """, (rs, ignored) -> rs.getObject("activity_date", LocalDate.class), studentId);
+        int pendingCourseAssignments = jdbc.queryForObject("""
+                select count(*)
+                from public.course_activities activity
+                join public.assignments assignment on assignment.id = activity.assignment_id
+                where activity.is_published = true and assignment.status = 'PUBLISHED'
+                  and (assignment.opens_at is null or assignment.opens_at <= now())
+                  and exists (select 1 from public.enrollments enrollment
+                              where enrollment.course_id = activity.course_id
+                                and enrollment.student_id = ? and enrollment.status = 'ACTIVE')
+                  and not exists (
+                    select 1 from public.student_activity_attempts attempt
+                    where attempt.class_activity_id = activity.id and attempt.student_id = ?
+                      and attempt.attempt_no = (
+                        select max(newer.attempt_no) from public.student_activity_attempts newer
+                        where newer.class_activity_id = activity.id and newer.student_id = ?
+                      )
+                      and attempt.status in ('COMPLETED', 'WAITING_REVIEW')
+                  )
+                """, Integer.class, studentId, studentId, studentId);
         return new StudentPortalOverviewResponse.Metrics(
                 row.assignedTests(),
                 pending,
+                pendingCourseAssignments,
                 row.completedAttempts(),
                 streak(activityDates),
                 row.lastActivityAt()
@@ -793,6 +1107,45 @@ public class StudentPortalService {
                     reason
             );
         }, studentId, referenceBand, referenceBand, referenceBand);
+    }
+
+    private record PortfolioCourse(UUID id, String code, String name, String skillPair) {}
+
+    private record PortfolioEntryRow(
+            UUID assignmentId, UUID classActivityId, UUID submissionId, UUID attemptId, short attemptNo,
+            int sessionNo, String sessionTitle, String assignmentTitle, String skill,
+            String submissionStatus, String attemptStatus, String reviewStatus, OffsetDateTime submittedAt,
+            BigDecimal score, BigDecimal maxScore, boolean late, OffsetDateTime extensionDueAt,
+            String reflection, UUID reviewId, String feedback, OffsetDateTime reviewedAt,
+            OffsetDateTime reflectionDueAt, boolean audioSubmitted
+    ) {}
+
+    private record CriterionRow(String skill, String criterion, BigDecimal score, OffsetDateTime reviewedAt) {}
+
+    private static final class CriterionAccumulator {
+        private final String skill;
+        private final String criterion;
+        private BigDecimal total = BigDecimal.ZERO;
+        private BigDecimal latestScore;
+        private int gradedCount;
+
+        private CriterionAccumulator(String skill, String criterion) {
+            this.skill = skill;
+            this.criterion = criterion;
+        }
+
+        private void add(BigDecimal score) {
+            if (score == null) return;
+            total = total.add(score);
+            latestScore = score;
+            gradedCount++;
+        }
+
+        private StudentPortfolioResponse.CriterionProgress response(String label) {
+            return new StudentPortfolioResponse.CriterionProgress(skill, criterion, label,
+                    total.divide(BigDecimal.valueOf(gradedCount), 2, RoundingMode.HALF_UP),
+                    latestScore, gradedCount);
+        }
     }
 
     private record MetricsRow(int assignedTests, int completedAttempts, OffsetDateTime lastActivityAt) {

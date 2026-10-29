@@ -105,7 +105,7 @@ app:
       api-key: ${GEMINI_API_KEY:}
       base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com/v1beta}
       import-models: ${GEMINI_IMPORT_MODELS:${GEMINI_MODEL:gemini-2.5-flash,gemini-flash-latest,gemini-2.5-pro}}
-      chat-models: ${GEMINI_CHAT_MODELS:gemini-2.5-flash-lite,gemini-2.5-flash,gemini-flash-latest}
+      chat-models: ${GEMINI_CHAT_MODELS:gemini-3.5-flash-lite,gemini-2.5-flash,gemini-flash-latest}
       quiz-models: ${GEMINI_QUIZ_MODELS:gemini-2.5-flash,gemini-flash-latest,gemini-2.5-pro}
     nvidia:
       api-key: ${NVIDIA_API_KEY:}

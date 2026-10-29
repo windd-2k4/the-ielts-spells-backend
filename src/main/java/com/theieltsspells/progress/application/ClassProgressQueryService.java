@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.Comparator;
 import java.util.stream.Collectors;
 
 @Service
@@ -52,6 +53,12 @@ public class ClassProgressQueryService {
                 .findByClassActivityIdInOrderByAttemptNoDesc(activityIds)
                 .stream()
                 .collect(Collectors.groupingBy(StudentActivityAttempt::getClassActivityId));
+        attemptsByActivity.replaceAll((activityId, values) -> values.stream()
+                .collect(Collectors.groupingBy(StudentActivityAttempt::getStudentId,
+                        Collectors.collectingAndThen(Collectors.maxBy(
+                                Comparator.comparingInt(StudentActivityAttempt::getAttemptNo)),
+                                latest -> latest.orElseThrow())))
+                .values().stream().toList());
         var learningActivityIds = activities.stream().map(ClassActivity::getActivityId).toList();
         Map<UUID, List<ActivityChecklistItem>> checklistByActivity = checklistItems
                 .findByActivityIdInOrderByDisplayOrder(learningActivityIds).stream()
@@ -97,6 +104,8 @@ public class ClassProgressQueryService {
                 classActivity.getOpensAt(),
                 classActivity.getDueAt(),
                 required,
+                classActivity.getAssignmentId(),
+                classActivity.getTestAssignmentId(),
                 activityChecklist.stream().map(item -> new ActivityChecklistItemResponse(
                         item.getId(), item.getLabel(), item.getDescription(),
                         item.getDisplayOrder(), Boolean.TRUE.equals(item.getIsRequired()))).toList(),

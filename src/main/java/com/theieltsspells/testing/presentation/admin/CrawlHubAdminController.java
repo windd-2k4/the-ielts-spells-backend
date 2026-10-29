@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -86,6 +87,12 @@ public class CrawlHubAdminController {
         return crawlHubService.listRawTests(query, skill, status, sourceId, page, size);
     }
 
+    @GetMapping("/raw-tests/stats")
+    @PreAuthorize("@permissionPolicy.canViewTestBank(authentication)")
+    public Map<String, Long> getStagingStats() {
+        return crawlHubService.getStagingStats();
+    }
+
     @GetMapping("/raw-tests/{id}")
     @PreAuthorize("@permissionPolicy.canViewTestBank(authentication)")
     public RawCrawledTestDto getRawTest(@PathVariable UUID id) {
@@ -118,5 +125,12 @@ public class CrawlHubAdminController {
             @RequestParam String status
     ) {
         return crawlHubService.updateRawTestStatus(id, status);
+    }
+
+    @DeleteMapping("/raw-tests/{id}")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'test.draft.create')")
+    public ResponseEntity<Void> deleteRawTest(@PathVariable UUID id) {
+        crawlHubService.deleteRawTest(id);
+        return ResponseEntity.noContent().build();
     }
 }

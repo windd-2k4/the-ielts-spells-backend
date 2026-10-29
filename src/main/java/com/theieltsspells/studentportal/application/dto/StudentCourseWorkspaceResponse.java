@@ -99,10 +99,13 @@ public record StudentCourseWorkspaceResponse(
 
         public record AttachedAssignment(
                 UUID id,
+                UUID classActivityId,
                 String title,
                 String status,
                 BigDecimal score,
-                BigDecimal maxScore
+                BigDecimal maxScore,
+                OffsetDateTime dueAt,
+                String reviewStatus
         ) {}
     }
 

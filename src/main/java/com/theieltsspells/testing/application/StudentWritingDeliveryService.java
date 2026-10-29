@@ -268,7 +268,8 @@ public class StudentWritingDeliveryService {
         List<WritingTaskResponse> tasks = tasks(attempt.builderContent(), visible);
         List<WritingAttemptResultResponse.Evaluation> evaluations = evaluations(attempt.id());
         if (!visible) evaluations = evaluations.stream().map(value -> new WritingAttemptResultResponse.Evaluation(
-                value.taskKey(), value.aiStatus(), null, null, Map.of(), List.of(), List.of(), null,
+                value.taskKey(), value.aiStatus(), null, null, Map.of(), Map.of(), Map.of(),
+                List.of(), List.of(), List.of(), null,
                 value.teacherStatus(), null, Map.of(), List.of(), List.of(), null, null, null, List.of())).toList();
         int requestable = (int) evaluations.stream()
                 .filter(value -> Set.of("NOT_ELIGIBLE", "FAILED").contains(value.aiStatus())).count();
@@ -305,7 +306,8 @@ public class StudentWritingDeliveryService {
                 select response.question_key, evaluation.id, evaluation.status::text ai_status,
                   evaluation.error_message,
                   evaluation.overall_band_ai, evaluation.ai_strengths::text ai_strengths,
-                  evaluation.ai_improvements::text ai_improvements, evaluation.ai_completed_at,
+                  evaluation.ai_improvements::text ai_improvements,
+                  evaluation.detected_errors::text detected_errors, evaluation.ai_completed_at,
                   evaluation.teacher_status,
                   case when evaluation.teacher_status='PUBLISHED' then evaluation.overall_band_teacher end overall_band_teacher,
                   case when evaluation.teacher_status='PUBLISHED' then evaluation.strengths else '[]'::jsonb end::text teacher_strengths,
@@ -318,23 +320,26 @@ public class StudentWritingDeliveryService {
                 join public.test_attempt_responses response on response.id=evaluation.test_attempt_response_id
                 where response.attempt_id=?
                 order by response.question_key
-                """, (rs, ignored) -> new WritingAttemptResultResponse.Evaluation(
-                rs.getString("question_key"), rs.getString("ai_status"), rs.getString("error_message"),
-                rs.getBigDecimal("overall_band_ai"),
-                criterionBands(rs.getObject("id", UUID.class), "ai_band"), strings(rs.getString("ai_strengths")),
-                strings(rs.getString("ai_improvements")), rs.getObject("ai_completed_at", OffsetDateTime.class),
-                rs.getString("teacher_status"), rs.getBigDecimal("overall_band_teacher"),
-                "PUBLISHED".equals(rs.getString("teacher_status"))
-                        ? criterionBands(rs.getObject("id", UUID.class), "teacher_band") : Map.of(),
-                "PUBLISHED".equals(rs.getString("teacher_status"))
-                        ? strings(rs.getString("teacher_strengths")) : List.of(),
-                "PUBLISHED".equals(rs.getString("teacher_status"))
-                        ? strings(rs.getString("teacher_improvements")) : List.of(),
-                rs.getObject("published_at", OffsetDateTime.class),
-                rs.getString("teacher_edited_text"),
-                rs.getString("teacher_edited_html"),
-                "PUBLISHED".equals(rs.getString("teacher_status")) ? annotations(rs.getString("teacher_annotations")) : List.of()
-        ), attemptId);
+                """, (rs, ignored) -> {
+            UUID evaluationId = rs.getObject("id", UUID.class);
+            CriterionDetails aiDetails = criterionDetails(evaluationId);
+            return new WritingAttemptResultResponse.Evaluation(
+                    rs.getString("question_key"), rs.getString("ai_status"), rs.getString("error_message"),
+                    rs.getBigDecimal("overall_band_ai"), aiDetails.bands(), aiDetails.feedback(), aiDetails.evidence(),
+                    strings(rs.getString("ai_strengths")), strings(rs.getString("ai_improvements")),
+                    strings(rs.getString("detected_errors")), rs.getObject("ai_completed_at", OffsetDateTime.class),
+                    rs.getString("teacher_status"), rs.getBigDecimal("overall_band_teacher"),
+                    "PUBLISHED".equals(rs.getString("teacher_status"))
+                            ? criterionBands(evaluationId, "teacher_band") : Map.of(),
+                    "PUBLISHED".equals(rs.getString("teacher_status"))
+                            ? strings(rs.getString("teacher_strengths")) : List.of(),
+                    "PUBLISHED".equals(rs.getString("teacher_status"))
+                            ? strings(rs.getString("teacher_improvements")) : List.of(),
+                    rs.getObject("published_at", OffsetDateTime.class), rs.getString("teacher_edited_text"),
+                    rs.getString("teacher_edited_html"),
+                    "PUBLISHED".equals(rs.getString("teacher_status"))
+                            ? annotations(rs.getString("teacher_annotations")) : List.of());
+        }, attemptId);
     }
 
     private boolean hasAiBudget(UUID studentId, int requestedCount) {
@@ -365,6 +370,23 @@ public class StudentWritingDeliveryService {
                 (org.springframework.jdbc.core.RowCallbackHandler) rs ->
                 result.put(rs.getString("criterion"), rs.getBigDecimal("band")), evaluationId);
         return result;
+    }
+
+    private CriterionDetails criterionDetails(UUID evaluationId) {
+        var bands = new LinkedHashMap<String, BigDecimal>();
+        var feedback = new LinkedHashMap<String, String>();
+        var evidence = new LinkedHashMap<String, List<String>>();
+        jdbc.query("""
+                select criterion, ai_band, ai_feedback, evidence::text evidence
+                from public.writing_criterion_scores
+                where evaluation_id=? and ai_band is not null order by criterion
+                """, (org.springframework.jdbc.core.RowCallbackHandler) rs -> {
+            String criterion = rs.getString("criterion");
+            bands.put(criterion, rs.getBigDecimal("ai_band"));
+            feedback.put(criterion, rs.getString("ai_feedback"));
+            evidence.put(criterion, strings(rs.getString("evidence")));
+        }, evaluationId);
+        return new CriterionDetails(bands, feedback, evidence);
     }
 
     private List<WritingSavedResponse> responses(UUID attemptId) {
@@ -575,6 +597,8 @@ public class StudentWritingDeliveryService {
 
     private record VersionContext(UUID id, int durationMinutes, String skill) { }
     private record AiBudget(boolean unlimited, Integer monthlyLimit) { }
+    private record CriterionDetails(Map<String, BigDecimal> bands, Map<String, String> feedback,
+                                    Map<String, List<String>> evidence) { }
     private record SubmittedResponse(UUID id, String taskKey, String text) { }
     private record AssignmentContext(UUID id, UUID testVersionId, UUID courseId, OffsetDateTime opensAt,
                                      OffsetDateTime closesAt, short maxAttempts, Integer durationSeconds,

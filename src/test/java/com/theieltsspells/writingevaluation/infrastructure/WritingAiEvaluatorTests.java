@@ -34,6 +34,15 @@ class WritingAiEvaluatorTests {
     }
 
     @Test
+    void rejectsEmptyCriterionEvidenceNeededForStudentHighlights() {
+        var root = valid();
+        ((ObjectNode) root.path("criteria").path("lexical_resource")).putArray("evidence");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> evaluator.decode("test", "test", root.toString(), "task_2", "My essay."));
+    }
+
+    @Test
     void rejectsMissingStringAndOutOfRangeBandsInsteadOfCoercingToZero() {
         for (String bad : List.of("null", "\"6.5\"", "10", "-1", "6.3")) {
             var root = valid();
