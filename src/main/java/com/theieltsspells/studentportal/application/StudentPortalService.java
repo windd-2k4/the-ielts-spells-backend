@@ -938,7 +938,8 @@ public class StudentPortalService {
 
     private List<StudentPortalOverviewResponse.RecentAttempt> recentAttempts(UUID studentId) {
         return jdbc.query("""
-                select attempt.id attempt_id, assignment.id assignment_id, version.title,
+                select attempt.id attempt_id, assignment.id assignment_id, attempt.attempt_origin,
+                  version.title,
                   version.primary_skill, attempt.status::text attempt_status,
                   attempt.started_at, attempt.submitted_at,
                   coalesce(attempt.final_score, attempt.auto_score) score,
@@ -952,7 +953,7 @@ public class StudentPortalService {
                 left join public.test_attempt_responses response
                   on response.attempt_id = attempt.id and response.question_key = question.question_key
                 where attempt.student_id = ?
-                group by attempt.id, assignment.id, version.title, version.primary_skill
+                group by attempt.id, assignment.id, attempt.attempt_origin, version.title, version.primary_skill
                 order by coalesce(attempt.submitted_at, attempt.last_saved_at, attempt.started_at) desc
                 limit 8
                 """, (rs, ignored) -> {
@@ -961,6 +962,7 @@ public class StudentPortalService {
             return new StudentPortalOverviewResponse.RecentAttempt(
                     rs.getObject("attempt_id", UUID.class),
                     rs.getObject("assignment_id", UUID.class),
+                    rs.getString("attempt_origin"),
                     rs.getString("title"),
                     rs.getString("primary_skill"),
                     rs.getString("attempt_status").toUpperCase(),

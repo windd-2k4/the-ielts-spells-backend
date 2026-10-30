@@ -77,6 +77,7 @@ public class TestAttemptReviewService {
                 left join public.test_attempt_question_reviews review
                   on review.attempt_id = attempt.id and review.question_key = question.question_key
                 where assignment.course_id = ?
+                  and attempt.attempt_origin = 'ASSIGNMENT'
                   and attempt.status <> 'IN_PROGRESS'
                 """ + optionalInsightFilters(sessionId, skill) + """
                 group by question.type_format
@@ -93,6 +94,7 @@ public class TestAttemptReviewService {
                 join public.test_assignments assignment on assignment.id = attempt.test_assignment_id
                 join public.test_versions version on version.id = attempt.test_version_id
                 where assignment.course_id = ?
+                  and attempt.attempt_origin = 'ASSIGNMENT'
                   and attempt.status <> 'IN_PROGRESS'
                 """ + optionalInsightFilters(sessionId, skill) + """
                 group by review.reason_code
@@ -112,6 +114,7 @@ public class TestAttemptReviewService {
                 left join public.test_attempt_question_reviews review
                   on review.attempt_id = attempt.id and review.question_key = question.question_key
                 where assignment.course_id = ?
+                  and attempt.attempt_origin = 'ASSIGNMENT'
                   and attempt.status <> 'IN_PROGRESS'
                   and (response.id is null or response.is_correct = false)
                   and review.id is null
@@ -132,6 +135,7 @@ public class TestAttemptReviewService {
                 join public.profiles profile on profile.id = student.user_id
                 join public.test_version_questions question on question.test_version_id = version.id
                 where assignment.course_id = ?
+                  and attempt.attempt_origin = 'ASSIGNMENT'
                   and attempt.status <> 'IN_PROGRESS'
                 """ + optionalInsightFilters(sessionId, skill) + """
                 group by attempt.student_id, student.student_code, profile.full_name, profile.email,
@@ -160,6 +164,7 @@ public class TestAttemptReviewService {
                 left join public.test_attempt_question_reviews review
                   on review.attempt_id = attempt.id and review.question_key = question.question_key
                 where assignment.course_id = ?
+                  and attempt.attempt_origin = 'ASSIGNMENT'
                   and version.primary_skill = 'LISTENING'
                   and attempt.status <> 'IN_PROGRESS'
                 """ + optionalInsightFilters(sessionId, skill) + """
@@ -278,7 +283,9 @@ public class TestAttemptReviewService {
                       where response.attempt_id = attempt.id and response.normalized_answer <> '[]'::jsonb)
                   ) unanswered_count
                 from public.test_attempts attempt
-                join public.test_assignments assignment on assignment.id = attempt.test_assignment_id
+                join public.test_assignments assignment
+                  on assignment.id = attempt.test_assignment_id
+                 and attempt.attempt_origin = 'ASSIGNMENT'
                 join public.test_versions version on version.id = attempt.test_version_id
                 join public.student_profiles student on student.user_id = attempt.student_id
                 join public.profiles profile on profile.id = student.user_id

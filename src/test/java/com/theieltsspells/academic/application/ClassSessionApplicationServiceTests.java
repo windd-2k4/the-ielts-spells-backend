@@ -3,6 +3,7 @@ package com.theieltsspells.academic.application;
 import com.theieltsspells.academic.application.dto.CourseSessionItemRequest;
 import com.theieltsspells.academic.application.dto.UpsertClassSessionRequest;
 import com.theieltsspells.academic.domain.ClassSession;
+import com.theieltsspells.academic.domain.Course;
 import com.theieltsspells.academic.domain.CourseSessionItem;
 import com.theieltsspells.academic.infrastructure.persistence.ClassSessionRepository;
 import com.theieltsspells.academic.infrastructure.persistence.CourseRepository;
@@ -13,6 +14,7 @@ import org.mockito.ArgumentCaptor;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -36,6 +38,14 @@ class ClassSessionApplicationServiceTests {
         OffsetDateTime startsAt = OffsetDateTime.now();
 
         when(courses.existsById(courseId)).thenReturn(true);
+        Course course = new Course();
+        course.setId(courseId);
+        when(courses.findById(courseId)).thenReturn(Optional.of(course));
+        when(sessions.findByCourseIdOrderBySessionNo(courseId)).thenAnswer(invocation -> {
+            ClassSession value = new ClassSession();
+            value.setEndsAt(startsAt.plusHours(2));
+            return List.of(value);
+        });
         when(sessions.save(any())).thenAnswer(invocation -> {
             ClassSession value = invocation.getArgument(0);
             value.setId(sessionId);

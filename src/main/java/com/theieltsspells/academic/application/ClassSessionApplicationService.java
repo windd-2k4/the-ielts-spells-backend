@@ -56,6 +56,7 @@ public class ClassSessionApplicationService {
         apply(value, request);
         value = sessions.save(value);
         replaceItems(value, request);
+        synchronizeCourseEndDate(courseId);
         return response(value);
     }
 
@@ -102,6 +103,7 @@ public class ClassSessionApplicationService {
             results.add(response(value));
             cursor = occurrence.endsAt();
         }
+        synchronizeCourseEndDate(courseId);
         return results;
     }
 
@@ -126,6 +128,7 @@ public class ClassSessionApplicationService {
                 cursor = occurrence.endsAt();
             }
         }
+        synchronizeCourseEndDate(courseId);
         return list(courseId);
     }
 
@@ -140,6 +143,7 @@ public class ClassSessionApplicationService {
         apply(value, request);
         value = sessions.save(value);
         replaceItems(value, request);
+        synchronizeCourseEndDate(courseId);
         return response(value);
     }
 
@@ -150,6 +154,7 @@ public class ClassSessionApplicationService {
             throw new BusinessRuleException("Không thể xóa session đã hoàn thành");
         }
         sessions.delete(value);
+        synchronizeCourseEndDate(courseId);
     }
 
     private void validate(UpsertClassSessionRequest request) {
@@ -251,6 +256,20 @@ public class ClassSessionApplicationService {
         }
         if (best == null) throw new BusinessRuleException("Cần chọn ít nhất một buổi học trong tuần");
         return best;
+    }
+
+    private void synchronizeCourseEndDate(UUID courseId) {
+        var course = courses.findById(courseId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy khóa học"));
+        sessions.flush();
+        var latestEnd = sessions.findByCourseIdOrderBySessionNo(courseId).stream()
+                .map(ClassSession::getEndsAt)
+                .filter(Objects::nonNull)
+                .max(OffsetDateTime::compareTo)
+                .map(value -> value.atZoneSameInstant(ZoneId.of("Asia/Ho_Chi_Minh")).toLocalDate())
+                .orElse(null);
+        course.setEndsOn(latestEnd);
+        courses.save(course);
     }
 
     private record Occurrence(OffsetDateTime startsAt, OffsetDateTime endsAt) {}

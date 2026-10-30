@@ -9,6 +9,7 @@ import java.util.UUID;
 public record ReadingAttemptResultResponse(
         UUID attemptId,
         String status,
+        String attemptOrigin,
         OffsetDateTime submittedAt,
         OffsetDateTime expiresAt,
         BigDecimal autoScore,

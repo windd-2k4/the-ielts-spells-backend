@@ -10,6 +10,7 @@ public record StudentReadingAssignmentResponse(
         String versionLabel,
         UUID courseId,
         String courseName,
+        UUID classActivityId,
         UUID sessionId,
         Short sessionNo,
         String sessionTitle,

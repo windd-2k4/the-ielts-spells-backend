@@ -9,6 +9,9 @@ import java.util.UUID;
 public record StudentReadingAttemptResponse(
         UUID attemptId,
         UUID assignmentId,
+        UUID courseId,
+        UUID classActivityId,
+        String attemptOrigin,
         UUID testVersionId,
         String status,
         OffsetDateTime startedAt,

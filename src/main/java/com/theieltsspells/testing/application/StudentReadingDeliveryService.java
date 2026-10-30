@@ -50,6 +50,7 @@ public class StudentReadingDeliveryService {
         return jdbc.query("""
                 select assignment.id assignment_id, assignment.test_version_id, version.title,
                   version.version_label, assignment.course_id, course.name course_name,
+                  activity.id class_activity_id,
                   assignment.session_id, session.session_no, session.title session_title,
                   assignment.mode, assignment.opens_at, assignment.closes_at,
                   assignment.max_attempts, assignment.duration_seconds,
@@ -62,6 +63,7 @@ public class StudentReadingDeliveryService {
                 join public.test_versions version on version.id = assignment.test_version_id
                 join public.courses course on course.id = assignment.course_id
                 left join public.course_sessions session on session.id = assignment.session_id
+                left join public.course_activities activity on activity.test_assignment_id = assignment.id
                 join public.enrollments enrollment on enrollment.course_id = assignment.course_id
                 where enrollment.student_id = ?
                   and enrollment.status = 'ACTIVE'
@@ -71,7 +73,8 @@ public class StudentReadingDeliveryService {
                 """, (rs, ignored) -> new StudentReadingAssignmentResponse(
                 rs.getObject("assignment_id", UUID.class), rs.getObject("test_version_id", UUID.class),
                 rs.getString("title"), rs.getString("version_label"), rs.getObject("course_id", UUID.class),
-                rs.getString("course_name"), rs.getObject("session_id", UUID.class),
+                rs.getString("course_name"), rs.getObject("class_activity_id", UUID.class),
+                rs.getObject("session_id", UUID.class),
                 rs.getObject("session_no", Short.class), rs.getString("session_title"), rs.getString("mode"),
                 rs.getObject("opens_at", OffsetDateTime.class), rs.getObject("closes_at", OffsetDateTime.class),
                 rs.getShort("max_attempts"), rs.getInt("attempts_used"),
@@ -495,14 +498,15 @@ public class StudentReadingDeliveryService {
                     solutionVisible ? legacyEvidenceSpan(evidence) : null
             ));
         }
-        return new ReadingAttemptResultResponse(attempt.id(), attempt.status(), attempt.submittedAt(),
+        return new ReadingAttemptResultResponse(attempt.id(), attempt.status(), attempt.origin(), attempt.submittedAt(),
                 attempt.expiresAt(), attempt.autoScore(), maxScore, correct, incorrect, unanswered,
                 visible, visible ? questions : List.of());
     }
 
     private StudentReadingAttemptResponse attemptPayload(AttemptContext attempt) {
         return new StudentReadingAttemptResponse(
-                attempt.id(), attempt.assignmentId(), attempt.testVersionId(), attempt.status(),
+                attempt.id(), attempt.assignmentId(), attempt.courseId(), attempt.classActivityId(),
+                attempt.origin(), attempt.testVersionId(), attempt.status(),
                 attempt.startedAt(), attempt.expiresAt(), effectiveRemainingSeconds(attempt),
                 attempt.title(), attempt.description(), attempt.showResultAfterSubmit(),
                 studentSections(attempt.testVersionId()), savedResponseDtos(storedResponses(attempt.id())),
@@ -935,6 +939,7 @@ public class StudentReadingDeliveryService {
                   attempt.status, attempt.started_at, attempt.submitted_at, attempt.expires_at,
                   attempt.paused_remaining_seconds,
                   attempt.auto_score, attempt.final_score, assignment.course_id,
+                  activity.id class_activity_id,
                   assignment.opens_at, assignment.closes_at,
                   coalesce(assignment.max_attempts, 32767) max_attempts,
                   coalesce(assignment.mode, 'PRACTICE') mode,
@@ -944,6 +949,7 @@ public class StudentReadingDeliveryService {
                   version.title, version.description, version.duration_minutes, version.primary_skill
                 from public.test_attempts attempt
                 left join public.test_assignments assignment on assignment.id = attempt.test_assignment_id
+                left join public.course_activities activity on activity.test_assignment_id = assignment.id
                 join public.test_versions version on version.id = attempt.test_version_id
                 """;
     }
@@ -971,7 +977,8 @@ public class StudentReadingDeliveryService {
                 rs.getObject("submitted_at", OffsetDateTime.class), rs.getObject("expires_at", OffsetDateTime.class),
                 rs.getObject("paused_remaining_seconds", Long.class),
                 rs.getBigDecimal("auto_score"), rs.getBigDecimal("final_score"),
-                rs.getObject("course_id", UUID.class), rs.getObject("opens_at", OffsetDateTime.class),
+                rs.getObject("course_id", UUID.class), rs.getObject("class_activity_id", UUID.class),
+                rs.getObject("opens_at", OffsetDateTime.class),
                 rs.getObject("closes_at", OffsetDateTime.class), rs.getShort("max_attempts"), rs.getString("mode"),
                 rs.getObject("duration_seconds", Integer.class), rs.getBoolean("show_result_after_submit"),
                 rs.getObject("archived_at", OffsetDateTime.class), rs.getString("title"),
@@ -1124,6 +1131,7 @@ public class StudentReadingDeliveryService {
             BigDecimal autoScore,
             BigDecimal finalScore,
             UUID courseId,
+            UUID classActivityId,
             OffsetDateTime opensAt,
             OffsetDateTime closesAt,
             short maxAttempts,

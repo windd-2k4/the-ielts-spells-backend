@@ -5,5 +5,6 @@ import jakarta.validation.constraints.Min;
 
 public record UpdateProgressSummaryRequest(
         @Min(0) Integer durationSeconds,
-        @Min(0) @Max(100) Short comprehensionPercent
+        @Min(0) @Max(100) Short comprehensionPercent,
+        String errorAnalysis
 ) {}

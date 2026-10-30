@@ -91,6 +91,7 @@ public record StudentPortalOverviewResponse(
     public record RecentAttempt(
             UUID attemptId,
             UUID assignmentId,
+            String attemptOrigin,
             String title,
             String skill,
             String status,

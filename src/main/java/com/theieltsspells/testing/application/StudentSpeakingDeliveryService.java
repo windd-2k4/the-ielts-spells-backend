@@ -32,6 +32,8 @@ public class StudentSpeakingDeliveryService {
         return jdbc.query("""
                 select assignment.id assignment_id, assignment.test_version_id, version.title,
                   version.version_label, assignment.course_id, course.name course_name,
+                  activity.id class_activity_id, assignment.session_id,
+                  session.session_no, session.title session_title,
                   assignment.mode, assignment.opens_at, assignment.closes_at,
                   assignment.max_attempts, assignment.duration_seconds,
                   (select count(*) from public.test_attempts attempt
@@ -42,6 +44,8 @@ public class StudentSpeakingDeliveryService {
                 from public.test_assignments assignment
                 join public.test_versions version on version.id = assignment.test_version_id
                 join public.courses course on course.id = assignment.course_id
+                left join public.course_sessions session on session.id = assignment.session_id
+                left join public.course_activities activity on activity.test_assignment_id = assignment.id
                 join public.enrollments enrollment on enrollment.course_id = assignment.course_id
                 where enrollment.student_id = ? and enrollment.status = 'ACTIVE'
                   and version.primary_skill = 'SPEAKING' and assignment.archived_at is null
@@ -49,7 +53,9 @@ public class StudentSpeakingDeliveryService {
                 """, (rs, ignored) -> new StudentWritingAssignmentResponse(
                 rs.getObject("assignment_id", UUID.class), rs.getObject("test_version_id", UUID.class),
                 rs.getString("title"), rs.getString("version_label"), rs.getObject("course_id", UUID.class),
-                rs.getString("course_name"), rs.getString("mode"),
+                rs.getString("course_name"), rs.getObject("class_activity_id", UUID.class),
+                rs.getObject("session_id", UUID.class), rs.getObject("session_no", Short.class),
+                rs.getString("session_title"), rs.getString("mode"),
                 rs.getObject("opens_at", OffsetDateTime.class), rs.getObject("closes_at", OffsetDateTime.class),
                 rs.getShort("max_attempts"), rs.getInt("attempts_used"),
                 rs.getObject("duration_seconds", Integer.class),

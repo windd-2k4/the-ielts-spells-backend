@@ -15,9 +15,11 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.OffsetDateTime;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 @Service
@@ -39,7 +41,7 @@ public class CourseApplicationService {
         course.setProgramId(request.programId());
         apply(course, request.name(), request.description(), request.coverImageUrl(), request.coverImageAltText(),
                 request.level(), request.skillPair(), request.targetBand(),
-                request.totalSessions(), request.tuitionAmount(), request.capacity(), request.startsOn(), request.endsOn(),
+                request.totalSessions(), request.tuitionAmount(), request.capacity(), request.startsOn(), null,
                 normalizeRequestedStatus(request.status()), request.defaultZoomUrl(),
                 request.isPublic() == null ? false : request.isPublic(), true);
         course.setCreatedBy(request.createdBy());
@@ -88,9 +90,13 @@ public class CourseApplicationService {
         if (request.capacity() < activeEnrollments) {
             throw new BusinessRuleException("Sĩ số tối đa (" + request.capacity() + ") không thể nhỏ hơn số học viên hiện tại (" + activeEnrollments + " học viên)");
         }
+        var sessionEndOn = sessionEndDate(id);
+        if (sessionEndOn != null && sessionEndOn.isBefore(request.startsOn())) {
+            throw new BusinessRuleException("Ngày bắt đầu không thể sau session cuối cùng");
+        }
         apply(course, request.name(), request.description(), request.coverImageUrl(), request.coverImageAltText(),
                 request.level(), request.skillPair(), request.targetBand(),
-                request.totalSessions(), request.tuitionAmount(), request.capacity(), request.startsOn(), request.endsOn(),
+                request.totalSessions(), request.tuitionAmount(), request.capacity(), request.startsOn(), sessionEndOn,
                 normalizeRequestedStatus(request.status()), request.defaultZoomUrl(), request.isPublic(), request.isActive());
         synchronizeLifecycle(course);
         course.setUpdatedAt(OffsetDateTime.now());
@@ -172,6 +178,7 @@ public class CourseApplicationService {
     }
 
     private Course synchronizeLifecycle(Course course) {
+        boolean changed = false;
         var current = course.getStatus();
         if (current == ClassStatus.PLANNED) {
             current = ClassStatus.OPEN;
@@ -183,10 +190,28 @@ public class CourseApplicationService {
         }
         if (course.getStatus() != current) {
             course.setStatus(current);
+            changed = true;
+        }
+        var sessionEndOn = sessionEndDate(course.getId());
+        if (!Objects.equals(course.getEndsOn(), sessionEndOn)) {
+            course.setEndsOn(sessionEndOn);
+            changed = true;
+        }
+        if (changed) {
             course.setUpdatedAt(OffsetDateTime.now());
             return courses.save(course);
         }
         return course;
+    }
+
+    private LocalDate sessionEndDate(UUID courseId) {
+        return classSessions.findByCourseIdOrderBySessionNo(courseId).stream()
+                .filter(session -> session.getEndsAt() != null)
+                .map(session -> session.getEndsAt()
+                        .atZoneSameInstant(ZoneId.of("Asia/Ho_Chi_Minh"))
+                        .toLocalDate())
+                .max(LocalDate::compareTo)
+                .orElse(null);
     }
 
     private void synchronizeLifecycle(List<Course> values) {

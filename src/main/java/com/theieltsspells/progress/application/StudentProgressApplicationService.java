@@ -266,11 +266,17 @@ public class StudentProgressApplicationService {
                 update public.student_activity_attempts saa
                 set duration_seconds = coalesce(?, duration_seconds),
                     comprehension_percent = coalesce(?, comprehension_percent),
+                    error_analysis = coalesce(?, error_analysis),
                     updated_at = now()
                 from public.course_activities ca
                 where saa.id = ? and saa.student_id = ? and ca.id = saa.class_activity_id and ca.course_id = ?
-                """, request.durationSeconds(), request.comprehensionPercent(), attemptId, studentId, courseId);
+                """, request.durationSeconds(), request.comprehensionPercent(), normalize(request.errorAnalysis()),
+                attemptId, studentId, courseId);
         if (updated == 0) throw new ResourceNotFoundException("Không tìm thấy tiến độ bài học.");
+    }
+
+    private String normalize(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     private List<StudentProgressTaskResponse.ChecklistItem> checklist(UUID activityId, UUID attemptId) {
