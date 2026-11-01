@@ -92,6 +92,36 @@ public class SepayWebhookService {
         this(transactionRepository, orderRepository, billingSettingRepository, activationService, invoiceService, emailService, enrollmentService, objectMapper, new SecretEncryptionService());
     }
 
+    /**
+     * Nhận payload mẫu từ nút "Gửi thử" của SePay mà không tạo giao dịch,
+     * không đối soát đơn hàng và không phát hành hóa đơn.
+     *
+     * Endpoint này vẫn yêu cầu đúng Webhook API Key để không trở thành một
+     * endpoint public có thể bị lạm dụng. Không kiểm tra accountNumber vì
+     * SePay dùng tài khoản mẫu 1017588888 cho payload kiểm thử.
+     */
+    public Map<String, Object> processTestWebhook(String authHeader, SepayWebhookPayload payload) {
+        validateIncomingPayload(payload);
+
+        BillingSetting settings = billingSettingRepository.findLatest()
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.SERVICE_UNAVAILABLE,
+                        "Cổng thanh toán chưa được cấu hình"
+                ));
+        verifyWebhookAuthorization(authHeader, settings);
+
+        log.info("Nhận SePay Webhook kiểm thử: id={}, gateway={}, amount={}, accountSuffix={}",
+                payload.id(), payload.gateway(), payload.transferAmount(),
+                maskAccountSuffix(payload.accountNumber()));
+
+        return Map.of(
+                "success", true,
+                "mode", "test",
+                "status", "TEST_RECEIVED",
+                "message", "Webhook test received; no transaction or invoice was created"
+        );
+    }
+
     @Transactional
     public Map<String, Object> processWebhook(String authHeader, SepayWebhookPayload payload) {
         validateIncomingPayload(payload);
@@ -427,6 +457,14 @@ public class SepayWebhookService {
 
     private String normalizeAccountNumber(String value) {
         return value == null ? "" : value.replaceAll("[^A-Za-z0-9]", "").toUpperCase();
+    }
+
+    private String maskAccountSuffix(String value) {
+        String normalized = normalizeAccountNumber(value);
+        if (normalized.isBlank()) {
+            return "";
+        }
+        return normalized.length() <= 4 ? "****" : "****" + normalized.substring(normalized.length() - 4);
     }
 
     private String extractPayerName(String transferContent, String orderCode) {

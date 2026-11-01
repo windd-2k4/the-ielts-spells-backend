@@ -29,4 +29,14 @@ public class SepayWebhookController {
         Map<String, Object> result = sepayWebhookService.processWebhook(authHeader, payload);
         return ResponseEntity.ok(result);
     }
+
+    @PostMapping("/sepay/test")
+    @Operation(summary = "Webhook kiểm thử kết nối SePay (không ghi giao dịch)")
+    public ResponseEntity<Map<String, Object>> handleSepayTestWebhook(
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestBody SepayWebhookPayload payload
+    ) {
+        Map<String, Object> result = sepayWebhookService.processTestWebhook(authHeader, payload);
+        return ResponseEntity.ok(result);
+    }
 }
