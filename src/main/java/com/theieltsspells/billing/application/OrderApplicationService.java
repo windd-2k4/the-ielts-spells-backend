@@ -8,6 +8,7 @@ import com.theieltsspells.billing.infrastructure.persistence.BillingSettingRepos
 import com.theieltsspells.billing.infrastructure.persistence.ElectronicInvoiceRepository;
 import com.theieltsspells.billing.infrastructure.persistence.OrderRepository;
 import com.theieltsspells.billing.infrastructure.persistence.AccountActivationTokenRepository;
+import com.theieltsspells.billing.infrastructure.persistence.UnifiedBillingListQueryRepository;
 import com.theieltsspells.identity.application.StudentAccountApplicationService;
 import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
@@ -26,16 +27,15 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import jakarta.persistence.criteria.Predicate;
-import org.springframework.data.domain.Sort;
-import org.springframework.data.jpa.domain.Specification;
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -49,6 +49,7 @@ public class OrderApplicationService {
     private final BillingSettingRepository billingSettingRepository;
     private final ElectronicInvoiceRepository invoiceRepository;
     private final AccountActivationTokenRepository activationTokenRepository;
+    private final UnifiedBillingListQueryRepository unifiedBillingListQuery;
 
     @Transactional
     public CheckoutResponse checkout(CheckoutRequest request) {
@@ -261,100 +262,98 @@ public class OrderApplicationService {
         );
     }
 
-    public Page<OrderAdminDto> searchOrders(String query, OrderStatus status, UUID courseId, LocalDate fromDate, LocalDate toDate, Pageable pageable) {
-        Specification<Order> spec = (root, q, cb) -> {
-            List<Predicate> predicates = new ArrayList<>();
-            if (status != null) {
-                predicates.add(cb.equal(root.get("status"), status));
-            }
-            if (courseId != null) {
-                predicates.add(cb.equal(root.get("courseId"), courseId));
-            }
-            if (fromDate != null) {
-                OffsetDateTime fromTime = fromDate.atStartOfDay().atOffset(ZoneOffset.ofHours(7));
-                predicates.add(cb.greaterThanOrEqualTo(root.get("createdAt"), fromTime));
-            }
-            if (toDate != null) {
-                OffsetDateTime toTime = toDate.plusDays(1).atStartOfDay().atOffset(ZoneOffset.ofHours(7));
-                predicates.add(cb.lessThan(root.get("createdAt"), toTime));
-            }
-            if (query != null && !query.trim().isEmpty()) {
-                String pattern = "%" + query.trim().toLowerCase() + "%";
-                predicates.add(cb.or(
-                        cb.like(cb.lower(root.get("orderCode")), pattern),
-                        cb.like(cb.lower(root.get("customerName")), pattern),
-                        cb.like(cb.lower(root.get("customerEmail")), pattern)
-                ));
-            }
-            return predicates.isEmpty() ? cb.conjunction() : cb.and(predicates.toArray(new Predicate[0]));
-        };
-
-        // Build the requested page only after merging both data sources. Fetching
-        // a single order page first would drop normal orders when a QR-tĩnh row
-        // is inserted before them in the merged result.
-        List<OrderAdminDto> unified = new ArrayList<>(
-                orderRepository.findAll(spec, Sort.by(Sort.Direction.DESC, "createdAt"))
-                        .stream()
-                        .map(this::toAdminDto)
-                        .toList()
-        );
-
-        // QR tĩnh không có order_id, nhưng hóa đơn của nó vẫn phải xuất hiện
-        // trong cùng bảng quản trị. Đây là dòng hiển thị ảo, không phải đơn
-        // khóa học giả và không thể kích hoạt quyền học.
-        invoiceRepository.findAll(Sort.by(Sort.Direction.DESC, "createdAt")).stream()
-                .filter(invoice -> invoice.getOrderId() == null)
-                .filter(invoice -> matchesStandaloneInvoice(invoice, query, status, courseId, fromDate, toDate))
-                .map(this::toStandaloneAdminDto)
-                .forEach(unified::add);
-
-        unified.sort(Comparator.comparing(
-                OrderAdminDto::createdAt,
-                Comparator.nullsLast(Comparator.reverseOrder())
-        ));
-
-        int fromIndex = (int) Math.min(pageable.getOffset(), unified.size());
-        int toIndex = Math.min(fromIndex + pageable.getPageSize(), unified.size());
-        return new PageImpl<>(unified.subList(fromIndex, toIndex), pageable, unified.size());
-    }
-
-    private boolean matchesStandaloneInvoice(
-            ElectronicInvoice invoice,
+    public Page<OrderAdminDto> searchOrders(
             String query,
             OrderStatus status,
+            InvoiceStatus invoiceStatus,
             UUID courseId,
             LocalDate fromDate,
-            LocalDate toDate
+            LocalDate toDate,
+            Pageable pageable
     ) {
-        if (status != null && status != OrderStatus.PAID) return false;
-        if (courseId != null) return false;
-
-        OffsetDateTime createdAt = invoice.getCreatedAt();
-        if (fromDate != null && createdAt != null
-                && createdAt.isBefore(fromDate.atStartOfDay().atOffset(ZoneOffset.ofHours(7)))) return false;
-        if (toDate != null && createdAt != null
-                && !createdAt.isBefore(toDate.plusDays(1).atStartOfDay().atOffset(ZoneOffset.ofHours(7)))) return false;
-
-        if (query == null || query.isBlank()) return true;
-        String needle = query.trim().toLowerCase(Locale.ROOT);
-        PaymentTransaction transaction = invoice.getPaymentTransaction();
-        String transactionCode = transaction != null ? transaction.getSepayTransactionId() : "";
-        String transferContent = transaction != null ? transaction.getTransferContent() : "";
-        String payerName = transaction != null ? transaction.getPayerName() : "";
-        return contains(needle, "qr-tinh")
-                || contains(needle, "static-" + transactionCode)
-                || contains(needle, invoice.getReferenceCode())
-                || contains(needle, invoice.getInvoiceNumber())
-                || contains(needle, invoice.getCqtCode())
-                || contains(needle, invoice.getLookupCode())
-                || contains(needle, invoice.getBuyerName())
-                || contains(needle, invoice.getBuyerEmail())
-                || contains(needle, payerName)
-                || contains(needle, transferContent);
+        return searchOrders(query, status, invoiceStatus, courseId, fromDate, toDate, false, false, pageable);
     }
 
-    private boolean contains(String needle, String value) {
-        return value != null && value.toLowerCase(Locale.ROOT).contains(needle);
+    public Page<OrderAdminDto> searchOrders(
+            String query,
+            OrderStatus status,
+            InvoiceStatus invoiceStatus,
+            UUID courseId,
+            LocalDate fromDate,
+            LocalDate toDate,
+            boolean includePendingDrafts,
+            boolean unissuedOnly,
+            Pageable pageable
+    ) {
+        OffsetDateTime fromTime = fromDate != null
+                ? fromDate.atStartOfDay().atOffset(ZoneOffset.ofHours(7))
+                : null;
+        OffsetDateTime toTime = toDate != null
+                ? toDate.plusDays(1).atStartOfDay().atOffset(ZoneOffset.ofHours(7))
+                : null;
+        Set<InvoiceStatus> invoiceStatuses = invoiceStatus == null
+                ? Set.of()
+                : invoiceStatus == InvoiceStatus.DRAFT && includePendingDrafts
+                    ? Set.of(InvoiceStatus.DRAFT, InvoiceStatus.ISSUING)
+                    : invoiceStatus == InvoiceStatus.PENDING_ISSUE
+                        ? Set.of(InvoiceStatus.PENDING_ISSUE, InvoiceStatus.ISSUING)
+                        : Set.of(invoiceStatus);
+
+        UnifiedBillingListQueryRepository.BillingRowPage rowPage = unifiedBillingListQuery.findPage(
+                query,
+                status,
+                invoiceStatuses,
+                courseId,
+                fromTime,
+                toTime,
+                unissuedOnly,
+                pageable.getPageSize(),
+                pageable.getOffset()
+        );
+
+        Set<UUID> orderIds = rowPage.rows().stream()
+                .filter(UnifiedBillingListQueryRepository.BillingRowRef::isOrder)
+                .map(UnifiedBillingListQueryRepository.BillingRowRef::rowId)
+                .collect(Collectors.toSet());
+        List<UUID> invoiceIds = rowPage.rows().stream()
+                .map(UnifiedBillingListQueryRepository.BillingRowRef::invoiceId)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+
+        Map<UUID, Order> ordersById = orderRepository.findAllById(orderIds).stream()
+                .collect(Collectors.toMap(Order::getId, Function.identity()));
+        Map<UUID, ElectronicInvoice> invoicesById = invoiceIds.isEmpty()
+                ? Map.of()
+                : invoiceRepository.findAllWithPaymentTransactionByIdIn(invoiceIds).stream()
+                    .collect(Collectors.toMap(ElectronicInvoice::getId, Function.identity()));
+        Set<UUID> courseIds = ordersById.values().stream()
+                .map(Order::getCourseId)
+                .collect(Collectors.toSet());
+        Map<UUID, BillingCourseView> coursesById = courses.findByIds(courseIds);
+        Map<UUID, AccountActivationToken> tokensByOrderId = orderIds.isEmpty()
+                ? Map.of()
+                : activationTokenRepository.findByOrderIdIn(orderIds).stream()
+                    .collect(Collectors.toMap(AccountActivationToken::getOrderId, Function.identity(), (first, ignored) -> first));
+
+        List<OrderAdminDto> content = rowPage.rows().stream()
+                .map(ref -> {
+                    if (!ref.isOrder()) {
+                        ElectronicInvoice invoice = invoicesById.get(ref.invoiceId());
+                        return invoice != null ? toStandaloneAdminDto(invoice) : null;
+                    }
+                    Order order = ordersById.get(ref.rowId());
+                    if (order == null) return null;
+                    return toAdminDto(
+                            order,
+                            coursesById.get(order.getCourseId()),
+                            invoicesById.get(ref.invoiceId()),
+                            tokensByOrderId.get(order.getId())
+                    );
+                })
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        return new PageImpl<>(content, pageable, rowPage.totalElements());
     }
 
     private OrderAdminDto toStandaloneAdminDto(ElectronicInvoice invoice) {
@@ -362,6 +361,10 @@ public class OrderApplicationService {
         String transactionCode = transaction != null && transaction.getSepayTransactionId() != null
                 ? transaction.getSepayTransactionId()
                 : invoice.getPaymentTransactionId() != null ? invoice.getPaymentTransactionId().toString() : "UNKNOWN";
+        if (transaction != null && "LEGACY_IMPORT".equalsIgnoreCase(transaction.getGateway())
+                && transaction.getOrderCode() != null && !transaction.getOrderCode().isBlank()) {
+            transactionCode = transaction.getOrderCode();
+        }
         String customerName = firstNonBlank(
                 invoice.getBuyerName(),
                 transaction != null ? transaction.getPayerName() : null,
@@ -414,7 +417,11 @@ public class OrderApplicationService {
                 invoice.getPdfUrl(),
                 invoice.getPilotApproved(),
                 invoice.getCreatedAt(),
-                true
+                true,
+                invoice.getProviderErrorCode(),
+                invoice.getProviderErrorMessage(),
+                invoice.getErrorLog(),
+                invoice.getLastStatusCheckedAt()
         );
     }
 
@@ -446,7 +453,16 @@ public class OrderApplicationService {
     private OrderAdminDto toAdminDto(Order order) {
         BillingCourseView course = courses.findById(order.getCourseId()).orElse(null);
         ElectronicInvoice invoice = invoiceRepository.findFirstByOrderIdOrderByCreatedAtDesc(order.getId()).orElse(null);
+        AccountActivationToken token = activationTokenRepository.findByOrderId(order.getId()).orElse(null);
+        return toAdminDto(order, course, invoice, token);
+    }
 
+    private OrderAdminDto toAdminDto(
+            Order order,
+            BillingCourseView course,
+            ElectronicInvoice invoice,
+            AccountActivationToken activationToken
+    ) {
         return new OrderAdminDto(
                 order.getId(),
                 order.getOrderCode(),
@@ -458,7 +474,7 @@ public class OrderApplicationService {
                 order.getCustomerPhone(),
                 order.getAmount(),
                 order.getStatus(),
-                accountActivationStatus(order),
+                accountActivationStatus(order, activationToken),
                 order.getExpiresAt(),
                 order.getPaidAt(),
                 order.getInvoiceRequired(),
@@ -478,16 +494,24 @@ public class OrderApplicationService {
                 invoice != null ? invoice.getPdfUrl() : null,
                 order.getPilotApproved(),
                 order.getCreatedAt(),
-                false
+                false,
+                invoice != null ? invoice.getProviderErrorCode() : null,
+                invoice != null ? invoice.getProviderErrorMessage() : null,
+                invoice != null ? invoice.getErrorLog() : null,
+                invoice != null ? invoice.getLastStatusCheckedAt() : null
         );
     }
 
     private AccountActivationStatus accountActivationStatus(Order order) {
+        AccountActivationToken token = activationTokenRepository.findByOrderId(order.getId()).orElse(null);
+        return accountActivationStatus(order, token);
+    }
+
+    private AccountActivationStatus accountActivationStatus(Order order, AccountActivationToken token) {
         if (order.getStatus() != OrderStatus.PAID) return null;
-        return activationTokenRepository.findByOrderId(order.getId())
-                .filter(token -> !token.isUsed())
-                .map(token -> AccountActivationStatus.WAITING_ACTIVATION)
-                .orElse(AccountActivationStatus.ACTIVATED);
+        return token != null && !token.isUsed()
+                ? AccountActivationStatus.WAITING_ACTIVATION
+                : AccountActivationStatus.ACTIVATED;
     }
 
     private String generateOrderCode() {

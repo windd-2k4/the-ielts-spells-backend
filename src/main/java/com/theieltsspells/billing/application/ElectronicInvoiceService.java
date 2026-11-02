@@ -9,6 +9,7 @@ import com.theieltsspells.billing.infrastructure.persistence.BillingSettingRepos
 import com.theieltsspells.billing.infrastructure.persistence.ElectronicInvoiceRepository;
 import com.theieltsspells.billing.infrastructure.persistence.InvoiceAuditLogRepository;
 import com.theieltsspells.billing.infrastructure.persistence.OrderRepository;
+import com.theieltsspells.billing.infrastructure.persistence.PaymentTransactionRepository;
 import com.theieltsspells.billing.infrastructure.sepay.SepayEInvoiceClient;
 import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
@@ -18,6 +19,7 @@ import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Predicate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -47,6 +49,10 @@ public class ElectronicInvoiceService {
     private final BillingCourseQueryService courses;
     private final EmailBillingNotificationService emailService;
     private final InvoiceAuditLogRepository auditLogRepository;
+    private final PaymentTransactionRepository paymentTransactionRepository;
+
+    @Value("${SEPAY_EINVOICE_DRAFT_ONLY:false}")
+    private boolean draftOnly;
 
     /**
      * Khởi tạo hoặc lấy Hóa đơn điện tử liên kết với đơn hàng
@@ -182,6 +188,23 @@ public class ElectronicInvoiceService {
         }
     }
 
+    @Transactional
+    public ElectronicInvoice initOrGetDraftInvoice(PaymentTransaction transaction, String actor) {
+        ElectronicInvoice invoice = initOrGetInvoice(transaction, null);
+        if (invoice.getStatus() == InvoiceStatus.DRAFT || Boolean.TRUE.equals(invoice.getIsDraft())) {
+            return invoice;
+        }
+        if (invoice.getStatus() != InvoiceStatus.PENDING_ISSUE || invoice.getCreateTrackingCode() != null) {
+            throw new BusinessRuleException("Giao dịch đã có hóa đơn được xử lý, không thể chuyển thành nháp");
+        }
+        invoice.setIsDraft(true);
+        invoice.setUpdatedAt(OffsetDateTime.now());
+        ElectronicInvoice saved = invoiceRepository.save(invoice);
+        recordAudit(saved.getId(), "LEGACY_IMPORT_DRAFT_QUEUED", actor,
+                "Xếp hàng tạo hóa đơn nháp từ giao dịch lịch sử", Map.of("payment_transaction_id", transaction.getId().toString()));
+        return saved;
+    }
+
     /**
      * Kích hoạt phát hành hóa đơn bất đồng bộ
      */
@@ -215,6 +238,14 @@ public class ElectronicInvoiceService {
         }
 
         BillingSetting settings = billingSettingRepository.findLatest().orElseGet(BillingSetting::new);
+
+        if (draftOnly && !Boolean.TRUE.equals(invoice.getIsDraft())) {
+            invoice.setIsDraft(true);
+            invoice.setUpdatedAt(OffsetDateTime.now());
+            invoiceRepository.save(invoice);
+            recordAudit(invoice.getId(), "DRAFT_ONLY_ENFORCED", "SYSTEM",
+                    "Chế độ an toàn đang bật: yêu cầu SePay chỉ được tạo hóa đơn nháp", null);
+        }
 
         // 0. Safety Checks: Kill switch & Production activation gates
         if (Boolean.FALSE.equals(settings.getAutoInvoiceEnabled())) {
@@ -442,6 +473,10 @@ public class ElectronicInvoiceService {
      */
     @Transactional
     public ElectronicInvoice issueDraftInvoice(UUID invoiceId) {
+        if (draftOnly) {
+            throw new BusinessRuleException("Hệ thống đang ở chế độ chỉ tạo hóa đơn nháp; không được phép phát hành.");
+        }
+
         ElectronicInvoice invoice = invoiceRepository.findById(invoiceId)
                 .or(() -> invoiceRepository.findFirstByOrderIdOrderByCreatedAtDesc(invoiceId))
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hóa đơn: " + invoiceId));
@@ -475,20 +510,40 @@ public class ElectronicInvoiceService {
             }
         }
 
-        // Pre-check trước khi phát hành nháp
-        SepayEInvoiceClient.InvoiceDetailResult preCheck = null;
-        try {
-            preCheck = sepayEInvoiceClient.getInvoiceDetail(settings, invoice.getReferenceCode());
-        } catch (Exception ignored) {}
-        if (preCheck != null && preCheck.success() && ("issued".equalsIgnoreCase(preCheck.status()) || "signed".equalsIgnoreCase(preCheck.status()))) {
-            log.info("Hóa đơn nháp {} đã được phát hành trên SePay. Tiến hành đồng bộ...", invoice.getReferenceCode());
-            return synchronizeFromDetail(invoice, order, preCheck);
-        }
-
         invoice.setStatus(InvoiceStatus.ISSUING);
+        invoice.setIssueTrackingCode(null);
+        invoice.setProviderErrorCode(null);
+        invoice.setProviderErrorMessage(null);
+        invoice.setErrorLog(null);
+        invoice.setErrorCategory(null);
+        invoice.setNextRetryAt(OffsetDateTime.now());
         invoice.setUpdatedAt(OffsetDateTime.now());
-        invoiceRepository.save(invoice);
-        recordAudit(invoice.getId(), "ISSUE_SENT", "ADMIN", "Quản trị viên bấm phát hành hóa đơn nháp", null);
+        ElectronicInvoice queued = invoiceRepository.save(invoice);
+        recordAudit(invoice.getId(), "ISSUE_QUEUED", "ADMIN", "Đã xếp hàng phát hành hóa đơn nháp", null);
+        return queued;
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void executeQueuedDraftIssue(UUID invoiceId) {
+        ElectronicInvoice invoice = invoiceRepository.findById(invoiceId).orElse(null);
+        if (invoice == null || invoice.getStatus() != InvoiceStatus.ISSUING || invoice.getIssueTrackingCode() != null) {
+            return;
+        }
+        BillingSetting settings = billingSettingRepository.findLatest().orElseGet(BillingSetting::new);
+        Order order = invoice.getOrderId() != null
+                ? orderRepository.findById(invoice.getOrderId()).orElse(null)
+                : null;
+
+        try {
+            SepayEInvoiceClient.InvoiceDetailResult preCheck = sepayEInvoiceClient.getInvoiceDetail(settings, invoice.getReferenceCode());
+            if (preCheck != null && preCheck.success()
+                    && ("issued".equalsIgnoreCase(preCheck.status()) || "signed".equalsIgnoreCase(preCheck.status()))) {
+                synchronizeFromDetail(invoice, order, preCheck);
+                return;
+            }
+        } catch (Exception ignored) {
+            // A failed detail lookup must not prevent the queued issue request.
+        }
 
         try {
             SepayEInvoiceClient.IssueDraftResult result = sepayEInvoiceClient.issueDraft(settings, invoice.getReferenceCode());
@@ -498,13 +553,14 @@ public class ElectronicInvoiceService {
                 invoice.setErrorLog(null);
                 invoice.setErrorCategory(null);
                 invoice.setUpdatedAt(OffsetDateTime.now());
-                recordAudit(invoice.getId(), "ISSUE_ACCEPTED", "ADMIN", "Lệnh phát hành được SePay tiếp nhận. Tracking: " + result.trackingCode(), Map.of("tracking_code", result.trackingCode()));
+                recordAudit(invoice.getId(), "ISSUE_ACCEPTED", "SYSTEM", "Lệnh phát hành được SePay tiếp nhận. Tracking: " + result.trackingCode(), Map.of("tracking_code", result.trackingCode()));
             } else {
                 String errCode = result.errorCode() != null ? result.errorCode() : "";
                 if ("EINVOICE_DOCUMENT_EXISTED".equalsIgnoreCase(errCode)) {
                     SepayEInvoiceClient.InvoiceDetailResult existDetail = sepayEInvoiceClient.getInvoiceDetail(settings, invoice.getReferenceCode());
                     if (existDetail.success()) {
-                        return synchronizeFromDetail(invoice, order, existDetail);
+                        synchronizeFromDetail(invoice, order, existDetail);
+                        return;
                     }
                 }
                 InvoiceErrorCategory cat = determineErrorCategory(errCode, result.errorMessage());
@@ -515,18 +571,63 @@ public class ElectronicInvoiceService {
                 invoice.setProviderErrorMessage(result.errorMessage());
                 invoice.setNextRetryAt(cat == InvoiceErrorCategory.REQUIRES_ACTION ? null : OffsetDateTime.now().plusSeconds(30));
                 invoice.setUpdatedAt(OffsetDateTime.now());
-                recordAudit(invoice.getId(), "ISSUE_FAILED", "ADMIN", "Lỗi phát hành nháp: " + result.errorMessage(), null);
+                recordAudit(invoice.getId(), "ISSUE_FAILED", "SYSTEM", "Lỗi phát hành nháp: " + result.errorMessage(), null);
             }
-            return invoiceRepository.save(invoice);
+            invoiceRepository.save(invoice);
         } catch (Exception ex) {
             log.error("Lỗi khi phát hành hóa đơn nháp {}: {}", invoiceId, ex.getMessage());
             invoice.setStatus(InvoiceStatus.FAILED);
             invoice.setErrorCategory(InvoiceErrorCategory.RETRYABLE);
             invoice.setErrorLog(ex.getMessage());
+            invoice.setProviderErrorCode("NETWORK_ERROR");
+            invoice.setProviderErrorMessage(ex.getMessage());
+            invoice.setNextRetryAt(OffsetDateTime.now().plusMinutes(1));
             invoice.setUpdatedAt(OffsetDateTime.now());
-            recordAudit(invoice.getId(), "ISSUE_FAILED", "ADMIN", ex.getMessage(), null);
-            return invoiceRepository.save(invoice);
+            recordAudit(invoice.getId(), "ISSUE_FAILED", "SYSTEM", ex.getMessage(), null);
+            invoiceRepository.save(invoice);
         }
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void reconcileExternalStatus(UUID invoiceId) {
+        ElectronicInvoice invoice = invoiceRepository.findById(invoiceId).orElse(null);
+        if (invoice == null || (invoice.getStatus() != InvoiceStatus.DRAFT && invoice.getStatus() != InvoiceStatus.FAILED)) {
+            return;
+        }
+        OffsetDateTime now = OffsetDateTime.now();
+        if (invoice.getCreatedAt() != null && invoice.getCreatedAt().isBefore(now.minusDays(7))) {
+            invoice.setNextRetryAt(null);
+            invoiceRepository.save(invoice);
+            return;
+        }
+        Order order = invoice.getOrderId() != null
+                ? orderRepository.findById(invoice.getOrderId()).orElse(null)
+                : null;
+        BillingSetting settings = billingSettingRepository.findLatest().orElseGet(BillingSetting::new);
+        invoice.setLastStatusCheckedAt(now);
+        try {
+            SepayEInvoiceClient.InvoiceDetailResult detail = sepayEInvoiceClient.getInvoiceDetail(settings, invoice.getReferenceCode());
+            if (detail != null && detail.success()) {
+                ElectronicInvoice synced = synchronizeFromDetail(invoice, order, detail);
+                if (synced.getStatus() == InvoiceStatus.ISSUED) return;
+            } else {
+                invoice.setProviderErrorCode(detail != null ? detail.errorCode() : "DETAIL_UNAVAILABLE");
+                invoice.setProviderErrorMessage(detail != null ? detail.errorMessage() : "Không thể đọc chi tiết hóa đơn từ SePay");
+                invoice.setErrorLog(invoice.getProviderErrorMessage());
+            }
+        } catch (Exception ex) {
+            invoice.setProviderErrorCode("NETWORK_ERROR");
+            invoice.setProviderErrorMessage(ex.getMessage());
+            invoice.setErrorLog(ex.getMessage());
+        }
+        invoice.setNextRetryAt(nextReconciliationAt(invoice, now));
+        invoice.setUpdatedAt(now);
+        invoiceRepository.save(invoice);
+    }
+
+    private OffsetDateTime nextReconciliationAt(ElectronicInvoice invoice, OffsetDateTime now) {
+        long ageMinutes = invoice.getCreatedAt() == null ? 0 : java.time.Duration.between(invoice.getCreatedAt(), now).toMinutes();
+        return now.plusMinutes(ageMinutes < 15 ? 1 : ageMinutes < 120 ? 2 : 3);
     }
 
     /**
@@ -831,6 +932,36 @@ public class ElectronicInvoiceService {
         return invoiceRepository.save(invoice);
     }
 
+    @Transactional
+    public void deleteDraftInvoice(UUID invoiceId) {
+        ElectronicInvoice invoice = invoiceRepository.findById(invoiceId)
+                .or(() -> invoiceRepository.findFirstByOrderIdOrderByCreatedAtDesc(invoiceId))
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hóa đơn: " + invoiceId));
+
+        boolean neverSubmitted = invoice.getCreateTrackingCode() == null
+                && invoice.getIssueTrackingCode() == null
+                && invoice.getFirstSubmittedAt() == null;
+        boolean deletable = Boolean.TRUE.equals(invoice.getIsDraft())
+                && invoice.getStatus() == InvoiceStatus.DRAFT
+                && neverSubmitted;
+        if (!deletable) {
+            throw new BusinessRuleException(
+                    "Chỉ được xóa hóa đơn nháp chưa gửi SePay/Cơ quan Thuế. Hóa đơn này đã được xử lý hoặc đã phát hành."
+            );
+        }
+
+        UUID transactionId = invoice.getPaymentTransactionId();
+        invoiceRepository.delete(invoice);
+
+        // Manual drafts own their synthetic transaction; imported bank rows are retained for reconciliation history.
+        if (transactionId != null) {
+            paymentTransactionRepository.findById(transactionId)
+                    .filter(transaction -> transaction.getOrderId() == null
+                            && "MANUAL".equalsIgnoreCase(transaction.getGateway()))
+                    .ifPresent(paymentTransactionRepository::delete);
+        }
+    }
+
     public InvoiceErrorCategory determineErrorCategory(String errorCode, String errorMessage) {
         if (errorCode != null && !errorCode.isBlank()) {
             return switch (errorCode.toUpperCase()) {
@@ -947,6 +1078,7 @@ public class ElectronicInvoiceService {
 
         recordAudit(invoice.getId(), "MANUAL_STATUS_CHECK", "ADMIN", "Kế toán kiểm tra lại trạng thái với SePay", null);
 
+        invoice.setLastStatusCheckedAt(OffsetDateTime.now());
         SepayEInvoiceClient.InvoiceDetailResult detail = sepayEInvoiceClient.getInvoiceDetail(settings, invoice.getReferenceCode());
         if (detail.success()) {
             ElectronicInvoice synced = synchronizeFromDetail(invoice, order, detail);
@@ -954,10 +1086,16 @@ public class ElectronicInvoiceService {
         } else if (detail.notFound()) {
             invoice.setErrorLog("SePay xác nhận chưa ghi nhận hóa đơn với reference_code: " + invoice.getReferenceCode());
             invoice.setErrorCategory(InvoiceErrorCategory.RETRYABLE);
+            invoice.setProviderErrorCode(detail.errorCode());
+            invoice.setProviderErrorMessage(detail.errorMessage());
+            invoice.setNextRetryAt(nextReconciliationAt(invoice, OffsetDateTime.now()));
             invoice.setUpdatedAt(OffsetDateTime.now());
             invoiceRepository.save(invoice);
         } else {
             invoice.setErrorLog("Kiểm tra trạng thái thất bại: " + detail.errorMessage());
+            invoice.setProviderErrorCode(detail.errorCode());
+            invoice.setProviderErrorMessage(detail.errorMessage());
+            invoice.setNextRetryAt(nextReconciliationAt(invoice, OffsetDateTime.now()));
             invoice.setUpdatedAt(OffsetDateTime.now());
             invoiceRepository.save(invoice);
         }
@@ -1120,33 +1258,21 @@ public class ElectronicInvoiceService {
     }
 
     public InvoiceStatsDto getInvoiceStats(LocalDate fromDate, LocalDate toDate) {
-        Specification<ElectronicInvoice> spec = buildSpecification(null, null, fromDate, toDate);
-        List<ElectronicInvoice> list = invoiceRepository.findAll(spec);
-
-        long total = list.size();
-        long issued = 0;
-        long pending = 0;
-        long failed = 0;
-        long cancelled = 0;
-        BigDecimal totalAmount = BigDecimal.ZERO;
-
-        for (ElectronicInvoice inv : list) {
-            InvoiceStatus s = inv.getStatus();
-            if (s == InvoiceStatus.ISSUED) {
-                issued++;
-                if (inv.getTotalAmount() != null) {
-                    totalAmount = totalAmount.add(inv.getTotalAmount());
-                }
-            } else if (s == InvoiceStatus.PENDING_ISSUE || s == InvoiceStatus.PILOT_PENDING_APPROVAL || s == InvoiceStatus.CREATING || s == InvoiceStatus.PROCESSING || s == InvoiceStatus.ISSUING || s == InvoiceStatus.DRAFT) {
-                pending++;
-            } else if (s == InvoiceStatus.FAILED || s == InvoiceStatus.UNKNOWN) {
-                failed++;
-            } else if (s == InvoiceStatus.CANCELLED) {
-                cancelled++;
-            }
-        }
-
-        return new InvoiceStatsDto(total, issued, pending, failed, cancelled, totalAmount);
+        OffsetDateTime fromTime = fromDate != null
+                ? fromDate.atStartOfDay().atOffset(ZoneOffset.ofHours(7))
+                : null;
+        OffsetDateTime toTime = toDate != null
+                ? toDate.plusDays(1).atStartOfDay().atOffset(ZoneOffset.ofHours(7))
+                : null;
+        ElectronicInvoiceRepository.InvoiceStatsProjection stats = invoiceRepository.aggregateStats(fromTime, toTime);
+        return new InvoiceStatsDto(
+                stats.getTotalCount(),
+                stats.getIssuedCount(),
+                stats.getPendingCount(),
+                stats.getFailedCount(),
+                stats.getCancelledCount(),
+                stats.getTotalInvoicedAmount()
+        );
     }
 
     public List<InvoiceAdminDto> exportInvoices(
@@ -1182,19 +1308,26 @@ public class ElectronicInvoiceService {
     }
 
     public InvoiceAdminDto toAdminDto(ElectronicInvoice invoice, Order order) {
+        PaymentTransaction transaction = invoice.getPaymentTransaction();
+        InvoiceBuyerType buyerType = order != null ? order.getBuyerType() : invoiceBuyerType(invoice.getBuyerType());
+        String orderCode = order != null
+                ? order.getOrderCode()
+                : transaction != null && transaction.getOrderCode() != null
+                    ? transaction.getOrderCode()
+                    : "QR-TINH";
         return new InvoiceAdminDto(
                 invoice.getId(),
                 invoice.getOrderId(),
                 invoice.getPaymentTransactionId(),
-                order != null ? order.getOrderCode() : "QR-TINH",
+                orderCode,
                 invoice.getReferenceCode(),
                 invoice.getProductName(),
                 invoice.getBuyerName() != null ? invoice.getBuyerName() : (order != null ? order.getCustomerName() : "Người nộp học phí"),
                 order != null ? order.getCustomerEmail() : invoice.getBuyerEmail(),
                 invoice.getTotalAmount(),
-                order != null ? order.getBuyerType() : InvoiceBuyerType.PERSONAL,
-                order != null ? order.getInvoiceCompanyName() : null,
-                order != null ? order.getInvoiceTaxCode() : null,
+                buyerType,
+                order != null ? order.getInvoiceCompanyName() : invoice.getBuyerLegalName(),
+                order != null ? order.getInvoiceTaxCode() : invoice.getBuyerTaxCode(),
                 invoice.getInvoiceTemplate(),
                 invoice.getInvoiceSeries(),
                 invoice.getInvoiceNumber(),
@@ -1216,8 +1349,17 @@ public class ElectronicInvoiceService {
                 invoice.getNextRetryAt(),
                 invoice.getReconciliationStatus(),
                 invoice.getTaxTreatment(),
-                invoice.getErrorCategory()
+                invoice.getErrorCategory(),
+                invoice.getProviderErrorCode(),
+                invoice.getProviderErrorMessage(),
+                invoice.getLastStatusCheckedAt()
         );
+    }
+
+    private InvoiceBuyerType invoiceBuyerType(String value) {
+        return "enterprise".equalsIgnoreCase(value) || "business".equalsIgnoreCase(value)
+                ? InvoiceBuyerType.BUSINESS
+                : InvoiceBuyerType.PERSONAL;
     }
 
     @Transactional

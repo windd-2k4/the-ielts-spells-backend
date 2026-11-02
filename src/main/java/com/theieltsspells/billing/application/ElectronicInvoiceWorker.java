@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -57,11 +58,13 @@ public class ElectronicInvoiceWorker {
         boolean autoInvoiceEnabled = billingSettingRepository.findLatest()
                 .map(setting -> Boolean.TRUE.equals(setting.getAutoInvoiceEnabled()))
                 .orElse(false);
-        if (!autoInvoiceEnabled) {
-            return;
-        }
-
-        List<ElectronicInvoice> candidates = invoiceRepository.findActionableInvoices(ACTIONABLE_STATUSES, now, 15);
+        // State polling must continue even when automatic invoice creation is disabled.
+        // Manual issue requests enter ISSUING and otherwise remain stuck forever.
+        List<InvoiceStatus> statusesToPoll = autoInvoiceEnabled
+                ? ACTIONABLE_STATUSES
+                : List.of(InvoiceStatus.CREATING, InvoiceStatus.PROCESSING, InvoiceStatus.ISSUING);
+        List<ElectronicInvoice> candidates = invoiceRepository.findActionableInvoices(
+                statusesToPoll, now, 15, PageRequest.of(0, 20));
 
         if (candidates.isEmpty()) {
             return;
@@ -78,6 +81,8 @@ public class ElectronicInvoiceWorker {
                             ? orderRepository.findById(invoice.getOrderId()).orElse(null)
                             : null;
                     invoiceService.executeCreateInvoice(invoice, order);
+                } else if (invoice.getStatus() == InvoiceStatus.ISSUING && invoice.getIssueTrackingCode() == null) {
+                    invoiceService.executeQueuedDraftIssue(invoice.getId());
                 } else if (invoice.getStatus() == InvoiceStatus.CREATING
                         || invoice.getStatus() == InvoiceStatus.PROCESSING
                         || invoice.getStatus() == InvoiceStatus.ISSUING) {
@@ -85,6 +90,24 @@ public class ElectronicInvoiceWorker {
                 }
             } catch (Exception ex) {
                 log.error("Lỗi xử lý hóa đơn {} trong worker: {}", invoice.getId(), ex.getMessage(), ex);
+            }
+        }
+    }
+
+    @Scheduled(fixedDelayString = "${app.billing.invoice-reconciliation-millis:60000}")
+    public void reconcileDraftAndFailedInvoices() {
+        OffsetDateTime now = OffsetDateTime.now();
+        List<ElectronicInvoice> candidates = invoiceRepository.findStatusReconciliationCandidates(
+                List.of(InvoiceStatus.DRAFT, InvoiceStatus.FAILED),
+                now.minusDays(7),
+                now,
+                PageRequest.of(0, 20)
+        );
+        for (ElectronicInvoice invoice : candidates) {
+            try {
+                invoiceService.reconcileExternalStatus(invoice.getId());
+            } catch (Exception ex) {
+                log.warn("Không thể đối soát hóa đơn {}: {}", invoice.getId(), ex.getMessage());
             }
         }
     }

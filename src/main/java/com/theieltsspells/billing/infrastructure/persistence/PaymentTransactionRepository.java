@@ -6,6 +6,8 @@ import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
 import java.util.Optional;
 import java.util.UUID;
+import java.util.Collection;
+import java.util.List;
 import java.math.BigDecimal;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -16,6 +18,8 @@ public interface PaymentTransactionRepository extends JpaRepository<PaymentTrans
 
     Optional<PaymentTransaction> findBySepayTransactionId(String sepayTransactionId);
 
+    List<PaymentTransaction> findBySepayTransactionIdIn(Collection<String> sepayTransactionIds);
+
     Optional<PaymentTransaction> findFirstByOrderIdOrderByCreatedAtDesc(UUID orderId);
 
     Optional<PaymentTransaction> findFirstByOrderCodeOrderByCreatedAtDesc(String orderCode);
@@ -25,11 +29,10 @@ public interface PaymentTransactionRepository extends JpaRepository<PaymentTrans
             from payment_transactions t
             where t.order_id = :orderId
               and t.id <> :excludedTransactionId
-              and t.status in (
-                cast('SUCCESS' as public.payment_transaction_status),
-                cast('PARTIAL_PAYMENT' as public.payment_transaction_status),
-                cast('OVERPAID' as public.payment_transaction_status)
-              )
+              -- Compare the enum value as text so this query is portable across
+              -- environments where the PostgreSQL enum type has a different
+              -- qualified name (or was created by Supabase with a legacy name).
+              and t.status::text in ('SUCCESS', 'PARTIAL_PAYMENT', 'OVERPAID')
             """, nativeQuery = true)
     BigDecimal sumCapturedAmountByOrderIdExcluding(
             @Param("orderId") UUID orderId,

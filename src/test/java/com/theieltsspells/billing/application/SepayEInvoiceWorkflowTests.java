@@ -15,6 +15,7 @@ import com.theieltsspells.billing.infrastructure.persistence.InvoiceAuditLogRepo
 import com.theieltsspells.billing.infrastructure.persistence.OrderRepository;
 import com.theieltsspells.billing.infrastructure.persistence.PaymentTransactionRepository;
 import com.theieltsspells.billing.infrastructure.persistence.AccountActivationTokenRepository;
+import com.theieltsspells.billing.infrastructure.persistence.UnifiedBillingListQueryRepository;
 import com.theieltsspells.billing.infrastructure.security.SecretEncryptionService;
 import com.theieltsspells.billing.infrastructure.sepay.SepayEInvoiceClient;
 import com.theieltsspells.billing.infrastructure.sepay.SepayEInvoiceTokenService;
@@ -28,6 +29,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -68,6 +70,9 @@ class SepayEInvoiceWorkflowTests {
 
     @Mock
     private AccountActivationTokenRepository activationTokenRepository;
+
+    @Mock
+    private UnifiedBillingListQueryRepository unifiedBillingListQueryRepository;
 
     @Mock
     private BillingCourseQueryService courses;
@@ -147,7 +152,8 @@ class SepayEInvoiceWorkflowTests {
                 sepayEInvoiceClient,
                 courses,
                 emailService,
-                auditLogRepository
+                auditLogRepository,
+                transactionRepository
         );
 
         realOrderApplicationService = new OrderApplicationService(
@@ -156,7 +162,8 @@ class SepayEInvoiceWorkflowTests {
                 studentAccounts,
                 billingSettingRepository,
                 invoiceRepository,
-                activationTokenRepository
+                activationTokenRepository,
+                unifiedBillingListQueryRepository
         );
     }
 
@@ -1134,8 +1141,8 @@ class SepayEInvoiceWorkflowTests {
     }
 
     @Test
-    @DisplayName("25. Flow B: Phát hành hóa đơn nháp (DRAFT) chuyển sang ISSUING")
-    void testFlowB_IssueDraftInvoice_SetsIssuing() {
+    @DisplayName("25. Flow B: API chỉ xếp hàng, worker mới gọi SePay")
+    void testFlowB_IssueDraftInvoice_IsAsynchronous() {
         BillingSetting setting = new BillingSetting();
         when(billingSettingRepository.findLatest()).thenReturn(Optional.of(setting));
 
@@ -1155,7 +1162,79 @@ class SepayEInvoiceWorkflowTests {
         ElectronicInvoice result = realInvoiceService.issueDraftInvoice(invId);
 
         assertThat(result.getStatus()).isEqualTo(InvoiceStatus.ISSUING);
+        assertThat(result.getIssueTrackingCode()).isNull();
+        verify(sepayEInvoiceClient, never()).issueDraft(any(), anyString());
+
+        realInvoiceService.executeQueuedDraftIssue(invId);
+
         assertThat(result.getIssueTrackingCode()).isEqualTo("TRK-ISSUE-2222");
+        verify(sepayEInvoiceClient).issueDraft(any(), eq("INV-KH2609222222"));
+    }
+
+    @Test
+    @DisplayName("P0: Đối soát tự động FAILED chỉ đọc chi tiết, không phát hành lại")
+    void reconcileFailedInvoice_OnlyReadsDetail() {
+        BillingSetting setting = new BillingSetting();
+        when(billingSettingRepository.findLatest()).thenReturn(Optional.of(setting));
+
+        UUID invoiceId = UUID.randomUUID();
+        ElectronicInvoice invoice = new ElectronicInvoice();
+        invoice.setId(invoiceId);
+        invoice.setReferenceCode("INV-KH261102-RECONCILE");
+        invoice.setStatus(InvoiceStatus.FAILED);
+        invoice.setCreatedAt(OffsetDateTime.now().minusMinutes(20));
+
+        when(invoiceRepository.findById(invoiceId)).thenReturn(Optional.of(invoice));
+        when(invoiceRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(sepayEInvoiceClient.getInvoiceDetail(any(), eq(invoice.getReferenceCode())))
+                .thenReturn(SepayEInvoiceClient.InvoiceDetailResult.error("EINVOICE_PENDING", "SePay chưa hoàn tất xử lý"));
+
+        realInvoiceService.reconcileExternalStatus(invoiceId);
+
+        verify(sepayEInvoiceClient).getInvoiceDetail(any(), eq(invoice.getReferenceCode()));
+        verify(sepayEInvoiceClient, never()).issueDraft(any(), anyString());
+        verify(sepayEInvoiceClient, never()).createInvoice(any(), any());
+        assertThat(invoice.getProviderErrorCode()).isEqualTo("EINVOICE_PENDING");
+        assertThat(invoice.getProviderErrorMessage()).isEqualTo("SePay chưa hoàn tất xử lý");
+        assertThat(invoice.getLastStatusCheckedAt()).isNotNull();
+        assertThat(invoice.getNextRetryAt()).isAfter(invoice.getLastStatusCheckedAt());
+    }
+
+    @Test
+    @DisplayName("Chế độ chỉ tạo nháp: ép payload is_draft=true và chặn phát hành")
+    void draftOnlyMode_ForcesDraftAndBlocksIssue() {
+        ReflectionTestUtils.setField(realInvoiceService, "draftOnly", true);
+
+        BillingSetting setting = new BillingSetting();
+        setting.setEinvoiceTemplateCode("1");
+        setting.setEinvoiceInvoiceSeries("C26TSE");
+        when(billingSettingRepository.findLatest()).thenReturn(Optional.of(setting));
+
+        Order order = createSampleOrder("KH261102DRAFTONLY");
+        ElectronicInvoice invoice = new ElectronicInvoice();
+        invoice.setId(UUID.randomUUID());
+        invoice.setOrderId(order.getId());
+        invoice.setReferenceCode("INV-KH261102DRAFTONLY");
+        invoice.setStatus(InvoiceStatus.PENDING_ISSUE);
+        invoice.setIsDraft(false);
+
+        when(invoiceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(sepayEInvoiceClient.createInvoice(any(), any())).thenReturn(
+                new SepayEInvoiceClient.CreateResult(true, "TRK-DRAFT-ONLY", null, null)
+        );
+
+        realInvoiceService.executeCreateInvoice(invoice, order);
+
+        ArgumentCaptor<SepayEInvoiceClient.CreateInvoicePayload> payload =
+                ArgumentCaptor.forClass(SepayEInvoiceClient.CreateInvoicePayload.class);
+        verify(sepayEInvoiceClient).createInvoice(any(), payload.capture());
+        assertThat(payload.getValue().isDraft()).isTrue();
+        assertThat(invoice.getIsDraft()).isTrue();
+
+        assertThatThrownBy(() -> realInvoiceService.issueDraftInvoice(invoice.getId()))
+                .isInstanceOf(BusinessRuleException.class)
+                .hasMessageContaining("chỉ tạo hóa đơn nháp");
+        verify(sepayEInvoiceClient, never()).issueDraft(any(), any());
     }
 
     @Test
@@ -1256,7 +1335,7 @@ class SepayEInvoiceWorkflowTests {
         pendingReconcileInv.setReconciliationStatus(ReconciliationStatus.PENDING);
         pendingReconcileInv.setNextRetryAt(OffsetDateTime.now().minusSeconds(10));
 
-        when(invoiceRepository.findActionableInvoices(anyList(), any(), anyInt()))
+        when(invoiceRepository.findActionableInvoices(anyList(), any(), anyInt(), any()))
                 .thenReturn(List.of(pendingReconcileInv));
 
         invoiceWorker.processPendingInvoices();

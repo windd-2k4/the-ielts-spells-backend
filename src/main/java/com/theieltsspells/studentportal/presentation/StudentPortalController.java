@@ -67,6 +67,13 @@ public class StudentPortalController {
         return service.overview(studentId(jwt));
     }
 
+    @GetMapping("/attempts")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'identity.profile.self.read')")
+    @Operation(summary = "Lấy toàn bộ lịch sử làm bài của học viên")
+    public List<StudentPortalOverviewResponse.RecentAttempt> attemptHistory(@AuthenticationPrincipal Jwt jwt) {
+        return service.attemptHistory(studentId(jwt));
+    }
+
     @GetMapping("/activity")
     @PreAuthorize("@permissionPolicy.has(authentication, 'identity.profile.self.read')")
     @Operation(summary = "Lấy hoạt động học tập đã nộp trong một tháng")

@@ -8,6 +8,7 @@ import com.theieltsspells.academic.application.AcademicMembershipService;
 import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.application.ConflictException;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
+import com.theieltsspells.shared.application.ReadingAttemptGradedEvent;
 import com.theieltsspells.testing.application.dto.ReadingEvidenceMode;
 import com.theieltsspells.testing.application.dto.ReadingAttemptResultResponse;
 import com.theieltsspells.testing.application.dto.ReadingAnnotationResponse;
@@ -19,6 +20,7 @@ import com.theieltsspells.testing.application.dto.StudentReadingAttemptResponse;
 import com.theieltsspells.testing.application.dto.StudentReadingCatalogItemResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,6 +46,7 @@ public class StudentReadingDeliveryService {
     private final ObjectMapper objectMapper;
     private final AcademicMembershipService memberships;
     private final ReadingVersionMaterializer readingVersionMaterializer;
+    private final ApplicationEventPublisher events;
     private final ReadingAutoGrader grader = new ReadingAutoGrader();
 
     public List<StudentReadingAssignmentResponse> listAssignments(UUID studentId, String skill) {
@@ -383,10 +386,33 @@ public class StudentReadingDeliveryService {
     @Transactional
     public ReadingAttemptResultResponse submit(UUID attemptId, UUID studentId) {
         var attempt = loadAttempt(attemptId, studentId, true);
+        boolean finalized = false;
         if ("IN_PROGRESS".equals(attempt.status())) {
             finalizeAttempt(attempt, isExpired(attempt) ? "EXPIRED" : "GRADED");
+            finalized = true;
         }
-        return result(loadAttempt(attemptId, studentId, false), false);
+        var completed = loadAttempt(attemptId, studentId, false);
+        if (finalized && "READING".equals(completed.skill())) {
+            events.publishEvent(gradedEvent(completed));
+        }
+        return result(completed, false);
+    }
+
+    private ReadingAttemptGradedEvent gradedEvent(AttemptContext attempt) {
+        var responses = storedResponses(attempt.id()).stream()
+                .collect(Collectors.toMap(StoredResponse::questionKey, value -> value));
+        var evidence = definitions(attempt.testVersionId()).stream().map(question -> {
+            var response = responses.get(question.questionKey());
+            boolean answered = response != null && !grader.normalizedValues(response.answer()).isEmpty();
+            return new ReadingAttemptGradedEvent.QuestionEvidence(
+                    question.questionKey(), question.typeFormat(), answered,
+                    answered ? response.correct() : null
+            );
+        }).toList();
+        return new ReadingAttemptGradedEvent(
+                attempt.id(), attempt.studentId(), attempt.testVersionId(), attempt.skill(),
+                attempt.title(), attempt.submittedAt(), evidence
+        );
     }
 
     public ReadingAttemptResultResponse getResult(UUID attemptId, UUID studentId) {

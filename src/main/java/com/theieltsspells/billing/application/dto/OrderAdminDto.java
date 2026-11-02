@@ -42,5 +42,9 @@ public record OrderAdminDto(
         String pdfUrl,
         Boolean pilotApproved,
         OffsetDateTime createdAt,
-        Boolean standalonePayment
+        Boolean standalonePayment,
+        String invoiceProviderErrorCode,
+        String invoiceProviderErrorMessage,
+        String invoiceErrorLog,
+        OffsetDateTime invoiceLastStatusCheckedAt
 ) {}

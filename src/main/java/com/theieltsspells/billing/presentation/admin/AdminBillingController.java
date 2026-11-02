@@ -146,14 +146,27 @@ public class AdminBillingController {
             @RequestParam(required = false) String query,
             @RequestParam(required = false) String q,
             @RequestParam(required = false) OrderStatus status,
+            @RequestParam(required = false) InvoiceStatus invoiceStatus,
             @RequestParam(required = false) UUID courseId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate,
+            @RequestParam(defaultValue = "false") boolean includePendingDrafts,
+            @RequestParam(defaultValue = "false") boolean unissued,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "15") int size
     ) {
         String effectiveQuery = query != null ? query : q;
-        Page<OrderAdminDto> result = orderService.searchOrders(effectiveQuery, status, courseId, fromDate, toDate, PageRequest.of(page, size));
+        Page<OrderAdminDto> result = orderService.searchOrders(
+                effectiveQuery,
+                status,
+                invoiceStatus,
+                courseId,
+                fromDate,
+                toDate,
+                includePendingDrafts,
+                unissued,
+                PageRequest.of(page, size)
+        );
         return new PageResponse<>(
                 result.getContent(),
                 result.getNumber(),
@@ -374,7 +387,14 @@ public class AdminBillingController {
     @Operation(summary = "Flow B: Phát hành chính thức hóa đơn nháp (DRAFT)")
     public ResponseEntity<InvoiceAdminDto> issueDraftInvoice(@PathVariable UUID id) {
         invoiceService.issueDraftInvoice(id);
-        return ResponseEntity.ok(invoiceService.getInvoiceAdmin(id));
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(invoiceService.getInvoiceAdmin(id));
+    }
+
+    @DeleteMapping("/invoices/{id}/draft")
+    @Operation(summary = "Xóa hóa đơn nháp chưa gửi SePay")
+    public ResponseEntity<Void> deleteDraftInvoice(@PathVariable UUID id) {
+        invoiceService.deleteDraftInvoice(id);
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/invoices/{id}/retry")

@@ -16,6 +16,7 @@ public enum ApplicationPermission {
     IDENTITY_TEACHER_OPTIONS_READ("identity.teacher_options.read"),
     AUDIT_READ("audit.read"),
     SYSTEM_SETTINGS_MANAGE("system.settings.manage"),
+    ADAPTIVE_LEARNING_MANAGE("adaptive_learning.manage"),
 
     ADMISSIONS_LEAD_READ("admissions.lead.read"),
     ADMISSIONS_LEAD_MANAGE("admissions.lead.manage"),

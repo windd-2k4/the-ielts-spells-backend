@@ -41,5 +41,8 @@ public record InvoiceAdminDto(
         OffsetDateTime nextRetryAt,
         com.theieltsspells.billing.domain.ReconciliationStatus reconciliationStatus,
         com.theieltsspells.billing.domain.TaxTreatment taxTreatment,
-        com.theieltsspells.billing.domain.InvoiceErrorCategory errorCategory
+        com.theieltsspells.billing.domain.InvoiceErrorCategory errorCategory,
+        String providerErrorCode,
+        String providerErrorMessage,
+        OffsetDateTime lastStatusCheckedAt
 ) {}

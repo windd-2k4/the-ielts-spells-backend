@@ -936,7 +936,7 @@ public class StudentPortalService {
         ), studentId);
     }
 
-    private List<StudentPortalOverviewResponse.RecentAttempt> recentAttempts(UUID studentId) {
+    public List<StudentPortalOverviewResponse.RecentAttempt> attemptHistory(UUID studentId) {
         return jdbc.query("""
                 select attempt.id attempt_id, assignment.id assignment_id, attempt.attempt_origin,
                   version.title,
@@ -955,7 +955,6 @@ public class StudentPortalService {
                 where attempt.student_id = ?
                 group by attempt.id, assignment.id, attempt.attempt_origin, version.title, version.primary_skill
                 order by coalesce(attempt.submitted_at, attempt.last_saved_at, attempt.started_at) desc
-                limit 8
                 """, (rs, ignored) -> {
             var score = rs.getBigDecimal("score");
             var submittedAt = rs.getObject("submitted_at", OffsetDateTime.class);

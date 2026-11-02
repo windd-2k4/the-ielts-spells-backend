@@ -3,6 +3,8 @@ package com.theieltsspells.billing.infrastructure.persistence;
 import com.theieltsspells.billing.domain.AccountActivationToken;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -11,4 +13,6 @@ public interface AccountActivationTokenRepository extends JpaRepository<AccountA
     Optional<AccountActivationToken> findByTokenHash(String tokenHash);
 
     Optional<AccountActivationToken> findByOrderId(UUID orderId);
+
+    List<AccountActivationToken> findByOrderIdIn(Collection<UUID> orderIds);
 }
