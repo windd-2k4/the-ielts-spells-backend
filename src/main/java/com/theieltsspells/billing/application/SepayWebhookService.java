@@ -132,7 +132,8 @@ public class SepayWebhookService {
                         "Cổng thanh toán chưa được cấu hình"
                 ));
         verifyWebhookAuthorization(authHeader, settings);
-        verifyDestinationAccount(payload.accountNumber(), settings);
+        String destinationAccount = verifyDestinationAccount(
+                payload.accountNumber(), payload.subAccount(), settings);
 
         log.info("Nhận SePay Webhook tiền vào: id={}, gateway={}, amount={}",
                 payload.id(), payload.gateway(), payload.transferAmount());
@@ -155,7 +156,7 @@ public class SepayWebhookService {
         transaction.setAccumulatedAmount(payload.accumulated());
         transaction.setTransferContent(payload.content());
         transaction.setBankBrandName(payload.gateway());
-        transaction.setAccountNumber(payload.accountNumber());
+        transaction.setAccountNumber(destinationAccount);
         transaction.setRawPayload(rawPayloadMap);
         transaction.setCreatedAt(OffsetDateTime.now());
 
@@ -442,17 +443,18 @@ public class SepayWebhookService {
         }
     }
 
-    private void verifyDestinationAccount(String receivedAccountNumber, BillingSetting settings) {
+    private String verifyDestinationAccount(
+            String receivedAccountNumber,
+            String receivedSubAccount,
+            BillingSetting settings
+    ) {
         String configured = normalizeAccountNumber(settings.getSepayAccountNumber());
-        String received = normalizeAccountNumber(receivedAccountNumber);
         if (configured.isBlank()) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Chưa cấu hình tài khoản nhận học phí");
         }
-        if (received.isBlank() || !MessageDigest.isEqual(
-                configured.getBytes(StandardCharsets.UTF_8),
-                received.getBytes(StandardCharsets.UTF_8))) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Giao dịch không thuộc tài khoản nhận học phí đã cấu hình");
-        }
+        if (configured.equals(normalizeAccountNumber(receivedAccountNumber))) return receivedAccountNumber;
+        if (configured.equals(normalizeAccountNumber(receivedSubAccount))) return receivedSubAccount;
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Giao dịch không thuộc tài khoản nhận học phí đã cấu hình");
     }
 
     private String normalizeAccountNumber(String value) {
@@ -472,6 +474,8 @@ public class SepayWebhookService {
             return "Người nộp học phí";
         }
         String normalized = transferContent.trim().replaceAll("\\s+", " ");
+        // Vietcombank static VA prefixes the customer's note with TKP, VA and transaction metadata.
+        normalized = normalized.replaceFirst("(?i)^TKP#[^#]+#\\d+\\.\\d{6}\\.\\d+\\.", "");
         // MoMo prefixes the customer's transfer note with its numeric transaction id.
         normalized = normalized.replaceFirst("^\\d{6,}[-_\\s]+", "");
         if (orderCode != null) {

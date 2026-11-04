@@ -51,7 +51,9 @@ public class ElectronicInvoiceService {
     private final InvoiceAuditLogRepository auditLogRepository;
     private final PaymentTransactionRepository paymentTransactionRepository;
 
-    @Value("${SEPAY_EINVOICE_DRAFT_ONLY:false}")
+    // Fail closed: creating invoices must remain draft-only unless production
+    // issuance is explicitly enabled in the deployment environment.
+    @Value("${SEPAY_EINVOICE_DRAFT_ONLY:true}")
     private boolean draftOnly;
 
     /**
@@ -154,8 +156,13 @@ public class ElectronicInvoiceService {
         invoice.setIsDraft(false);
         invoice.setBuyerType(order != null && order.getBuyerType() == InvoiceBuyerType.BUSINESS
                 ? "enterprise" : "personal");
-        invoice.setBuyerName(transaction.getPayerName() != null && !transaction.getPayerName().isBlank()
-                ? transaction.getPayerName() : "Người nộp học phí");
+        // Với giao dịch ngân hàng, nội dung chuyển khoản là dữ liệu gốc dùng để
+        // đối soát và phải được giữ nguyên trên hóa đơn. `payerName` chỉ là giá
+        // trị đã bóc tách để tìm kiếm/hiển thị nội bộ, không dùng làm tên người mua.
+        String transferContent = transaction.getTransferContent();
+        invoice.setBuyerName(transferContent != null && !transferContent.isBlank()
+                ? transferContent : (transaction.getPayerName() != null && !transaction.getPayerName().isBlank()
+                ? transaction.getPayerName() : "Người nộp học phí"));
         invoice.setBuyerLegalName(order != null ? order.getInvoiceCompanyName() : null);
         invoice.setBuyerTaxCode(order != null ? order.getInvoiceTaxCode() : null);
         invoice.setBuyerAddress(order != null && order.getInvoiceAddress() != null && !order.getInvoiceAddress().isBlank()
@@ -610,6 +617,21 @@ public class ElectronicInvoiceService {
             if (detail != null && detail.success()) {
                 ElectronicInvoice synced = synchronizeFromDetail(invoice, order, detail);
                 if (synced.getStatus() == InvoiceStatus.ISSUED) return;
+            } else if (detail != null && detail.notFound()
+                    && invoice.getStatus() == InvoiceStatus.DRAFT
+                    && Boolean.TRUE.equals(invoice.getIsDraft())
+                    && invoice.getFirstSubmittedAt() == null
+                    && invoice.getCreateTrackingCode() == null) {
+                invoice.setStatus(InvoiceStatus.PENDING_ISSUE);
+                invoice.setNextRetryAt(now);
+                invoice.setErrorLog(null);
+                invoice.setErrorCategory(null);
+                invoice.setUpdatedAt(now);
+                invoiceRepository.save(invoice);
+                recordAudit(invoice.getId(), "LOCAL_DRAFT_RECOVERY", "SYSTEM",
+                        "SePay chưa có hóa đơn nháp cục bộ; xếp hàng gửi lại", null);
+                executeCreateInvoice(invoice, order);
+                return;
             } else {
                 invoice.setProviderErrorCode(detail != null ? detail.errorCode() : "DETAIL_UNAVAILABLE");
                 invoice.setProviderErrorMessage(detail != null ? detail.errorMessage() : "Không thể đọc chi tiết hóa đơn từ SePay");
@@ -825,7 +847,7 @@ public class ElectronicInvoiceService {
                 invoice.setNextRetryAt(OffsetDateTime.now().plusSeconds(180));
                 try {
                     SepayEInvoiceClient.InvoiceDetailResult detail = sepayEInvoiceClient.getInvoiceDetail(settings, invoice.getReferenceCode());
-                    if (detail != null && detail.success() && ("issued".equalsIgnoreCase(detail.status()) || "signed".equalsIgnoreCase(detail.status()) || detail.invoiceNumber() != null)) {
+                    if (detail != null && detail.success()) {
                         Order order = invoice.getOrderId() != null
                                 ? orderRepository.findById(invoice.getOrderId()).orElse(null)
                                 : null;
@@ -844,7 +866,7 @@ public class ElectronicInvoiceService {
     }
 
     /**
-     * Đối soát thông tin chi tiết hóa đơn từ SePay và đánh dấu ISSUED
+     * Đối soát thông tin chi tiết hóa đơn từ SePay và đồng bộ trạng thái
      */
     public void reconcileInvoiceDetail(ElectronicInvoice invoice, Order order, BillingSetting settings) {
         SepayEInvoiceClient.InvoiceDetailResult detail = null;
@@ -879,15 +901,17 @@ public class ElectronicInvoiceService {
         if (detail.pdfUrl() != null) invoice.setPdfUrl(detail.pdfUrl());
         if (detail.xmlUrl() != null) invoice.setXmlUrl(detail.xmlUrl());
 
-        if ("draft".equalsIgnoreCase(detail.status())) {
+        if (isDraftLikeStatus(detail.status())
+                || (Boolean.TRUE.equals(invoice.getIsDraft()) && !isExplicitlyIssuedStatus(detail.status()))) {
             invoice.setStatus(InvoiceStatus.DRAFT);
+            invoice.setIsDraft(true);
             invoice.setReconciliationStatus(ReconciliationStatus.RECONCILED);
             invoice.setErrorLog(null);
             invoice.setErrorCategory(null);
             invoice.setNextRetryAt(null);
             invoice.setUpdatedAt(OffsetDateTime.now());
             recordAudit(invoice.getId(), "DRAFT_READY", "SYSTEM", "Hóa đơn nháp đã đồng bộ", null);
-        } else if ("issued".equalsIgnoreCase(detail.status()) || "signed".equalsIgnoreCase(detail.status()) || (detail.success() && detail.invoiceNumber() != null)) {
+        } else if (isExplicitlyIssuedStatus(detail.status())) {
             invoice.setStatus(InvoiceStatus.ISSUED);
             if (invoice.getIssuedAt() == null) invoice.setIssuedAt(OffsetDateTime.now());
             invoice.setErrorLog(null);
@@ -927,9 +951,41 @@ public class ElectronicInvoiceService {
                     recordAudit(invoice.getId(), "EMAIL_FAILED", "SYSTEM", "Gửi email thất bại: " + ex.getMessage(), null);
                 }
             }
+
+        } else if (invoice.getStatus() != InvoiceStatus.ISSUED) {
+            // Do not infer issuance from an invoice number. SePay can assign a number
+            // while the document is still exported/created and has not been sent to CQT.
+            invoice.setStatus(InvoiceStatus.PROCESSING);
+            invoice.setReconciliationStatus(ReconciliationStatus.PENDING);
+            invoice.setNextRetryAt(OffsetDateTime.now().plusMinutes(1));
+            invoice.setUpdatedAt(OffsetDateTime.now());
+            recordAudit(invoice.getId(), "INVOICE_STATUS_UNCLEAR", "SYSTEM",
+                    "SePay trả về trạng thái chưa xác định, chưa đánh dấu đã phát hành: " + detail.status(), null);
         }
 
         return invoiceRepository.save(invoice);
+    }
+
+    private static boolean isExplicitlyIssuedStatus(String status) {
+        if (status == null || status.isBlank()) return false;
+        String normalized = status.trim().toLowerCase(java.util.Locale.ROOT)
+                .replace('-', '_').replace(' ', '_');
+        return "issued".equals(normalized)
+                || "signed".equals(normalized)
+                || "issued_to_tax_authority".equals(normalized)
+                || "cqt_issued".equals(normalized);
+    }
+
+    private static boolean isDraftLikeStatus(String status) {
+        if (status == null || status.isBlank()) return true;
+        String normalized = status.trim().toLowerCase(java.util.Locale.ROOT)
+                .replace('-', '_').replace(' ', '_');
+        return "draft".equals(normalized)
+                || "created".equals(normalized)
+                || "exported".equals(normalized)
+                || "success".equals(normalized)
+                || "new".equals(normalized)
+                || "not_sent_to_tax_authority".equals(normalized);
     }
 
     @Transactional

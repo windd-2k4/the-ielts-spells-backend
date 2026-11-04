@@ -749,8 +749,7 @@ public class AdminBillingController {
         SepayEInvoiceClient.InvoiceDetailResult issuedDetail = sepayEInvoiceClient.getInvoiceDetail(setting, referenceCode);
         boolean issuedDetailReady = issuedDetail.success()
                 && ("issued".equalsIgnoreCase(issuedDetail.status())
-                || "signed".equalsIgnoreCase(issuedDetail.status())
-                || (issuedDetail.invoiceNumber() != null && !issuedDetail.invoiceNumber().isBlank()));
+                || "signed".equalsIgnoreCase(issuedDetail.status()));
         if (!issuedDetailReady) {
             steps.add(new SandboxSmokeStep(
                     "GET_ISSUED",

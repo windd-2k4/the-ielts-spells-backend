@@ -1042,14 +1042,14 @@ class SepayEInvoiceWorkflowTests {
     }
 
     @Test
-    @DisplayName("22b. QR tĩnh không có mã đơn vẫn lập hóa đơn, tên người mua lấy từ nội dung chuyển khoản")
+    @DisplayName("22b. QR tĩnh VA dùng subAccount, vẫn lập hóa đơn và lấy tên từ nội dung chuyển khoản")
     void testStaticQrWithoutOrder_QueuesTransactionInvoice() {
         when(billingSettingRepository.findLatest()).thenReturn(Optional.of(configuredWebhookSetting()));
         when(transactionRepository.existsBySepayTransactionId("123459")).thenReturn(false);
 
         SepayWebhookPayload payload = new SepayWebhookPayload(
-                123459L, "Vietcombank", "2026-09-23 18:15:00", "0987654321",
-                null, null, "Duong Dinh Yen Nhi Chuyen khoan nhanh qua Zalo", "in", null,
+                123459L, "Vietcombank", "2026-09-23 18:15:00", "1069181004",
+                "0987654321", null, "Duong Dinh Yen Nhi Chuyen khoan nhanh qua Zalo", "in", null,
                 BigDecimal.valueOf(500000), "REF459", BigDecimal.valueOf(500000)
         );
 
@@ -1061,7 +1061,47 @@ class SepayEInvoiceWorkflowTests {
         assertThat(transactionCaptor.getValue().getStatus()).isEqualTo(PaymentTransactionStatus.STANDALONE_PAYMENT);
         assertThat(transactionCaptor.getValue().getPayerName()).isEqualTo("Duong Dinh Yen Nhi");
         assertThat(transactionCaptor.getValue().getAmountIn()).isEqualByComparingTo("500000");
+        assertThat(transactionCaptor.getValue().getAccountNumber()).isEqualTo("0987654321");
         verify(mockInvoiceService).initOrGetInvoice(eq(transactionCaptor.getValue()), isNull());
+    }
+
+    @Test
+    @DisplayName("22b2. QR tĩnh Vietcombank lấy nội dung người chuyển sau tiền tố VA làm tên người mua")
+    void testStaticQrViaVietcombank_UsesCustomerTransferNoteAsPayerName() {
+        when(transactionRepository.existsBySepayTransactionId("123461")).thenReturn(false);
+
+        SepayWebhookPayload payload = new SepayWebhookPayload(
+                123461L, "Vietcombank", "2026-11-03 18:18:00", "1069181004",
+                "0987654321", null,
+                "TKP#QRPSEP1ZZZZ58800105#000000.031126.000000.NGUYEN HOANG PHONG test",
+                "in", null, BigDecimal.valueOf(2000), "REF123461", BigDecimal.valueOf(2000)
+        );
+
+        webhookService.processWebhook("Apikey webhook-test-key", payload);
+
+        ArgumentCaptor<PaymentTransaction> transactionCaptor = ArgumentCaptor.forClass(PaymentTransaction.class);
+        verify(transactionRepository).saveAndFlush(transactionCaptor.capture());
+        assertThat(transactionCaptor.getValue().getPayerName()).isEqualTo("NGUYEN HOANG PHONG test");
+        assertThat(transactionCaptor.getValue().getTransferContent()).isEqualTo(payload.content());
+    }
+
+    @Test
+    @DisplayName("22b3. Hóa đơn dùng nguyên nội dung chuyển khoản làm tên người mua")
+    void testInvoiceUsesRawTransferContentAsBuyerName() {
+        PaymentTransaction transaction = new PaymentTransaction();
+        transaction.setId(UUID.randomUUID());
+        transaction.setSepayTransactionId("123462");
+        transaction.setAmountIn(BigDecimal.valueOf(2500000));
+        transaction.setTransferContent("TKP#QRPSEP1ZZZZ58800105#000000.041126.000000.Phuong Linh Kickstart");
+        transaction.setPayerName("Phuong Linh Kickstart");
+
+        when(invoiceRepository.findByPaymentTransactionIdForUpdate(transaction.getId())).thenReturn(Optional.empty());
+        when(invoiceRepository.findByPaymentTransactionId(transaction.getId())).thenReturn(Optional.empty());
+        when(invoiceRepository.save(any(ElectronicInvoice.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ElectronicInvoice invoice = realInvoiceService.initOrGetInvoice(transaction, null);
+
+        assertThat(invoice.getBuyerName()).isEqualTo(transaction.getTransferContent());
     }
 
     @Test
@@ -1198,6 +1238,39 @@ class SepayEInvoiceWorkflowTests {
         assertThat(invoice.getProviderErrorMessage()).isEqualTo("SePay chưa hoàn tất xử lý");
         assertThat(invoice.getLastStatusCheckedAt()).isNotNull();
         assertThat(invoice.getNextRetryAt()).isAfter(invoice.getLastStatusCheckedAt());
+    }
+
+    @Test
+    @DisplayName("Nháp cục bộ chưa từng gửi được tự động tạo lại trên SePay")
+    void reconcileLocalDraft_NotFoundOnSepay_QueuesProviderDraft() {
+        BillingSetting setting = new BillingSetting();
+        when(billingSettingRepository.findLatest()).thenReturn(Optional.of(setting));
+
+        UUID invoiceId = UUID.randomUUID();
+        ElectronicInvoice invoice = new ElectronicInvoice();
+        invoice.setId(invoiceId);
+        invoice.setReferenceCode("PAY-LOCAL-DRAFT");
+        invoice.setStatus(InvoiceStatus.DRAFT);
+        invoice.setIsDraft(true);
+        invoice.setTotalAmount(new BigDecimal("2500000"));
+        invoice.setCreatedAt(OffsetDateTime.now().minusMinutes(5));
+
+        when(invoiceRepository.findById(invoiceId)).thenReturn(Optional.of(invoice));
+        when(invoiceRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(sepayEInvoiceClient.getInvoiceDetail(any(), eq(invoice.getReferenceCode())))
+                .thenReturn(SepayEInvoiceClient.InvoiceDetailResult.ofNotFound());
+        when(sepayEInvoiceClient.createInvoice(any(), any())).thenReturn(
+                new SepayEInvoiceClient.CreateResult(true, "TRK-RECOVERED-DRAFT", null, null)
+        );
+
+        realInvoiceService.reconcileExternalStatus(invoiceId);
+
+        ArgumentCaptor<SepayEInvoiceClient.CreateInvoicePayload> payload =
+                ArgumentCaptor.forClass(SepayEInvoiceClient.CreateInvoicePayload.class);
+        verify(sepayEInvoiceClient).createInvoice(any(), payload.capture());
+        assertThat(payload.getValue().isDraft()).isTrue();
+        assertThat(invoice.getStatus()).isEqualTo(InvoiceStatus.PROCESSING);
+        assertThat(invoice.getCreateTrackingCode()).isEqualTo("TRK-RECOVERED-DRAFT");
     }
 
     @Test

@@ -584,7 +584,9 @@ public class SepayEInvoiceClient {
             JsonNode data = root.path("data");
             String id = data.path("id").asText(null);
             String ref = data.path("reference_code").asText(referenceCode);
-            String status = data.path("status").asText("issued");
+            // SePay may return a document that was exported/created but not issued yet.
+            // Never assume "issued" when the provider omits the status.
+            String status = data.path("status").asText("draft");
             String invNum = data.path("invoice_number").asText(null);
             String series = data.path("invoice_series").asText(null);
             String tmpl = data.path("template_code").asText(null);
@@ -657,7 +659,12 @@ public class SepayEInvoiceClient {
             JsonNode root = objectMapper.readTree(response.body());
             String status = root.path("data").path("status").asText("");
 
-            if ("Success".equalsIgnoreCase(status) || "issued".equalsIgnoreCase(status) || "draft".equalsIgnoreCase(status)) {
+            if ("Success".equalsIgnoreCase(status)
+                    || "issued".equalsIgnoreCase(status)
+                    || "signed".equalsIgnoreCase(status)
+                    || "draft".equalsIgnoreCase(status)
+                    || "created".equalsIgnoreCase(status)
+                    || "exported".equalsIgnoreCase(status)) {
                 JsonNode inv = root.path("data").path("invoice");
                 String invNum = inv.path("invoice_number").asText(null);
                 String series = inv.path("invoice_series").asText(null);
@@ -665,8 +672,9 @@ public class SepayEInvoiceClient {
                 String lookupCode = inv.path("lookup_code").asText(null);
                 String pdfUrl = inv.path("pdf_url").asText(null);
                 String xmlUrl = inv.path("xml_url").asText(null);
-                String invStatus = inv.path("status").asText(status);
-                boolean isDraft = "draft".equalsIgnoreCase(invStatus);
+                String invStatus = inv.path("status").asText("");
+                boolean isIssued = isExplicitlyIssuedStatus(invStatus) || isExplicitlyIssuedStatus(status);
+                boolean isDraft = !isIssued;
 
                 if (isDraft) {
                     return CheckStatusResult.successDraft(invNum, series, cqtCode, lookupCode, pdfUrl, xmlUrl);
@@ -833,6 +841,16 @@ public class SepayEInvoiceClient {
                 return null;
             }
         }
+    }
+
+    private static boolean isExplicitlyIssuedStatus(String status) {
+        if (status == null || status.isBlank()) return false;
+        String normalized = status.trim().toLowerCase(Locale.ROOT)
+                .replace('-', '_').replace(' ', '_');
+        return "issued".equals(normalized)
+                || "signed".equals(normalized)
+                || "issued_to_tax_authority".equals(normalized)
+                || "cqt_issued".equals(normalized);
     }
 
     /**

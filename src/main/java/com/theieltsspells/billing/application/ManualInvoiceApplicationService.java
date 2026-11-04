@@ -61,11 +61,7 @@ public class ManualInvoiceApplicationService {
         transaction.setRawPayload(rawPayload(request, actor));
         PaymentTransaction savedTransaction = transactionRepository.save(transaction);
 
-        // Reuse the existing transaction-linked invoice flow; manual invoices are
-        // explicitly converted to a local draft before any SePay call is made.
-        ElectronicInvoice invoice = invoiceService.initOrGetInvoice(savedTransaction, null);
-        invoice.setStatus(com.theieltsspells.billing.domain.InvoiceStatus.DRAFT);
-        invoice.setIsDraft(true);
+        ElectronicInvoice invoice = invoiceService.initOrGetDraftInvoice(savedTransaction, actor);
         invoice.setBuyerType(request.buyerType() == InvoiceBuyerType.BUSINESS ? "enterprise" : "personal");
         invoice.setBuyerName(request.buyerName().trim());
         invoice.setBuyerEmail(blankToNull(request.buyerEmail()));

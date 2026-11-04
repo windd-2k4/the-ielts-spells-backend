@@ -4,6 +4,7 @@ import com.theieltsspells.billing.application.dto.InvoiceAdminDto;
 import com.theieltsspells.billing.application.dto.ManualInvoiceRequest;
 import com.theieltsspells.billing.domain.ElectronicInvoice;
 import com.theieltsspells.billing.domain.InvoiceBuyerType;
+import com.theieltsspells.billing.domain.InvoiceStatus;
 import com.theieltsspells.billing.infrastructure.persistence.ElectronicInvoiceRepository;
 import com.theieltsspells.billing.infrastructure.persistence.PaymentTransactionRepository;
 import com.theieltsspells.shared.application.BusinessRuleException;
@@ -34,7 +35,8 @@ class ManualInvoiceApplicationServiceTests {
         });
         ElectronicInvoice draft = new ElectronicInvoice();
         draft.setId(UUID.randomUUID());
-        when(invoiceService.initOrGetInvoice(any(), any())).thenReturn(draft);
+        draft.setIsDraft(true);
+        when(invoiceService.initOrGetDraftInvoice(any(), any())).thenReturn(draft);
         when(invoices.save(any(ElectronicInvoice.class))).thenAnswer(invocation -> invocation.getArgument(0));
         InvoiceAdminDto response = mock(InvoiceAdminDto.class);
         when(invoiceService.getInvoiceAdmin(draft.getId())).thenReturn(response);
@@ -53,7 +55,10 @@ class ManualInvoiceApplicationServiceTests {
         ), "admin");
 
         assertThat(result).isSameAs(response);
+        assertThat(draft.getStatus()).isEqualTo(InvoiceStatus.PENDING_ISSUE);
+        assertThat(draft.getIsDraft()).isTrue();
         verify(transactions).save(any());
+        verify(invoiceService).initOrGetDraftInvoice(any(), org.mockito.ArgumentMatchers.eq("admin"));
         verify(invoices).save(draft);
     }
 
