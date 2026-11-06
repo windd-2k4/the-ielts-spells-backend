@@ -474,8 +474,12 @@ public class SepayWebhookService {
             return "Người nộp học phí";
         }
         String normalized = transferContent.trim().replaceAll("\\s+", " ");
-        // Vietcombank static VA prefixes the customer's note with TKP, VA and transaction metadata.
-        normalized = normalized.replaceFirst("(?i)^TKP#[^#]+#\\d+\\.\\d{6}\\.\\d+\\.", "");
+        // Vietcombank static VA prefixes the customer's note with TKP, VA and
+        // three dot-separated metadata fields. The fields are not always numeric.
+        normalized = normalized.replaceFirst("(?i)^TKP#[^#]+#[^.]+\\.[^.]+\\.[^.]+\\.", "");
+        normalized = normalized.replaceFirst("(?i)^QR\\s*-\\s*", "");
+        // Bank-to-bank descriptions can prefix the payer note with MBVCB and a reference id.
+        normalized = normalized.replaceFirst("(?i)^MBVCB\\.[^.]+\\.", "");
         // MoMo prefixes the customer's transfer note with its numeric transaction id.
         normalized = normalized.replaceFirst("^\\d{6,}[-_\\s]+", "");
         if (orderCode != null) {
@@ -489,12 +493,14 @@ public class SepayWebhookService {
         // Một số ngân hàng/ZaloPay nối thêm mô tả hệ thống phía sau tên người gửi.
         // Chỉ cắt các cụm phân tách rõ ràng để không tự suy diễn hoặc đổi tên khách.
         String nameOnly = normalized.replaceFirst(
-                "(?iu)[\\s_-]+(chuyển\\s+khoản|chuyen\\s+khoan|chuyển\\s+tiền|chuyen\\s+tien|thanh\\s+toán|thanh\\s+toan|đóng\\s+học\\s+phí|dong\\s+hoc\\s+phi)\\b.*$",
+                "(?iu)(?:[.\\s_-]+)(?:CT\\s+từ|CT\\s+tu|chuyển\\s+khoản|chuyen\\s+khoan|chuyển\\s+tiền|chuyen\\s+tien|chuyen\\s+em|thanh\\s+toán|thanh\\s+toan|đóng\\s+học\\s+phí|dong\\s+hoc\\s+phi|nộp\\s+tiền\\s+học|nop\\s+tien\\s+hoc)\\b.*$",
                 ""
         ).trim();
         if (!nameOnly.isBlank()) {
             normalized = nameOnly;
         }
+        // Số điện thoại thường được nối sau tên trong nội dung QR và không phải tên người mua.
+        normalized = normalized.replaceFirst("\\s+\\d{9,11}$", "").trim();
         return normalized.length() <= 255 ? normalized : normalized.substring(0, 255);
     }
 

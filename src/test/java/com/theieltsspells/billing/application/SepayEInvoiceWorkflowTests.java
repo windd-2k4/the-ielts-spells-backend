@@ -1086,8 +1086,8 @@ class SepayEInvoiceWorkflowTests {
     }
 
     @Test
-    @DisplayName("22b3. Hóa đơn dùng nguyên nội dung chuyển khoản làm tên người mua")
-    void testInvoiceUsesRawTransferContentAsBuyerName() {
+    @DisplayName("22b3. Hóa đơn dùng tên đã bóc tách, vẫn giữ nội dung gốc ở giao dịch")
+    void testInvoiceUsesParsedPayerNameAsBuyerName() {
         PaymentTransaction transaction = new PaymentTransaction();
         transaction.setId(UUID.randomUUID());
         transaction.setSepayTransactionId("123462");
@@ -1101,7 +1101,98 @@ class SepayEInvoiceWorkflowTests {
 
         ElectronicInvoice invoice = realInvoiceService.initOrGetInvoice(transaction, null);
 
-        assertThat(invoice.getBuyerName()).isEqualTo(transaction.getTransferContent());
+        assertThat(invoice.getBuyerName()).isEqualTo("Phuong Linh Kickstart");
+        assertThat(transaction.getTransferContent())
+                .isEqualTo("TKP#QRPSEP1ZZZZ58800105#000000.041126.000000.Phuong Linh Kickstart");
+    }
+
+    @Test
+    @DisplayName("22b4. QR Vietcombank mới bỏ metadata, nhãn QR và số điện thoại khỏi tên")
+    void testStaticQrViaVietcombank_NewMetadataFormatExtractsPayerName() {
+        BillingSetting setting = configuredWebhookSetting();
+        setting.setSepayAccountNumber("1069181004");
+        when(billingSettingRepository.findLatest()).thenReturn(Optional.of(setting));
+        when(transactionRepository.existsBySepayTransactionId("123463")).thenReturn(false);
+
+        SepayWebhookPayload payload = new SepayWebhookPayload(
+                123463L, "Vietcombank", "2026-11-05 21:45:00", "1069181004",
+                null, null,
+                "TKP#QRPSEP1ZZZZ58800105#02009704151105214518202699jZ491857.17185.214507.QR - Nhu Tran 0859352666",
+                "in", null, BigDecimal.valueOf(500000), "REF123463", BigDecimal.valueOf(500000)
+        );
+
+        webhookService.processWebhook("Apikey webhook-test-key", payload);
+
+        ArgumentCaptor<PaymentTransaction> transactionCaptor = ArgumentCaptor.forClass(PaymentTransaction.class);
+        verify(transactionRepository).saveAndFlush(transactionCaptor.capture());
+        assertThat(transactionCaptor.getValue().getPayerName()).isEqualTo("Nhu Tran");
+        assertThat(transactionCaptor.getValue().getTransferContent()).isEqualTo(payload.content());
+    }
+
+    @Test
+    @DisplayName("22b5. QR Vietcombank cắt phần diễn giải nộp học phía sau tên")
+    void testStaticQrViaVietcombank_StripsPaymentNarrativeAfterPayerName() {
+        BillingSetting setting = configuredWebhookSetting();
+        setting.setSepayAccountNumber("1069181004");
+        when(billingSettingRepository.findLatest()).thenReturn(Optional.of(setting));
+        when(transactionRepository.existsBySepayTransactionId("123464")).thenReturn(false);
+
+        SepayWebhookPayload payload = new SepayWebhookPayload(
+                123464L, "Vietcombank", "2026-11-05 16:28:00", "1069181004",
+                null, null,
+                "TKP#QRPSEP1ZZZZ58800105#020097041511051628572026CWDU657915.32759.162846.QR - Bui Thoa chuyen em Nguyen Thu Huong nop tien hoc",
+                "in", null, BigDecimal.valueOf(1000000), "REF123464", BigDecimal.valueOf(1000000)
+        );
+
+        webhookService.processWebhook("Apikey webhook-test-key", payload);
+
+        ArgumentCaptor<PaymentTransaction> transactionCaptor = ArgumentCaptor.forClass(PaymentTransaction.class);
+        verify(transactionRepository).saveAndFlush(transactionCaptor.capture());
+        assertThat(transactionCaptor.getValue().getPayerName()).isEqualTo("Bui Thoa");
+    }
+
+    @Test
+    @DisplayName("22b6. Chuyển liên ngân hàng bỏ tiền tố MBVCB và phần CT từ")
+    void testStaticQrViaBankTransfer_StripsBankMetadata() {
+        BillingSetting setting = configuredWebhookSetting();
+        setting.setSepayAccountNumber("1069181004");
+        when(billingSettingRepository.findLatest()).thenReturn(Optional.of(setting));
+        when(transactionRepository.existsBySepayTransactionId("123465")).thenReturn(false);
+
+        SepayWebhookPayload payload = new SepayWebhookPayload(
+                123465L, "Vietcombank", "2026-11-04 17:05:00", "1069181004",
+                null, null,
+                "MBVCB.16868244359.Tran Vo Ba Vuong Lop LR.CT tu 0041000153627 VO THI HONG HOA toi #TKP#QRPSEP1ZZZZ58800105#HKD TA THE IELTS SPELLS",
+                "in", null, BigDecimal.valueOf(2500000), "REF123465", BigDecimal.valueOf(2500000)
+        );
+
+        webhookService.processWebhook("Apikey webhook-test-key", payload);
+
+        ArgumentCaptor<PaymentTransaction> transactionCaptor = ArgumentCaptor.forClass(PaymentTransaction.class);
+        verify(transactionRepository).saveAndFlush(transactionCaptor.capture());
+        assertThat(transactionCaptor.getValue().getPayerName()).isEqualTo("Tran Vo Ba Vuong Lop LR");
+    }
+
+    @Test
+    @DisplayName("22b7. Chuyển khoản nhanh qua Zalo chỉ giữ lại tên người nộp")
+    void testStaticQrViaFastTransfer_StripsNarrative() {
+        BillingSetting setting = configuredWebhookSetting();
+        setting.setSepayAccountNumber("1069181004");
+        when(billingSettingRepository.findLatest()).thenReturn(Optional.of(setting));
+        when(transactionRepository.existsBySepayTransactionId("123466")).thenReturn(false);
+
+        SepayWebhookPayload payload = new SepayWebhookPayload(
+                123466L, "Vietcombank", "2026-11-05 00:11:00", "1069181004",
+                null, null,
+                "TKP#QRPSEP1ZZZZ58800105#000000.051126.000000.Giang Lee chuyen khoan nhanh qua Zalo",
+                "in", null, BigDecimal.valueOf(2500000), "REF123466", BigDecimal.valueOf(2500000)
+        );
+
+        webhookService.processWebhook("Apikey webhook-test-key", payload);
+
+        ArgumentCaptor<PaymentTransaction> transactionCaptor = ArgumentCaptor.forClass(PaymentTransaction.class);
+        verify(transactionRepository).saveAndFlush(transactionCaptor.capture());
+        assertThat(transactionCaptor.getValue().getPayerName()).isEqualTo("Giang Lee");
     }
 
     @Test

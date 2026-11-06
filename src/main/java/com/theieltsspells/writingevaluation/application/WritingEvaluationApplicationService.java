@@ -162,10 +162,10 @@ public class WritingEvaluationApplicationService {
         if ("SELF_PRACTICE".equals(originFilter)) {
             where.append(" and attempt.attempt_origin='SELF_PRACTICE'");
         } else if ("ASSIGNMENT".equals(originFilter)) {
-            where.append(" and attempt.attempt_origin='ASSIGNMENT' and course.skill_pair='SPEAKING_WRITING'");
+            where.append(" and attempt.attempt_origin='ASSIGNMENT' and course.skill_pair='SPEAKING_WRITING' and not (course.code like 'LR-%' or course.code like 'SEED-LR%' or course.code like 'LR_%')");
         }
         if (courseId != null) {
-            where.append(" and assignment.course_id=? and course.skill_pair='SPEAKING_WRITING'");
+            where.append(" and assignment.course_id=?");
             parameters.add(courseId);
         }
         if (teacherFilter != null) {
@@ -206,25 +206,23 @@ public class WritingEvaluationApplicationService {
                 + "where teacher_scope.course_id=course.id and teacher_scope.teacher_id=?)";
         var courses = jdbc.query("""
                 select course.id, course.code, course.name, course.status::text status,
-                  count(distinct attempt.student_id) student_count,
-                  count(evaluation.id) evaluation_count,
-                  count(evaluation.id) filter (where evaluation.teacher_status='AVAILABLE') awaiting_teacher_count
+                  coalesce((select count(distinct student_id) from public.enrollments e where e.course_id=course.id), 0) student_count,
+                  coalesce((select count(we.id) from public.writing_evaluations we
+                   join public.test_attempt_responses tar on tar.id=we.test_attempt_response_id
+                   join public.test_attempts ta on ta.id=tar.attempt_id
+                   join public.test_assignments tas on tas.id=ta.test_assignment_id
+                   where tas.course_id=course.id), 0) evaluation_count,
+                  coalesce((select count(we.id) from public.writing_evaluations we
+                   join public.test_attempt_responses tar on tar.id=we.test_attempt_response_id
+                   join public.test_attempts ta on ta.id=tar.attempt_id
+                   join public.test_assignments tas on tas.id=ta.test_assignment_id
+                   where tas.course_id=course.id and we.teacher_status='AVAILABLE'), 0) awaiting_teacher_count
                 from public.courses course
-                join public.test_assignments assignment on assignment.course_id=course.id
-                join public.test_attempts attempt on attempt.test_assignment_id=assignment.id
-                join public.test_attempt_responses response on response.attempt_id=attempt.id
-                join public.writing_evaluations evaluation on evaluation.test_attempt_response_id=response.id
-                where course.skill_pair='SPEAKING_WRITING'
-                  and (attempt.attempt_origin='SELF_PRACTICE' or not exists (
-                    select 1 from public.test_attempts newer
-                    where newer.test_assignment_id=attempt.test_assignment_id
-                      and newer.student_id=attempt.student_id
-                      and newer.attempt_no > attempt.attempt_no
-                  ))
+                where course.skill_pair = 'SPEAKING_WRITING'
+                  and not (course.code like 'LR-%' or course.code like 'SEED-LR%' or course.code like 'LR_%')
                 """ + courseScope + """
-                group by course.id, course.code, course.name, course.status, course.starts_on
-                order by case when course.status::text in ('active', 'open') then 0 else 1 end,
-                  course.starts_on desc, course.code
+                order by case when course.status::text in ('ACTIVE', 'OPEN', 'active', 'open') then 0 else 1 end,
+                  course.starts_on desc nulls last, course.code
                 """, (rs, ignored) -> new WritingEvaluationFilterOptionsResponse.CourseOption(
                 rs.getObject("id", UUID.class), rs.getString("code"), rs.getString("name"),
                 rs.getString("status"), rs.getLong("student_count"), rs.getLong("evaluation_count"),
@@ -241,7 +239,7 @@ public class WritingEvaluationApplicationService {
         var counts = jdbc.queryForMap("""
                 select count(*) total_count,
                   count(*) filter (where attempt.attempt_origin='SELF_PRACTICE') self_practice_count,
-                  count(*) filter (where attempt.attempt_origin='ASSIGNMENT' and course.skill_pair='SPEAKING_WRITING') course_count
+                  count(*) filter (where attempt.attempt_origin='ASSIGNMENT') course_count
                 from public.writing_evaluations evaluation
                 join public.test_attempt_responses response on response.id=evaluation.test_attempt_response_id
                 join public.test_attempts attempt on attempt.id=response.attempt_id

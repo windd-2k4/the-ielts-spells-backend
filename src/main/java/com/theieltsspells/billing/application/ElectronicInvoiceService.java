@@ -156,13 +156,14 @@ public class ElectronicInvoiceService {
         invoice.setIsDraft(false);
         invoice.setBuyerType(order != null && order.getBuyerType() == InvoiceBuyerType.BUSINESS
                 ? "enterprise" : "personal");
-        // Với giao dịch ngân hàng, nội dung chuyển khoản là dữ liệu gốc dùng để
-        // đối soát và phải được giữ nguyên trên hóa đơn. `payerName` chỉ là giá
-        // trị đã bóc tách để tìm kiếm/hiển thị nội bộ, không dùng làm tên người mua.
-        String transferContent = transaction.getTransferContent();
-        invoice.setBuyerName(transferContent != null && !transferContent.isBlank()
-                ? transferContent : (transaction.getPayerName() != null && !transaction.getPayerName().isBlank()
-                ? transaction.getPayerName() : "Người nộp học phí"));
+        // Nội dung chuyển khoản vẫn được giữ nguyên trong PaymentTransaction để đối soát.
+        // Tên trên hóa đơn phải là tên khách đã khai báo, hoặc tên đã bóc tách từ
+        // nội dung ngân hàng đối với khoản thu QR tĩnh.
+        String buyerName = order != null && order.getCustomerName() != null && !order.getCustomerName().isBlank()
+                ? order.getCustomerName().trim()
+                : transaction.getPayerName();
+        invoice.setBuyerName(buyerName != null && !buyerName.isBlank()
+                ? buyerName.trim() : "Người nộp học phí");
         invoice.setBuyerLegalName(order != null ? order.getInvoiceCompanyName() : null);
         invoice.setBuyerTaxCode(order != null ? order.getInvoiceTaxCode() : null);
         invoice.setBuyerAddress(order != null && order.getInvoiceAddress() != null && !order.getInvoiceAddress().isBlank()
@@ -724,11 +725,14 @@ public class ElectronicInvoiceService {
                             if (checkResult.pdfUrl() != null) invoice.setPdfUrl(checkResult.pdfUrl());
                             if (checkResult.xmlUrl() != null) invoice.setXmlUrl(checkResult.xmlUrl());
                             invoice.setStatus(InvoiceStatus.ISSUED);
-                            invoice.setReconciliationStatus(ReconciliationStatus.RECONCILED);
+                            boolean hasCqtCode = invoice.getCqtCode() != null && !invoice.getCqtCode().isBlank();
+                            invoice.setReconciliationStatus(hasCqtCode
+                                    ? ReconciliationStatus.RECONCILED
+                                    : ReconciliationStatus.PENDING);
                             invoice.setIssuedAt(OffsetDateTime.now());
                             invoice.setErrorLog(null);
                             invoice.setErrorCategory(null);
-                            invoice.setNextRetryAt(null);
+                            invoice.setNextRetryAt(hasCqtCode ? null : OffsetDateTime.now().plusMinutes(1));
                             invoice.setUpdatedAt(OffsetDateTime.now());
                             recordAudit(invoice.getId(), "INVOICE_ISSUED", "SYSTEM",
                                     String.format("Phát hành thành công: Số HĐ=%s, Ký hiệu=%s, CQT=%s",
@@ -788,11 +792,14 @@ public class ElectronicInvoiceService {
                         if (checkResult.pdfUrl() != null) invoice.setPdfUrl(checkResult.pdfUrl());
                         if (checkResult.xmlUrl() != null) invoice.setXmlUrl(checkResult.xmlUrl());
                         invoice.setStatus(InvoiceStatus.ISSUED);
-                        invoice.setReconciliationStatus(ReconciliationStatus.RECONCILED);
+                        boolean hasCqtCode = invoice.getCqtCode() != null && !invoice.getCqtCode().isBlank();
+                        invoice.setReconciliationStatus(hasCqtCode
+                                ? ReconciliationStatus.RECONCILED
+                                : ReconciliationStatus.PENDING);
                         invoice.setIssuedAt(OffsetDateTime.now());
                         invoice.setErrorLog(null);
                         invoice.setErrorCategory(null);
-                        invoice.setNextRetryAt(null);
+                        invoice.setNextRetryAt(hasCqtCode ? null : OffsetDateTime.now().plusMinutes(1));
                         invoice.setUpdatedAt(OffsetDateTime.now());
                         recordAudit(invoice.getId(), "INVOICE_ISSUED", "SYSTEM",
                                 String.format("Phát hành thành công: Số HĐ=%s, Ký hiệu=%s, CQT=%s",
