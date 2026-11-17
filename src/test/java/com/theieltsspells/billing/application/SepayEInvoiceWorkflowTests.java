@@ -6,6 +6,7 @@ import com.theieltsspells.academic.application.BillingCourseView;
 import com.theieltsspells.academic.application.EnrollmentApplicationService;
 import com.theieltsspells.billing.application.dto.AdminCreateOrderRequest;
 import com.theieltsspells.billing.application.dto.CheckoutResponse;
+import com.theieltsspells.billing.application.dto.InvoiceAdminDto;
 import com.theieltsspells.billing.application.dto.SepayWebhookPayload;
 import com.theieltsspells.identity.application.StudentAccountApplicationService;
 import com.theieltsspells.billing.domain.*;
@@ -38,6 +39,7 @@ import java.util.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -135,6 +137,18 @@ class SepayEInvoiceWorkflowTests {
                     ElectronicInvoice invoice = new ElectronicInvoice();
                     invoice.setId(UUID.randomUUID());
                     invoice.setPaymentTransactionId(transaction.getId());
+                    return invoice;
+                });
+        lenient().when(mockInvoiceService.initOrGetInvoice(
+                        any(PaymentTransaction.class),
+                        org.mockito.ArgumentMatchers.nullable(Order.class),
+                        anyBoolean()))
+                .thenAnswer(invocation -> {
+                    PaymentTransaction transaction = invocation.getArgument(0);
+                    ElectronicInvoice invoice = new ElectronicInvoice();
+                    invoice.setId(UUID.randomUUID());
+                    invoice.setPaymentTransactionId(transaction.getId());
+                    invoice.setIsDraft(invocation.getArgument(2));
                     return invoice;
                 });
 
@@ -928,6 +942,92 @@ class SepayEInvoiceWorkflowTests {
     }
 
     @Test
+    @DisplayName("P0: Recheck hóa đơn lỗi đọc create-check và lưu nguyên nhân, không đọc nhầm DRAFT")
+    void testRecheckFailedInvoice_UsesCreateTrackingError() {
+        UUID invId = UUID.randomUUID();
+        ElectronicInvoice invoice = new ElectronicInvoice();
+        invoice.setId(invId);
+        invoice.setReferenceCode("PAY-FAILED-CREATE-CHECK");
+        invoice.setStatus(InvoiceStatus.FAILED);
+        invoice.setCreateTrackingCode("TRK-FAILED-CREATE-CHECK");
+        invoice.setCreatedAt(OffsetDateTime.now().minusMinutes(10));
+
+        when(billingSettingRepository.findLatest()).thenReturn(Optional.of(new BillingSetting()));
+        when(invoiceRepository.findById(invId)).thenReturn(Optional.of(invoice));
+        when(invoiceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(sepayEInvoiceClient.checkCreateStatus(any(), eq("TRK-FAILED-CREATE-CHECK"))).thenReturn(
+                SepayEInvoiceClient.CheckStatusResult.failed(
+                        "VALIDATION_ERROR", "Tên người mua không hợp lệ"
+                )
+        );
+
+        realInvoiceService.recheckInvoiceStatus(invId);
+
+        assertThat(invoice.getStatus()).isEqualTo(InvoiceStatus.FAILED);
+        assertThat(invoice.getProviderErrorCode()).isEqualTo("VALIDATION_ERROR");
+        assertThat(invoice.getProviderErrorMessage()).isEqualTo("Tên người mua không hợp lệ");
+        assertThat(invoice.getErrorCategory()).isEqualTo(InvoiceErrorCategory.REQUIRES_ACTION);
+        verify(sepayEInvoiceClient).checkCreateStatus(any(), eq("TRK-FAILED-CREATE-CHECK"));
+        verify(sepayEInvoiceClient, never()).getInvoiceDetail(any(), anyString());
+    }
+
+    @Test
+    @DisplayName("P0: Đối soát tự động FAILED ưu tiên create-check khi có tracking code")
+    void testReconcileFailedInvoice_UsesCreateTrackingError() {
+        UUID invId = UUID.randomUUID();
+        ElectronicInvoice invoice = new ElectronicInvoice();
+        invoice.setId(invId);
+        invoice.setReferenceCode("PAY-FAILED-AUTO-CHECK");
+        invoice.setStatus(InvoiceStatus.FAILED);
+        invoice.setCreateTrackingCode("TRK-FAILED-AUTO-CHECK");
+        invoice.setCreatedAt(OffsetDateTime.now().minusMinutes(10));
+
+        when(billingSettingRepository.findLatest()).thenReturn(Optional.of(new BillingSetting()));
+        when(invoiceRepository.findById(invId)).thenReturn(Optional.of(invoice));
+        when(invoiceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(sepayEInvoiceClient.checkCreateStatus(any(), eq("TRK-FAILED-AUTO-CHECK"))).thenReturn(
+                SepayEInvoiceClient.CheckStatusResult.failed("INVALID_CONFIG", "Mẫu hóa đơn chưa được cấu hình")
+        );
+
+        realInvoiceService.reconcileExternalStatus(invId);
+
+        assertThat(invoice.getStatus()).isEqualTo(InvoiceStatus.FAILED);
+        assertThat(invoice.getProviderErrorCode()).isEqualTo("INVALID_CONFIG");
+        assertThat(invoice.getProviderErrorMessage()).isEqualTo("Mẫu hóa đơn chưa được cấu hình");
+        verify(sepayEInvoiceClient).checkCreateStatus(any(), eq("TRK-FAILED-AUTO-CHECK"));
+        verify(sepayEInvoiceClient, never()).getInvoiceDetail(any(), anyString());
+    }
+
+    @Test
+    @DisplayName("P0: Retry hóa đơn lỗi đang pending không gửi POST tạo lần hai")
+    void testRetryFailedInvoice_PendingTrackingDoesNotDuplicateCreate() {
+        UUID invId = UUID.randomUUID();
+        ElectronicInvoice invoice = new ElectronicInvoice();
+        invoice.setId(invId);
+        invoice.setReferenceCode("PAY-FAILED-PENDING-RETRY");
+        invoice.setStatus(InvoiceStatus.FAILED);
+        invoice.setErrorCategory(InvoiceErrorCategory.RETRYABLE);
+        invoice.setCreateTrackingCode("TRK-PENDING-RETRY");
+
+        when(billingSettingRepository.findLatest()).thenReturn(Optional.of(new BillingSetting()));
+        when(invoiceRepository.findById(invId)).thenReturn(Optional.of(invoice));
+        when(invoiceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(sepayEInvoiceClient.checkCreateStatus(any(), eq("TRK-PENDING-RETRY"))).thenReturn(
+                SepayEInvoiceClient.CheckStatusResult.pending(
+                        OffsetDateTime.now().plusSeconds(45), 2, 10, "SePay đang xử lý"
+                )
+        );
+
+        InvoiceAdminDto result = realInvoiceService.retryInvoice(invId);
+
+        assertThat(result.status()).isEqualTo(InvoiceStatus.PROCESSING);
+        assertThat(invoice.getReconciliationStatus()).isEqualTo(ReconciliationStatus.PENDING);
+        verify(sepayEInvoiceClient).checkCreateStatus(any(), eq("TRK-PENDING-RETRY"));
+        verify(sepayEInvoiceClient, never()).createInvoice(any(), any());
+        verify(sepayEInvoiceClient, never()).getInvoiceDetail(any(), anyString());
+    }
+
+    @Test
     @DisplayName("20b. ISSUED sync: Bổ sung mã CQT muộn mà không gửi lại email")
     void testIssuedInvoiceSynchronizesDelayedCqtWithoutDuplicateEmail() {
         UUID invId = UUID.randomUUID();
@@ -1107,6 +1207,27 @@ class SepayEInvoiceWorkflowTests {
     }
 
     @Test
+    @DisplayName("22b3a. Tên không chắc chắn chỉ tạo hóa đơn nháp cần đối soát")
+    void testInvoiceWithUncertainPayer_IsDraftAndRequiresReview() {
+        PaymentTransaction transaction = new PaymentTransaction();
+        transaction.setId(UUID.randomUUID());
+        transaction.setSepayTransactionId("123462-review");
+        transaction.setAmountIn(BigDecimal.valueOf(1000000));
+        transaction.setTransferContent("QRP");
+        transaction.setPayerName("Người nộp học phí");
+
+        when(invoiceRepository.findByPaymentTransactionIdForUpdate(transaction.getId())).thenReturn(Optional.empty());
+        when(invoiceRepository.findByPaymentTransactionId(transaction.getId())).thenReturn(Optional.empty());
+        when(invoiceRepository.save(any(ElectronicInvoice.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ElectronicInvoice invoice = realInvoiceService.initOrGetInvoice(transaction, null, true);
+
+        assertThat(invoice.getIsDraft()).isTrue();
+        assertThat(invoice.getStatus()).isEqualTo(InvoiceStatus.PENDING_ISSUE);
+        assertThat(invoice.getReconciliationStatus()).isEqualTo(ReconciliationStatus.REQUIRES_REVIEW);
+    }
+
+    @Test
     @DisplayName("22b4. QR Vietcombank mới bỏ metadata, nhãn QR và số điện thoại khỏi tên")
     void testStaticQrViaVietcombank_NewMetadataFormatExtractsPayerName() {
         BillingSetting setting = configuredWebhookSetting();
@@ -1149,6 +1270,7 @@ class SepayEInvoiceWorkflowTests {
         ArgumentCaptor<PaymentTransaction> transactionCaptor = ArgumentCaptor.forClass(PaymentTransaction.class);
         verify(transactionRepository).saveAndFlush(transactionCaptor.capture());
         assertThat(transactionCaptor.getValue().getPayerName()).isEqualTo("Bui Thoa");
+        verify(mockInvoiceService).initOrGetInvoice(eq(transactionCaptor.getValue()), isNull(), eq(true));
     }
 
     @Test
@@ -1286,6 +1408,9 @@ class SepayEInvoiceWorkflowTests {
 
         when(invoiceRepository.findById(invId)).thenReturn(Optional.of(draftInv));
         when(invoiceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(sepayEInvoiceClient.getInvoiceDetail(any(), eq("INV-KH2609222222"))).thenReturn(
+                SepayEInvoiceClient.InvoiceDetailResult.ofDraft("12", "C26TSE", "LOOKUP-2222")
+        );
         when(sepayEInvoiceClient.issueDraft(any(), eq("INV-KH2609222222"))).thenReturn(
                 new SepayEInvoiceClient.IssueDraftResult(true, "TRK-ISSUE-2222", null, null)
         );
@@ -1300,6 +1425,30 @@ class SepayEInvoiceWorkflowTests {
 
         assertThat(result.getIssueTrackingCode()).isEqualTo("TRK-ISSUE-2222");
         verify(sepayEInvoiceClient).issueDraft(any(), eq("INV-KH2609222222"));
+    }
+
+    @Test
+    @DisplayName("P0: Chưa thấy bản nháp trên SePay thì trì hoãn, không gọi issue sớm")
+    void queuedDraftIssue_DefersUntilProviderDraftIsVisible() {
+        BillingSetting setting = new BillingSetting();
+        when(billingSettingRepository.findLatest()).thenReturn(Optional.of(setting));
+
+        UUID invId = UUID.randomUUID();
+        ElectronicInvoice invoice = new ElectronicInvoice();
+        invoice.setId(invId);
+        invoice.setReferenceCode("PAY-DRAFT-RACE");
+        invoice.setStatus(InvoiceStatus.ISSUING);
+
+        when(invoiceRepository.findById(invId)).thenReturn(Optional.of(invoice));
+        when(invoiceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(sepayEInvoiceClient.getInvoiceDetail(any(), eq("PAY-DRAFT-RACE")))
+                .thenReturn(SepayEInvoiceClient.InvoiceDetailResult.ofNotFound());
+
+        realInvoiceService.executeQueuedDraftIssue(invId);
+
+        assertThat(invoice.getStatus()).isEqualTo(InvoiceStatus.ISSUING);
+        assertThat(invoice.getNextRetryAt()).isNotNull();
+        verify(sepayEInvoiceClient, never()).issueDraft(any(), anyString());
     }
 
     @Test

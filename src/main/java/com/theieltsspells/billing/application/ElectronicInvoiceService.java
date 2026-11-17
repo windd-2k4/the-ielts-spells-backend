@@ -119,6 +119,11 @@ public class ElectronicInvoiceService {
      */
     @Transactional
     public ElectronicInvoice initOrGetInvoice(PaymentTransaction transaction, Order order) {
+        return initOrGetInvoice(transaction, order, false);
+    }
+
+    @Transactional
+    public ElectronicInvoice initOrGetInvoice(PaymentTransaction transaction, Order order, boolean requiresReview) {
         if (transaction == null || transaction.getId() == null) {
             throw new BusinessRuleException("Không thể lập hóa đơn khi giao dịch thanh toán chưa được lưu");
         }
@@ -129,12 +134,23 @@ public class ElectronicInvoiceService {
         }
         if (existing.isPresent()) {
             ElectronicInvoice invoice = existing.get();
+            boolean changed = false;
             if (order != null && invoice.getOrderId() == null) {
                 invoice.setOrderId(order.getId());
                 if (invoice.getBuyerEmail() == null || invoice.getBuyerEmail().isBlank()) {
                     invoice.setBuyerEmail(order.getInvoiceEmail() != null && !order.getInvoiceEmail().isBlank()
                             ? order.getInvoiceEmail() : order.getCustomerEmail());
                 }
+                changed = true;
+            }
+            if (requiresReview
+                    && (invoice.getStatus() == InvoiceStatus.DRAFT
+                    || (invoice.getStatus() == InvoiceStatus.PENDING_ISSUE && invoice.getCreateTrackingCode() == null))) {
+                invoice.setIsDraft(true);
+                invoice.setReconciliationStatus(ReconciliationStatus.REQUIRES_REVIEW);
+                changed = true;
+            }
+            if (changed) {
                 invoice.setUpdatedAt(OffsetDateTime.now());
                 return invoiceRepository.save(invoice);
             }
@@ -152,8 +168,9 @@ public class ElectronicInvoiceService {
         invoice.setReferenceCode("PAY-" + transaction.getId());
         invoice.setProductName("Đóng học phí đào tạo IELTS");
         invoice.setStatus(InvoiceStatus.PENDING_ISSUE);
-        invoice.setReconciliationStatus(ReconciliationStatus.NOT_REQUIRED);
-        invoice.setIsDraft(false);
+        invoice.setReconciliationStatus(requiresReview
+                ? ReconciliationStatus.REQUIRES_REVIEW : ReconciliationStatus.NOT_REQUIRED);
+        invoice.setIsDraft(requiresReview);
         invoice.setBuyerType(order != null && order.getBuyerType() == InvoiceBuyerType.BUSINESS
                 ? "enterprise" : "personal");
         // Nội dung chuyển khoản vẫn được giữ nguyên trong PaymentTransaction để đối soát.
@@ -543,14 +560,26 @@ public class ElectronicInvoiceService {
                 : null;
 
         try {
-            SepayEInvoiceClient.InvoiceDetailResult preCheck = sepayEInvoiceClient.getInvoiceDetail(settings, invoice.getReferenceCode());
-            if (preCheck != null && preCheck.success()
-                    && ("issued".equalsIgnoreCase(preCheck.status()) || "signed".equalsIgnoreCase(preCheck.status()))) {
-                synchronizeFromDetail(invoice, order, preCheck);
+            SepayEInvoiceClient.InvoiceDetailResult preCheck =
+                    sepayEInvoiceClient.getInvoiceDetail(settings, invoice.getReferenceCode());
+            if (preCheck != null && preCheck.success()) {
+                if (isExplicitlyIssuedStatus(preCheck.status())) {
+                    synchronizeFromDetail(invoice, order, preCheck);
+                    return;
+                }
+                if (!isDraftLikeStatus(preCheck.status())) {
+                    deferQueuedDraftIssue(invoice, "SePay chưa xác nhận bản nháp đã sẵn sàng");
+                    return;
+                }
+            } else {
+                // Do not POST /issue while the async create request is still
+                // invisible at SePay; that race caused false "draft not found" errors.
+                deferQueuedDraftIssue(invoice, "Chưa đọc được bản nháp từ SePay; sẽ kiểm tra lại");
                 return;
             }
-        } catch (Exception ignored) {
-            // A failed detail lookup must not prevent the queued issue request.
+        } catch (Exception ex) {
+            deferQueuedDraftIssue(invoice, "Lỗi kiểm tra bản nháp trước phát hành: " + ex.getMessage());
+            return;
         }
 
         try {
@@ -612,6 +641,17 @@ public class ElectronicInvoiceService {
                 ? orderRepository.findById(invoice.getOrderId()).orElse(null)
                 : null;
         BillingSetting settings = billingSettingRepository.findLatest().orElseGet(BillingSetting::new);
+
+        // A failed create request has the authoritative error on the async
+        // tracking endpoint. Do not hide it behind the generic invoice detail
+        // endpoint, which can still return DRAFT after a failed export.
+        if (invoice.getStatus() == InvoiceStatus.FAILED && hasCreateTrackingCode(invoice)) {
+            queueCreateStatusCheck(invoice, now);
+            invoiceRepository.save(invoice);
+            checkAndAdvanceInvoice(invoice.getId());
+            return;
+        }
+
         invoice.setLastStatusCheckedAt(now);
         try {
             SepayEInvoiceClient.InvoiceDetailResult detail = sepayEInvoiceClient.getInvoiceDetail(settings, invoice.getReferenceCode());
@@ -709,7 +749,9 @@ public class ElectronicInvoiceService {
                 if (checkResult.success()) {
                     if (checkResult.isDraft() || Boolean.TRUE.equals(invoice.getIsDraft())) {
                         invoice.setStatus(InvoiceStatus.DRAFT);
-                        invoice.setReconciliationStatus(ReconciliationStatus.RECONCILED);
+                        if (invoice.getReconciliationStatus() != ReconciliationStatus.REQUIRES_REVIEW) {
+                            invoice.setReconciliationStatus(ReconciliationStatus.RECONCILED);
+                        }
                         invoice.setInvoiceNumber(checkResult.invoiceNumber());
                         invoice.setInvoiceSeries(checkResult.invoiceSeries());
                         invoice.setPdfUrl(checkResult.pdfUrl());
@@ -751,11 +793,16 @@ public class ElectronicInvoiceService {
                         }
                     }
                 } else {
+                    InvoiceErrorCategory errorCategory = determineErrorCategory(checkResult.errorCode(), checkResult.errorMessage());
                     invoice.setStatus(InvoiceStatus.FAILED);
                     invoice.setErrorLog(checkResult.errorMessage());
                     invoice.setProviderErrorCode(checkResult.errorCode());
                     invoice.setProviderErrorMessage(checkResult.errorMessage());
-                    invoice.setErrorCategory(determineErrorCategory(checkResult.errorCode(), checkResult.errorMessage()));
+                    invoice.setErrorCategory(errorCategory);
+                    invoice.setNextRetryAt(errorCategory == InvoiceErrorCategory.REQUIRES_ACTION
+                            || errorCategory == InvoiceErrorCategory.NON_RETRYABLE
+                            || errorCategory == InvoiceErrorCategory.UNDETERMINED
+                            ? null : OffsetDateTime.now().plusSeconds(30));
                     invoice.setUpdatedAt(OffsetDateTime.now());
                     recordAudit(invoice.getId(), "CREATE_FAILED", "SYSTEM", checkResult.errorMessage(), null);
                 }
@@ -817,11 +864,16 @@ public class ElectronicInvoiceService {
                         reconcileInvoiceDetail(invoice, order, settings);
                     }
                 } else {
+                    InvoiceErrorCategory errorCategory = determineErrorCategory(checkResult.errorCode(), checkResult.errorMessage());
                     invoice.setStatus(InvoiceStatus.FAILED);
                     invoice.setErrorLog(checkResult.errorMessage());
                     invoice.setProviderErrorCode(checkResult.errorCode());
                     invoice.setProviderErrorMessage(checkResult.errorMessage());
-                    invoice.setErrorCategory(determineErrorCategory(checkResult.errorCode(), checkResult.errorMessage()));
+                    invoice.setErrorCategory(errorCategory);
+                    invoice.setNextRetryAt(errorCategory == InvoiceErrorCategory.REQUIRES_ACTION
+                            || errorCategory == InvoiceErrorCategory.NON_RETRYABLE
+                            || errorCategory == InvoiceErrorCategory.UNDETERMINED
+                            ? null : OffsetDateTime.now().plusSeconds(30));
                     invoice.setUpdatedAt(OffsetDateTime.now());
                     recordAudit(invoice.getId(), "ISSUE_FAILED", "SYSTEM", checkResult.errorMessage(), null);
                 }
@@ -902,6 +954,8 @@ public class ElectronicInvoiceService {
         invoice.setInvoiceTemplate(series != null ? (templateCode + " - " + series) : templateCode);
         invoice.setTemplateCode(templateCode);
         invoice.setInvoiceSeries(series);
+        invoice.setProviderErrorCode(null);
+        invoice.setProviderErrorMessage(null);
         if (detail.invoiceNumber() != null) invoice.setInvoiceNumber(detail.invoiceNumber());
         if (detail.cqtCode() != null) invoice.setCqtCode(detail.cqtCode());
         if (detail.lookupCode() != null) invoice.setLookupCode(detail.lookupCode());
@@ -912,7 +966,9 @@ public class ElectronicInvoiceService {
                 || (Boolean.TRUE.equals(invoice.getIsDraft()) && !isExplicitlyIssuedStatus(detail.status()))) {
             invoice.setStatus(InvoiceStatus.DRAFT);
             invoice.setIsDraft(true);
-            invoice.setReconciliationStatus(ReconciliationStatus.RECONCILED);
+            if (invoice.getReconciliationStatus() != ReconciliationStatus.REQUIRES_REVIEW) {
+                invoice.setReconciliationStatus(ReconciliationStatus.RECONCILED);
+            }
             invoice.setErrorLog(null);
             invoice.setErrorCategory(null);
             invoice.setNextRetryAt(null);
@@ -1074,6 +1130,15 @@ public class ElectronicInvoiceService {
             }
         }
 
+        if (invoice != null && (invoice.getErrorCategory() == InvoiceErrorCategory.NON_RETRYABLE
+                || invoice.getErrorCategory() == InvoiceErrorCategory.UNDETERMINED)) {
+            throw new BusinessRuleException(
+                    "Hóa đơn chưa đủ điều kiện để thử lại: "
+                            + (invoice.getProviderErrorMessage() != null
+                            ? invoice.getProviderErrorMessage() : invoice.getErrorLog())
+            );
+        }
+
         Order order;
         if (invoice != null) {
             order = invoice.getOrderId() != null
@@ -1102,6 +1167,28 @@ public class ElectronicInvoiceService {
                 invoice.setUpdatedAt(OffsetDateTime.now());
                 invoiceRepository.save(invoice);
                 return toAdminDto(invoice, order);
+            }
+        }
+
+        // Resolve the previous asynchronous request before retrying. A pending
+        // or already-created document must never be submitted again.
+        if (invoice.getStatus() == InvoiceStatus.FAILED && hasCreateTrackingCode(invoice)) {
+            queueCreateStatusCheck(invoice, OffsetDateTime.now());
+            invoiceRepository.save(invoice);
+            checkAndAdvanceInvoice(invoice.getId());
+            invoice = invoiceRepository.findById(invoice.getId()).orElse(invoice);
+
+            if (invoice.getStatus() != InvoiceStatus.FAILED) {
+                return toAdminDto(invoice, order);
+            }
+            if (invoice.getErrorCategory() == InvoiceErrorCategory.REQUIRES_ACTION
+                    || invoice.getErrorCategory() == InvoiceErrorCategory.NON_RETRYABLE
+                    || invoice.getErrorCategory() == InvoiceErrorCategory.UNDETERMINED) {
+                throw new BusinessRuleException(
+                        "Hóa đơn chưa thể thử lại: "
+                                + (invoice.getProviderErrorMessage() != null
+                                ? invoice.getProviderErrorMessage() : invoice.getErrorLog())
+                );
             }
         }
 
@@ -1141,6 +1228,18 @@ public class ElectronicInvoiceService {
 
         recordAudit(invoice.getId(), "MANUAL_STATUS_CHECK", "ADMIN", "Kế toán kiểm tra lại trạng thái với SePay", null);
 
+        // Prefer the create-status endpoint whenever a tracking code exists.
+        // This is the only endpoint that returns the original async failure
+        // code/message; GET /invoices/{reference} may only expose DRAFT.
+        if ((invoice.getStatus() == InvoiceStatus.FAILED || invoice.getStatus() == InvoiceStatus.DRAFT)
+                && hasCreateTrackingCode(invoice)) {
+            queueCreateStatusCheck(invoice, OffsetDateTime.now());
+            invoiceRepository.save(invoice);
+            checkAndAdvanceInvoice(invoice.getId());
+            ElectronicInvoice refreshed = invoiceRepository.findById(invoice.getId()).orElse(invoice);
+            return toAdminDto(refreshed, order);
+        }
+
         invoice.setLastStatusCheckedAt(OffsetDateTime.now());
         SepayEInvoiceClient.InvoiceDetailResult detail = sepayEInvoiceClient.getInvoiceDetail(settings, invoice.getReferenceCode());
         if (detail.success()) {
@@ -1164,6 +1263,33 @@ public class ElectronicInvoiceService {
         }
 
         return toAdminDto(invoice, order);
+    }
+
+    private static boolean hasCreateTrackingCode(ElectronicInvoice invoice) {
+        return invoice.getCreateTrackingCode() != null && !invoice.getCreateTrackingCode().isBlank();
+    }
+
+    private void queueCreateStatusCheck(ElectronicInvoice invoice, OffsetDateTime now) {
+        invoice.setStatus(InvoiceStatus.PROCESSING);
+        // checkAndAdvanceInvoice must reach the create-status branch instead
+        // of the detail-only reconciliation branch.
+        if (invoice.getReconciliationStatus() == ReconciliationStatus.PENDING) {
+            invoice.setReconciliationStatus(ReconciliationStatus.RECONCILED);
+        }
+        invoice.setNextRetryAt(now);
+        invoice.setLastStatusCheckedAt(now);
+        invoice.setUpdatedAt(now);
+    }
+
+    private void deferQueuedDraftIssue(ElectronicInvoice invoice, String message) {
+        invoice.setErrorLog(null);
+        invoice.setErrorCategory(null);
+        invoice.setProviderErrorCode(null);
+        invoice.setProviderErrorMessage(null);
+        invoice.setNextRetryAt(OffsetDateTime.now().plusSeconds(30));
+        invoice.setUpdatedAt(OffsetDateTime.now());
+        recordAudit(invoice.getId(), "ISSUE_DEFERRED", "SYSTEM", message, null);
+        invoiceRepository.save(invoice);
     }
 
     @Transactional

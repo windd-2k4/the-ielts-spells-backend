@@ -163,14 +163,20 @@ public class SepayWebhookService {
         // 3. Scan content for Order Code
         String orderCode = extractOrderCode(payload.content());
         transaction.setOrderCode(orderCode);
-        transaction.setPayerName(extractPayerName(payload.content(), orderCode));
+        PayerNameResolver.Resolution payerResolution =
+                PayerNameResolver.resolve(payload.content(), null, orderCode);
+        transaction.setPayerName(payerResolution.name());
 
         if (orderCode == null) {
             log.info("SePay Webhook: Giao dịch QR tĩnh không có mã đơn; lập hóa đơn trực tiếp theo giao dịch {}", transactionIdStr);
             transaction.setStatus(PaymentTransactionStatus.STANDALONE_PAYMENT);
-            transaction.setReconciliationNote("Khoản thu học phí qua QR tĩnh; hóa đơn được tự động lập độc lập theo số tiền thực nhận");
+            String note = "Khoản thu học phí qua QR tĩnh; hóa đơn được tự động lập độc lập theo số tiền thực nhận";
+            if (payerResolution.requiresReview()) {
+                note += "; cần đối soát tên người mua: " + payerResolution.reason();
+            }
+            transaction.setReconciliationNote(note);
             PaymentTransaction saved = transactionRepository.saveAndFlush(transaction);
-            queueInvoiceForTransaction(saved, null, settings, "CK");
+            queueInvoiceForTransaction(saved, null, settings, "CK", payerResolution.requiresReview());
             return Map.of(
                     "success", true,
                     "status", "STANDALONE_INVOICE_QUEUED",
@@ -185,18 +191,20 @@ public class SepayWebhookService {
             transaction.setStatus(PaymentTransactionStatus.UNMATCHED);
             transaction.setReconciliationNote("Mã đơn " + orderCode + " không tồn tại; hóa đơn được lập độc lập theo giao dịch");
             PaymentTransaction saved = transactionRepository.saveAndFlush(transaction);
-            queueInvoiceForTransaction(saved, null, settings, "CK");
+            queueInvoiceForTransaction(saved, null, settings, "CK", true);
             return Map.of("success", true, "status", "UNMATCHED_INVOICE_QUEUED", "message", "Order not found; invoice queued by transaction");
         }
 
         Order order = orderOpt.get();
         transaction.setOrderId(order.getId());
+        payerResolution = PayerNameResolver.resolve(payload.content(), order.getCustomerName(), orderCode);
+        transaction.setPayerName(payerResolution.name());
 
         if (order.getStatus() == OrderStatus.CANCELLED || order.getStatus() == OrderStatus.REFUNDED) {
             transaction.setStatus(PaymentTransactionStatus.UNMATCHED);
             transaction.setReconciliationNote("Đơn " + orderCode + " đang ở trạng thái " + order.getStatus() + "; cần kế toán đối soát");
             PaymentTransaction saved = transactionRepository.saveAndFlush(transaction);
-            queueInvoiceForTransaction(saved, null, settings, "CK");
+            queueInvoiceForTransaction(saved, null, settings, "CK", true);
             return Map.of("success", true, "status", "REQUIRES_RECONCILIATION", "message", "Order cannot accept payment in current state");
         }
 
@@ -282,6 +290,9 @@ public class SepayWebhookService {
 
         transaction.setOrderId(order.getId());
         transaction.setOrderCode(order.getOrderCode());
+        PayerNameResolver.Resolution payerResolution = PayerNameResolver.resolve(
+                transaction.getTransferContent(), order.getCustomerName(), order.getOrderCode());
+        transaction.setPayerName(payerResolution.name());
         transactionRepository.saveAndFlush(transaction);
 
         BigDecimal previousCaptured = transactionRepository.sumCapturedAmountByOrderIdExcluding(order.getId(), transaction.getId());
@@ -469,48 +480,25 @@ public class SepayWebhookService {
         return normalized.length() <= 4 ? "****" : "****" + normalized.substring(normalized.length() - 4);
     }
 
-    private String extractPayerName(String transferContent, String orderCode) {
-        if (transferContent == null || transferContent.isBlank()) {
-            return "Người nộp học phí";
-        }
-        String normalized = transferContent.trim().replaceAll("\\s+", " ");
-        // Vietcombank static VA prefixes the customer's note with TKP, VA and
-        // three dot-separated metadata fields. The fields are not always numeric.
-        normalized = normalized.replaceFirst("(?i)^TKP#[^#]+#[^.]+\\.[^.]+\\.[^.]+\\.", "");
-        normalized = normalized.replaceFirst("(?i)^QR\\s*-\\s*", "");
-        // Bank-to-bank descriptions can prefix the payer note with MBVCB and a reference id.
-        normalized = normalized.replaceFirst("(?i)^MBVCB\\.[^.]+\\.", "");
-        // MoMo prefixes the customer's transfer note with its numeric transaction id.
-        normalized = normalized.replaceFirst("^\\d{6,}[-_\\s]+", "");
-        if (orderCode != null) {
-            String withoutOrderCode = normalized.replaceAll("(?i)\\b" + Pattern.quote(orderCode) + "\\b", "")
-                    .trim()
-                    .replaceAll("\\s+", " ");
-            if (!withoutOrderCode.isBlank()) {
-                normalized = withoutOrderCode;
-            }
-        }
-        // Một số ngân hàng/ZaloPay nối thêm mô tả hệ thống phía sau tên người gửi.
-        // Chỉ cắt các cụm phân tách rõ ràng để không tự suy diễn hoặc đổi tên khách.
-        String nameOnly = normalized.replaceFirst(
-                "(?iu)(?:[.\\s_-]+)(?:CT\\s+từ|CT\\s+tu|chuyển\\s+khoản|chuyen\\s+khoan|chuyển\\s+tiền|chuyen\\s+tien|chuyen\\s+em|thanh\\s+toán|thanh\\s+toan|đóng\\s+học\\s+phí|dong\\s+hoc\\s+phi|nộp\\s+tiền\\s+học|nop\\s+tien\\s+hoc)\\b.*$",
-                ""
-        ).trim();
-        if (!nameOnly.isBlank()) {
-            normalized = nameOnly;
-        }
-        // Số điện thoại thường được nối sau tên trong nội dung QR và không phải tên người mua.
-        normalized = normalized.replaceFirst("\\s+\\d{9,11}$", "").trim();
-        return normalized.length() <= 255 ? normalized : normalized.substring(0, 255);
-    }
-
     private void queueInvoiceForTransaction(
             PaymentTransaction transaction,
             Order order,
             BillingSetting settings,
             String paymentMethod
     ) {
-        ElectronicInvoice invoice = invoiceService.initOrGetInvoice(transaction, order);
+        queueInvoiceForTransaction(transaction, order, settings, paymentMethod, false);
+    }
+
+    private void queueInvoiceForTransaction(
+            PaymentTransaction transaction,
+            Order order,
+            BillingSetting settings,
+            String paymentMethod,
+            boolean requiresReview
+    ) {
+        ElectronicInvoice invoice = requiresReview
+                ? invoiceService.initOrGetInvoice(transaction, order, true)
+                : invoiceService.initOrGetInvoice(transaction, order);
         invoice.setPaymentMethod(paymentMethod);
         if (Boolean.FALSE.equals(settings.getAutoInvoiceEnabled())) {
             invoiceService.logKillSwitchSkipped(invoice);
