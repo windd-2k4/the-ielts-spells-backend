@@ -601,7 +601,18 @@ public class SepayEInvoiceClient {
             Long total = data.has("total_amount") && !data.path("total_amount").isNull() ? data.path("total_amount").asLong() : null;
             Integer taxRate = data.has("tax_rate") && !data.path("tax_rate").isNull() ? data.path("tax_rate").asInt() : null;
 
-            return new InvoiceDetailResult(true, false, id, ref, status, invNum, series, tmpl, issuedDate, cqt, lookup, pdf, xml, total, taxRate, null, null);
+            // The provider may return HTTP 200/success=true while the invoice itself
+            // has already failed. Preserve the provider's diagnostic fields so the
+            // reconciliation worker can stop retrying a terminal provider failure.
+            String errorCode = firstText(data, "error_code", "code");
+            String errorMessage = firstText(data, "message", "error_message", "reason");
+            JsonNode errorNode = data.path("error");
+            if (errorNode.isObject()) {
+                if (errorCode == null) errorCode = firstText(errorNode, "code", "error_code");
+                if (errorMessage == null) errorMessage = firstText(errorNode, "message", "error_message", "reason");
+            }
+
+            return new InvoiceDetailResult(true, false, id, ref, status, invNum, series, tmpl, issuedDate, cqt, lookup, pdf, xml, total, taxRate, errorCode, errorMessage);
         } catch (Exception ex) {
             log.error("Ngoại lệ khi gọi GET /v1/invoices/{}: {}", referenceCode, ex.getMessage(), ex);
             return InvoiceDetailResult.error("EXCEPTION", ex.getMessage());
@@ -673,6 +684,19 @@ public class SepayEInvoiceClient {
                 String pdfUrl = inv.path("pdf_url").asText(null);
                 String xmlUrl = inv.path("xml_url").asText(null);
                 String invStatus = inv.path("status").asText("");
+
+                // Some SePay responses wrap a failed provider result in an outer
+                // `status=Success`. Inspect the nested invoice status first.
+                if (isProviderFailedStatus(invStatus)) {
+                    String errCode = firstText(inv, "error_code", "code");
+                    String errMsg = firstText(inv, "message", "error_message", "reason");
+                    if (errCode == null) errCode = firstText(root.path("data"), "error_code", "code");
+                    if (errMsg == null) errMsg = firstText(root.path("data"), "message", "error_message", "reason");
+                    return CheckStatusResult.failed(
+                            errCode != null ? errCode : "PROVIDER_STATUS_FAILED",
+                            errMsg != null ? errMsg : "SePay trả về trạng thái hóa đơn thất bại"
+                    );
+                }
                 boolean isIssued = isExplicitlyIssuedStatus(invStatus) || isExplicitlyIssuedStatus(status);
                 boolean isDraft = !isIssued;
 
@@ -851,6 +875,29 @@ public class SepayEInvoiceClient {
                 || "signed".equals(normalized)
                 || "issued_to_tax_authority".equals(normalized)
                 || "cqt_issued".equals(normalized);
+    }
+
+    private static boolean isProviderFailedStatus(String status) {
+        if (status == null || status.isBlank()) return false;
+        String normalized = status.trim().toLowerCase(Locale.ROOT)
+                .replace('-', '_').replace(' ', '_');
+        return "failed".equals(normalized)
+                || "error".equals(normalized)
+                || "rejected".equals(normalized)
+                || "export_failed".equals(normalized)
+                || "cqt_rejected".equals(normalized);
+    }
+
+    private static String firstText(JsonNode node, String... fields) {
+        if (node == null || node.isMissingNode() || node.isNull()) return null;
+        for (String field : fields) {
+            JsonNode value = node.path(field);
+            if (value.isValueNode() && !value.isNull()) {
+                String text = value.asText(null);
+                if (text != null && !text.isBlank()) return text;
+            }
+        }
+        return null;
     }
 
     /**

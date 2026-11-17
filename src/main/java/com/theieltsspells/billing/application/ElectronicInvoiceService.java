@@ -637,6 +637,18 @@ public class ElectronicInvoiceService {
             invoiceRepository.save(invoice);
             return;
         }
+
+        // Provider-side terminal failures require a human decision (usually fix the
+        // issue date/data and create a new invoice). Do not poll SePay every minute
+        // or accidentally issue a replacement from the old record.
+        if (invoice.getStatus() == InvoiceStatus.FAILED
+                && (invoice.getErrorCategory() == InvoiceErrorCategory.REQUIRES_ACTION
+                || invoice.getErrorCategory() == InvoiceErrorCategory.NON_RETRYABLE
+                || invoice.getErrorCategory() == InvoiceErrorCategory.UNDETERMINED)) {
+            invoice.setNextRetryAt(null);
+            invoiceRepository.save(invoice);
+            return;
+        }
         Order order = invoice.getOrderId() != null
                 ? orderRepository.findById(invoice.getOrderId()).orElse(null)
                 : null;
@@ -962,6 +974,25 @@ public class ElectronicInvoiceService {
         if (detail.pdfUrl() != null) invoice.setPdfUrl(detail.pdfUrl());
         if (detail.xmlUrl() != null) invoice.setXmlUrl(detail.xmlUrl());
 
+        if (isProviderFailedStatus(detail.status())) {
+            String errorCode = detail.errorCode() != null && !detail.errorCode().isBlank()
+                    ? detail.errorCode() : "PROVIDER_STATUS_FAILED";
+            String errorMessage = detail.errorMessage() != null && !detail.errorMessage().isBlank()
+                    ? detail.errorMessage() : "SePay trả về trạng thái hóa đơn thất bại; cần kiểm tra log nhà cung cấp";
+            invoice.setStatus(InvoiceStatus.FAILED);
+            invoice.setIsDraft(true);
+            invoice.setProviderErrorCode(errorCode);
+            invoice.setProviderErrorMessage(errorMessage);
+            invoice.setErrorLog(errorMessage);
+            invoice.setErrorCategory(determineErrorCategory(errorCode, errorMessage));
+            invoice.setReconciliationStatus(ReconciliationStatus.REQUIRES_REVIEW);
+            invoice.setNextRetryAt(null);
+            invoice.setUpdatedAt(OffsetDateTime.now());
+            recordAudit(invoice.getId(), "PROVIDER_EXPORT_FAILED", "SYSTEM", errorMessage,
+                    Map.of("provider_error_code", errorCode, "provider_status", detail.status()));
+            return invoiceRepository.save(invoice);
+        }
+
         if (isDraftLikeStatus(detail.status())
                 || (Boolean.TRUE.equals(invoice.getIsDraft()) && !isExplicitlyIssuedStatus(detail.status()))) {
             invoice.setStatus(InvoiceStatus.DRAFT);
@@ -1051,6 +1082,17 @@ public class ElectronicInvoiceService {
                 || "not_sent_to_tax_authority".equals(normalized);
     }
 
+    private static boolean isProviderFailedStatus(String status) {
+        if (status == null || status.isBlank()) return false;
+        String normalized = status.trim().toLowerCase(java.util.Locale.ROOT)
+                .replace('-', '_').replace(' ', '_');
+        return "failed".equals(normalized)
+                || "error".equals(normalized)
+                || "rejected".equals(normalized)
+                || "export_failed".equals(normalized)
+                || "cqt_rejected".equals(normalized);
+    }
+
     @Transactional
     public void deleteDraftInvoice(UUID invoiceId) {
         ElectronicInvoice invoice = invoiceRepository.findById(invoiceId)
@@ -1085,7 +1127,7 @@ public class ElectronicInvoiceService {
         if (errorCode != null && !errorCode.isBlank()) {
             return switch (errorCode.toUpperCase()) {
                 case "EINVOICE_DOCUMENT_EXISTED" -> InvoiceErrorCategory.RECONCILABLE;
-                case "QUOTA_HAS_BEEN_USERD_UP", "REGISTRATION_NOT_TAX_APPROVED", "REGISTRATION_NOT_COMPLETE", "BILLING_IS_UNPAID", "VALIDATION_ERROR" -> InvoiceErrorCategory.REQUIRES_ACTION;
+                case "QUOTA_HAS_BEEN_USERD_UP", "REGISTRATION_NOT_TAX_APPROVED", "REGISTRATION_NOT_COMPLETE", "BILLING_IS_UNPAID", "VALIDATION_ERROR", "PROVIDER_STATUS_FAILED", "MATBAO_ERROR" -> InvoiceErrorCategory.REQUIRES_ACTION;
                 case "UNDETERMINED" -> InvoiceErrorCategory.UNDETERMINED;
                 case "INVALID_CONFIG", "PERMISSION_DENIED" -> InvoiceErrorCategory.NON_RETRYABLE;
                 default -> InvoiceErrorCategory.RETRYABLE;
