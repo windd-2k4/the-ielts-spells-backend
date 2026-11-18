@@ -36,6 +36,48 @@ class PayerNameResolverTests {
     }
 
     @Test
+    @DisplayName("TKP Vietcombank loại chuỗi QRP lồng trước tên người chuyển")
+    void parsesVietcombankNameAfterQrpPrefix() {
+        PayerNameResolver.Resolution result = PayerNameResolver.resolve(
+                "TKP#QRPSEP1ZZZZ58800105#000000.171126.000000.Vietcombank:QRPSEP1ZZZZ58800105:HOANG KY DUYEN chuyen tien",
+                null,
+                null
+        );
+
+        assertThat(result.name()).isEqualTo("HOANG KY DUYEN");
+        assertThat(result.requiresReview()).isFalse();
+        assertThat(result.name()).doesNotContain("QRP");
+    }
+
+    @Test
+    @DisplayName("QR Vietcombank ưu tiên tên người chuyển ở metadata cuối")
+    void parsesVietcombankTrailingSenderMetadata() {
+        PayerNameResolver.Resolution result = PayerNameResolver.resolve(
+                "TKP#QRPSEP1ZZZZ58800105#6322HDBCP2FJVYTS.PHAM NGOC KHANH MINH dong hoc phi.20261118.142632.135704070023729.PHAM SON HUNG.970437",
+                null,
+                null
+        );
+
+        assertThat(result.name()).isEqualTo("PHAM SON HUNG");
+        assertThat(result.requiresReview()).isFalse();
+        assertThat(result.name()).doesNotContain("QRP");
+    }
+
+    @Test
+    @DisplayName("QR chuyển nhanh ưu tiên tên người chuyển ở metadata cuối")
+    void parsesFastTransferTrailingSenderMetadata() {
+        PayerNameResolver.Resolution result = PayerNameResolver.resolve(
+                "TKP#QRPSEP1ZZZZ58800105#6322IBT1k2LCHIH9.Tranmyan chuyen khoan nhanh qua Zalo FT26322054004349.20261118.142628.77676487552009.TRAN MY AN.970407",
+                null,
+                null
+        );
+
+        assertThat(result.name()).isEqualTo("TRAN MY AN");
+        assertThat(result.requiresReview()).isFalse();
+        assertThat(result.name()).doesNotContain("QRP");
+    }
+
+    @Test
     @DisplayName("Viettel Money bỏ phần mô tả hệ thống")
     void parsesViettelMoneyName() {
         PayerNameResolver.Resolution result = PayerNameResolver.resolve(
@@ -96,7 +138,16 @@ class PayerNameResolverTests {
     void qrpOnlyFallsBackToReview() {
         PayerNameResolver.Resolution result = PayerNameResolver.resolve("QRP", null, null);
 
-        assertThat(result.name()).isEqualTo("Người nộp học phí");
+        assertThat(result.name()).isEqualTo("Cần đối soát");
         assertThat(result.requiresReview()).isTrue();
+        assertThat(result.name()).doesNotContain("QRP");
+    }
+
+    @Test
+    @DisplayName("Tên placeholder cũ vẫn được nhận diện là cần đối soát")
+    void legacyFallbackIsReviewName() {
+        assertThat(PayerNameResolver.isReviewName("Người nộp học phí")).isTrue();
+        assertThat(PayerNameResolver.isReviewName("Cần đối soát")).isTrue();
+        assertThat(PayerNameResolver.isReviewName("PHAM VAN DUAN")).isFalse();
     }
 }

@@ -11,9 +11,18 @@ import java.util.regex.Pattern;
  */
 final class PayerNameResolver {
 
-    private static final String FALLBACK_NAME = "Người nộp học phí";
+    /**
+     * Không phải tên người mua. Chỉ dùng cho hóa đơn cần đối soát khi SePay
+     * không gửi đủ dữ liệu để xác định người chuyển.
+     */
+    private static final String REVIEW_NAME = "Cần đối soát";
+    private static final String LEGACY_REVIEW_NAME = "Người nộp học phí";
     private static final Pattern TKP_PATTERN = Pattern.compile("(?iu)^TKP#[^#]+#(.+)$");
     private static final Pattern MOMO_PATTERN = Pattern.compile("(?iu)^\\d{6,}[-_\\s]+(.+)$");
+    /** Vietcombank QR payload: ...<sender name>.<six digit bank code> */
+    private static final Pattern TRAILING_SENDER_METADATA = Pattern.compile(
+            "(?iu)^.*\\.(\\p{L}[\\p{L}\\s]{1,118})\\.\\d{6}$"
+    );
     private static final Pattern PHONE_SUFFIX = Pattern.compile("\\s+\\d{9,11}$");
     private static final Pattern ORDER_CODE = Pattern.compile("(?iu)\\bKH\\d{10,14}\\b");
     private static final Pattern NARRATIVE_SUFFIX = Pattern.compile(
@@ -33,6 +42,11 @@ final class PayerNameResolver {
     record Resolution(String name, boolean requiresReview, String reason, Source source) {
     }
 
+    static boolean isReviewName(String value) {
+        String cleaned = clean(value);
+        return cleaned.equalsIgnoreCase(REVIEW_NAME) || cleaned.equalsIgnoreCase(LEGACY_REVIEW_NAME);
+    }
+
     static Resolution resolve(String rawContent, String authoritativeOrderName, String orderCode) {
         String orderName = clean(authoritativeOrderName);
         if (isValid(orderName)) {
@@ -41,7 +55,7 @@ final class PayerNameResolver {
 
         String raw = clean(rawContent);
         if (raw.isBlank()) {
-            return review(FALLBACK_NAME, "Không có nội dung chuyển khoản", Source.UNKNOWN);
+            return review(REVIEW_NAME, "Không có nội dung chuyển khoản", Source.UNKNOWN);
         }
         String withoutOrder = removeOrderCode(raw, orderCode);
 
@@ -63,7 +77,7 @@ final class PayerNameResolver {
                     ? trusted(candidate, source)
                     : review(candidate, "Không nhận diện chắc chắn định dạng giao dịch", source);
         }
-        return review(FALLBACK_NAME, "Không bóc tách được tên người mua đáng tin cậy", Source.UNKNOWN);
+        return review(REVIEW_NAME, "Không bóc tách được tên người mua đáng tin cậy", Source.UNKNOWN);
     }
 
     private static Resolution parseTkp(String value) {
@@ -100,6 +114,15 @@ final class PayerNameResolver {
             return finish(candidate, false, null, Source.VIETTEL_MONEY);
         }
 
+        // Với QR Vietcombank, phần người nhập nội dung có thể đứng trước
+        // metadata; tên chủ tài khoản chuyển tiền nằm ngay trước mã ngân hàng
+        // 6 chữ số ở cuối chuỗi. Ưu tiên trường này để không lấy nhầm tên trong
+        // lời nhắn học phí.
+        Matcher trailingSender = TRAILING_SENDER_METADATA.matcher(tail);
+        if (trailingSender.matches()) {
+            return finish(trailingSender.group(1), false, null, Source.TKP);
+        }
+
         String candidate = tail;
         String[] parts = tail.split("\\.", 4);
         if (parts.length == 4) {
@@ -125,7 +148,7 @@ final class PayerNameResolver {
     private static Resolution finish(String candidate, boolean forceReview, String reason, Source source) {
         String cleaned = stripNarrative(candidate);
         if (!isValid(cleaned) || looksTechnical(cleaned)) {
-            return review(FALLBACK_NAME, "Tên bóc tách không đạt điều kiện an toàn", source);
+            return review(REVIEW_NAME, "Tên bóc tách không đạt điều kiện an toàn", source);
         }
         return forceReview
                 ? review(cleaned, reason, source)
@@ -133,11 +156,30 @@ final class PayerNameResolver {
     }
 
     private static String stripNarrative(String value) {
-        String result = clean(value);
+        // Một số Vietcombank payload lồng cả chuỗi "Vietcombank:QRP...:" vào
+        // trước tên người chuyển. Cắt phần kỹ thuật trước khi kiểm tra tên,
+        // nếu không parser sẽ loại nhầm tên hợp lệ vì thấy token QRP.
+        String result = stripTechnicalPrefix(clean(value));
         result = ORDER_CODE.matcher(result).replaceAll("");
         result = NARRATIVE_SUFFIX.matcher(result).replaceFirst("");
         result = PHONE_SUFFIX.matcher(result).replaceFirst("");
         return clean(result);
+    }
+
+    private static String stripTechnicalPrefix(String value) {
+        String result = clean(value);
+        int lastColon = result.lastIndexOf(':');
+        if (lastColon >= 0) {
+            String prefix = result.substring(0, lastColon);
+            if (containsIgnoreCase(prefix, "QRP")
+                    || containsIgnoreCase(prefix, "TKP#")
+                    || containsIgnoreCase(prefix, "Vietcombank")
+                    || containsIgnoreCase(prefix, "MBBank")
+                    || containsIgnoreCase(prefix, "ViettelMoney")) {
+                result = result.substring(lastColon + 1);
+            }
+        }
+        return result.replaceFirst("(?iu)^(?:Vietcombank|MBBank|ViettelMoney)\\s*[:.-]\\s*", "").trim();
     }
 
     private static String removeOrderCode(String value, String orderCode) {

@@ -180,7 +180,7 @@ public class ElectronicInvoiceService {
                 ? order.getCustomerName().trim()
                 : transaction.getPayerName();
         invoice.setBuyerName(buyerName != null && !buyerName.isBlank()
-                ? buyerName.trim() : "Người nộp học phí");
+                ? buyerName.trim() : "Cần đối soát");
         invoice.setBuyerLegalName(order != null ? order.getInvoiceCompanyName() : null);
         invoice.setBuyerTaxCode(order != null ? order.getInvoiceTaxCode() : null);
         invoice.setBuyerAddress(order != null && order.getInvoiceAddress() != null && !order.getInvoiceAddress().isBlank()
@@ -512,6 +512,10 @@ public class ElectronicInvoiceService {
 
         if (invoice.getStatus() != InvoiceStatus.DRAFT) {
             throw new BusinessRuleException("Chỉ có thể phát hành hóa đơn đang ở trạng thái Nháp (DRAFT). Trạng thái hiện tại: " + invoice.getStatus());
+        }
+
+        if (PayerNameResolver.isReviewName(invoice.getBuyerName())) {
+            throw new BusinessRuleException("Chưa thể phát hành: cần xác định tên người mua trước khi phát hành hóa đơn.");
         }
 
         BillingSetting settings = billingSettingRepository.findLatest().orElseGet(BillingSetting::new);
@@ -1553,7 +1557,7 @@ public class ElectronicInvoiceService {
                 orderCode,
                 invoice.getReferenceCode(),
                 invoice.getProductName(),
-                invoice.getBuyerName() != null ? invoice.getBuyerName() : (order != null ? order.getCustomerName() : "Người nộp học phí"),
+                invoice.getBuyerName() != null ? invoice.getBuyerName() : (order != null ? order.getCustomerName() : "Cần đối soát"),
                 order != null ? order.getCustomerEmail() : invoice.getBuyerEmail(),
                 invoice.getTotalAmount(),
                 buyerType,

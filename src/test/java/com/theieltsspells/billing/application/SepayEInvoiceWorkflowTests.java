@@ -1428,6 +1428,25 @@ class SepayEInvoiceWorkflowTests {
     }
 
     @Test
+    @DisplayName("Không phát hành nháp khi tên người mua chỉ là placeholder đối soát")
+    void issueDraftInvoice_BlocksReviewPlaceholder() {
+        UUID invId = UUID.randomUUID();
+        ElectronicInvoice draftInv = new ElectronicInvoice();
+        draftInv.setId(invId);
+        draftInv.setReferenceCode("INV-REVIEW-NAME");
+        draftInv.setStatus(InvoiceStatus.DRAFT);
+        draftInv.setIsDraft(true);
+        draftInv.setBuyerName("Cần đối soát");
+
+        when(invoiceRepository.findById(invId)).thenReturn(Optional.of(draftInv));
+
+        assertThatThrownBy(() -> realInvoiceService.issueDraftInvoice(invId))
+                .isInstanceOf(BusinessRuleException.class)
+                .hasMessageContaining("cần xác định tên người mua");
+        verify(sepayEInvoiceClient, never()).issueDraft(any(), anyString());
+    }
+
+    @Test
     @DisplayName("P0: Chưa thấy bản nháp trên SePay thì trì hoãn, không gọi issue sớm")
     void queuedDraftIssue_DefersUntilProviderDraftIsVisible() {
         BillingSetting setting = new BillingSetting();
