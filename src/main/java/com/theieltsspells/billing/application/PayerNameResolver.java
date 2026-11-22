@@ -23,6 +23,9 @@ final class PayerNameResolver {
     private static final Pattern TRAILING_SENDER_METADATA = Pattern.compile(
             "(?iu)^.*\\.(\\p{L}[\\p{L}\\s]{1,118})\\.\\d{6}$"
     );
+    private static final Pattern MBVCB_AMOUNT_SENDER = Pattern.compile(
+            "(?iu).*\\bS(?:ố|o)\\s+ti(?:ề|e)n\\s+[\\d.,]+\\s*VND[.\\s:_-]+(\\p{L}[\\p{L}\\s]{1,118})$"
+    );
     private static final Pattern PHONE_SUFFIX = Pattern.compile("\\s+\\d{9,11}$");
     private static final Pattern ORDER_CODE = Pattern.compile("(?iu)\\bKH\\d{10,14}\\b");
     private static final Pattern NARRATIVE_SUFFIX = Pattern.compile(
@@ -133,6 +136,10 @@ final class PayerNameResolver {
 
     private static Resolution parseMbvcb(String value) {
         if (!value.regionMatches(true, 0, "MBVCB.", 0, 6)) return null;
+        Matcher amountSender = MBVCB_AMOUNT_SENDER.matcher(value);
+        if (amountSender.matches()) {
+            return finish(amountSender.group(1), false, null, Source.MBVCB);
+        }
         String[] parts = value.split("\\.", 3);
         String candidate = parts.length == 3 ? parts[2] : "";
         candidate = candidate.replaceFirst("(?iu)\\.CT\\s+(?:từ|tu)\\b.*$", "");

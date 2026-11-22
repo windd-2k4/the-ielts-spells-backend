@@ -106,6 +106,33 @@ class PayerNameResolverTests {
     }
 
     @Test
+    @DisplayName("MBVCB lấy tên người chuyển sau số tiền thay vì token QRP")
+    void parsesMbvcbSenderAfterAmount() {
+        PayerNameResolver.Resolution result = PayerNameResolver.resolve(
+                "MBVCB.17155454063.QRP.Thanh toan cho HKD TA THE IELTS SPELLS.HKD TA THE IELTS SPELLS tu tai khoan 1020743710 toi TKP#QRPSEP1ZZZZ58800105#.So tien 500000 VND.TONG NGUYEN THUY AN",
+                null,
+                null
+        );
+
+        assertThat(result.name()).isEqualTo("TONG NGUYEN THUY AN");
+        assertThat(result.requiresReview()).isFalse();
+        assertThat(result.source()).isEqualTo(PayerNameResolver.Source.MBVCB);
+    }
+
+    @Test
+    @DisplayName("MBVCB không dùng QRP sau số tiền làm tên người mua")
+    void rejectsMbvcbQrpAfterAmount() {
+        PayerNameResolver.Resolution result = PayerNameResolver.resolve(
+                "MBVCB.17155454063.QRP.So tien 500000 VND.QRP",
+                null,
+                null
+        );
+
+        assertThat(result.name()).isEqualTo("Cần đối soát");
+        assertThat(result.requiresReview()).isTrue();
+    }
+
+    @Test
     @DisplayName("MoMo lấy tên từ metadata giao dịch")
     void parsesMomoName() {
         PayerNameResolver.Resolution result = PayerNameResolver.resolve(
