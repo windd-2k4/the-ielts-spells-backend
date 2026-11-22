@@ -23,4 +23,9 @@ public record AiAudioInput(String mimeType, String base64Data) {
         Base64.getDecoder().decode(data);
         return new AiAudioInput(mimeType, data);
     }
+
+    public static AiAudioInput fromBytes(String mimeType, byte[] value) {
+        if (value == null || value.length == 0) throw new IllegalArgumentException("Speaking audio is empty");
+        return new AiAudioInput(mimeType.toLowerCase(), Base64.getEncoder().encodeToString(value));
+    }
 }

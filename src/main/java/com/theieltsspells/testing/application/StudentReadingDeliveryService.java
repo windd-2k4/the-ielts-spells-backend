@@ -59,6 +59,20 @@ public class StudentReadingDeliveryService {
                   assignment.max_attempts, assignment.duration_seconds,
                   (select count(*) from public.test_attempts attempt
                     where attempt.test_assignment_id = assignment.id and attempt.student_id = ?) attempts_used,
+                  exists (
+                    select 1 from public.test_attempts attempt
+                    where attempt.test_assignment_id = assignment.id
+                      and attempt.student_id = ?
+                      and attempt.status <> 'IN_PROGRESS'
+                  ) completed_attempt,
+                  exists (
+                    select 1
+                    from public.student_activity_attempts activity_attempt
+                    join public.activity_evidence evidence on evidence.attempt_id = activity_attempt.id
+                    where activity_attempt.class_activity_id = activity.id
+                      and activity_attempt.student_id = ?
+                      and activity_attempt.status = 'COMPLETED'
+                  ) evidence_replacement,
                   (select max(attempt.expires_at) from public.test_attempts attempt
                     where attempt.test_assignment_id = assignment.id and attempt.student_id = ?
                       and attempt.status = 'IN_PROGRESS') active_attempt_expires_at
@@ -81,9 +95,10 @@ public class StudentReadingDeliveryService {
                 rs.getObject("session_no", Short.class), rs.getString("session_title"), rs.getString("mode"),
                 rs.getObject("opens_at", OffsetDateTime.class), rs.getObject("closes_at", OffsetDateTime.class),
                 rs.getShort("max_attempts"), rs.getInt("attempts_used"),
+                rs.getBoolean("completed_attempt"), rs.getBoolean("evidence_replacement"),
                 rs.getObject("duration_seconds", Integer.class),
                 rs.getObject("active_attempt_expires_at", OffsetDateTime.class)
-        ), studentId, studentId, studentId, skill);
+        ), studentId, studentId, studentId, studentId, studentId, skill);
     }
 
     public List<StudentReadingCatalogItemResponse> listPublishedTests(UUID studentId) {

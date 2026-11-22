@@ -6,7 +6,7 @@ import com.theieltsspells.shared.storage.FileStorage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -17,6 +17,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
+import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -32,8 +33,11 @@ public class FileStorageService implements FileStorage {
 
     public FileStorageService(FileStorageProperties properties, RestClient.Builder restClientBuilder) {
         this.properties = properties;
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(Duration.ofSeconds(60));
+        HttpClient jdkClient = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_2)
+                .connectTimeout(Duration.ofSeconds(60))
+                .build();
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(jdkClient);
         factory.setReadTimeout(Duration.ofMinutes(10));
         this.httpClient = restClientBuilder
                 .requestFactory(factory)
@@ -48,11 +52,31 @@ public class FileStorageService implements FileStorage {
 
     @Override
     public StoredFile store(String objectPath, MultipartFile file) {
+        return storeInBucket(properties.getSupabaseBucket(), objectPath, file);
+    }
+
+    @Override
+    public StoredFile storeInBucket(String bucketName, String objectPath, MultipartFile file) {
         validate(file);
         var provider = properties.getProvider().trim().toUpperCase(Locale.ROOT);
         return switch (provider) {
             case "LOCAL" -> storeLocal(objectPath, file);
-            case "SUPABASE" -> storeSupabase(objectPath, file);
+            case "SUPABASE" -> storeSupabase(bucketName, objectPath, file);
+            default -> throw new BusinessRuleException("FILE_STORAGE_PROVIDER chỉ hỗ trợ LOCAL hoặc SUPABASE");
+        };
+    }
+
+    @Override
+    public StoredFile storeBytesInBucket(String bucketName, String objectPath, byte[] bytes, String contentType) {
+        if (bytes == null || bytes.length == 0) throw new BusinessRuleException("Không thể lưu tệp rỗng");
+        if (bytes.length > properties.getMaxUploadBytes()) {
+            throw new BusinessRuleException("Tệp vượt quá dung lượng tối đa "
+                    + (properties.getMaxUploadBytes() / 1_048_576) + " MB");
+        }
+        var provider = properties.getProvider().trim().toUpperCase(Locale.ROOT);
+        return switch (provider) {
+            case "LOCAL" -> storeLocalBytes(objectPath, bytes);
+            case "SUPABASE" -> storeSupabaseBytes(bucketName, objectPath, bytes, contentType);
             default -> throw new BusinessRuleException("FILE_STORAGE_PROVIDER chỉ hỗ trợ LOCAL hoặc SUPABASE");
         };
     }
@@ -84,7 +108,12 @@ public class FileStorageService implements FileStorage {
 
     @Override
     public InputStream openDefault(String objectPath) {
-        return open(properties.getProvider(), properties.getSupabaseBucket(), objectPath);
+        return openFromBucket(properties.getSupabaseBucket(), objectPath);
+    }
+
+    @Override
+    public InputStream openFromBucket(String bucketName, String objectPath) {
+        return open(properties.getProvider(), bucketName, objectPath);
     }
 
     public InputStream open(String storageProvider, String bucketName, String objectPath) {
@@ -128,12 +157,12 @@ public class FileStorageService implements FileStorage {
         }
     }
 
-    private StoredFile storeSupabase(String objectPath, MultipartFile file) {
+    private StoredFile storeSupabase(String bucketName, String objectPath, MultipartFile file) {
         try {
             var body = file.getBytes();
             var key = requireSupabaseKey();
             var status = httpClient.post()
-                    .uri(objectUri(properties.getSupabaseBucket(), objectPath))
+                    .uri(objectUri(bucketName, objectPath))
                     .header("Authorization", "Bearer " + key)
                     .header("apikey", key)
                     .header("x-upsert", "true")
@@ -143,8 +172,40 @@ public class FileStorageService implements FileStorage {
             if (status < 200 || status >= 300) {
                 throw new BusinessRuleException("Supabase Storage từ chối tải tệp lên: HTTP " + status);
             }
-            return new StoredFile("SUPABASE", properties.getSupabaseBucket(), objectPath);
+            return new StoredFile("SUPABASE", bucketName, objectPath);
         } catch (IOException | RestClientException exception) {
+            throw new BusinessRuleException("Không thể tải tệp lên Supabase Storage: " + exception.getMessage());
+        }
+    }
+
+    private StoredFile storeLocalBytes(String objectPath, byte[] bytes) {
+        try {
+            var target = localPath(objectPath);
+            Files.createDirectories(target.getParent());
+            Files.write(target, bytes);
+            return new StoredFile("LOCAL", null, objectPath);
+        } catch (IOException exception) {
+            throw new BusinessRuleException("Không thể lưu tệp trên máy phát triển");
+        }
+    }
+
+    private StoredFile storeSupabaseBytes(String bucketName, String objectPath, byte[] bytes, String contentType) {
+        try {
+            var key = requireSupabaseKey();
+            var status = httpClient.post()
+                    .uri(objectUri(bucketName, objectPath))
+                    .header("Authorization", "Bearer " + key)
+                    .header("apikey", key)
+                    .header("x-upsert", "true")
+                    .contentType(MediaType.parseMediaType(contentType == null || contentType.isBlank()
+                            ? "application/octet-stream" : contentType))
+                    .body(bytes)
+                    .exchange((request, response) -> response.getStatusCode().value());
+            if (status < 200 || status >= 300) {
+                throw new BusinessRuleException("Supabase Storage từ chối tải tệp lên: HTTP " + status);
+            }
+            return new StoredFile("SUPABASE", bucketName, objectPath);
+        } catch (RestClientException exception) {
             throw new BusinessRuleException("Không thể tải tệp lên Supabase Storage: " + exception.getMessage());
         }
     }

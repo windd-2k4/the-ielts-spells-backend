@@ -1,5 +1,6 @@
 package com.theieltsspells.shared.web;
 
+import com.theieltsspells.shared.application.CodedApiException;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -37,5 +38,17 @@ class GlobalExceptionHandlerTests {
         assertThat(response.getBody().code()).isEqualTo("HTTP_400");
         assertThat(response.getBody().message()).isEqualTo("Webhook không hợp lệ");
         assertThat(response.getBody().path()).isEqualTo("/api/v1/webhooks/sepay");
+    }
+
+    @Test
+    void preservesExplicitApiErrorCode() {
+        var request = new MockHttpServletRequest("POST", "/api/v1/student/speaking/exam-sessions/id/turns");
+
+        var response = handler.handleCoded(new CodedApiException(HttpStatus.CONFLICT,
+                "SPEAKING_EXAMINER_STATE_CONFLICT", "Reload"), request);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(409);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().code()).isEqualTo("SPEAKING_EXAMINER_STATE_CONFLICT");
     }
 }

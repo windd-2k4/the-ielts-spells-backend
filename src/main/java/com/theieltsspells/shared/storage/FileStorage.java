@@ -9,7 +9,13 @@ public interface FileStorage {
 
     StoredFile store(String objectPath, MultipartFile file);
 
+    StoredFile storeInBucket(String bucketName, String objectPath, MultipartFile file);
+
+    StoredFile storeBytesInBucket(String bucketName, String objectPath, byte[] bytes, String contentType);
+
     InputStream openDefault(String objectPath);
+
+    InputStream openFromBucket(String bucketName, String objectPath);
 
     record StoredFile(String provider, String bucketName, String objectPath) {}
 }

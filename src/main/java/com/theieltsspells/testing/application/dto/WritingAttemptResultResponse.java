@@ -1,6 +1,6 @@
 package com.theieltsspells.testing.application.dto;
 
-import com.theieltsspells.writingevaluation.application.dto.WritingTeacherAnnotation;
+import com.theieltsspells.shared.application.dto.WritingTeacherAnnotation;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;

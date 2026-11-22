@@ -1,6 +1,7 @@
 package com.theieltsspells.shared.security;
 
 import com.theieltsspells.testing.application.SpeakingEvaluationAdminService;
+import com.theieltsspells.testing.application.SpeakingAudioService;
 import com.theieltsspells.testing.presentation.admin.SpeakingEvaluationAdminController;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,7 +13,9 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.UUID;
+import java.io.ByteArrayInputStream;
 
+import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.ArgumentMatchers.eq;
@@ -51,5 +54,22 @@ class SpeakingEvaluationSecurityTests {
         mvc.perform(get("/api/v1/admin/speaking-evaluations/entitlements")
                 .with(jwt().authorities(new SimpleGrantedAuthority("teacher"))))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void teacherMayStreamAudioWithinTheirGradingScope() throws Exception {
+        UUID evaluationId = UUID.randomUUID();
+        UUID teacherId = UUID.randomUUID();
+        when(service.openAudio(evaluationId, "part-1-q1", teacherId, false))
+                .thenReturn(new SpeakingAudioService.AudioContent(
+                        new ByteArrayInputStream(new byte[]{1, 2, 3}), "audio/webm", 3));
+
+        mvc.perform(get("/api/v1/admin/speaking-evaluations/{id}/audio/{questionKey}",
+                        evaluationId, "part-1-q1")
+                        .with(jwt().jwt(value -> value.subject(teacherId.toString()))
+                                .authorities(new SimpleGrantedAuthority("teacher"))))
+                .andExpect(status().isOk());
+
+        verify(service).openAudio(evaluationId, "part-1-q1", teacherId, false);
     }
 }

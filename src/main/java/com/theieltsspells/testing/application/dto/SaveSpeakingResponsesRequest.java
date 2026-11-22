@@ -9,7 +9,7 @@ public record SaveSpeakingResponsesRequest(
 ) {
     public record Item(
             @NotNull String questionKey,
-            String audioUrl,
+            String storageKey,
             String transcript,
             Map<String, String> hintChoices,
             int clientRevision

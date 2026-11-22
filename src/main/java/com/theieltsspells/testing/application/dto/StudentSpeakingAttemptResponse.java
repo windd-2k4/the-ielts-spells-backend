@@ -6,6 +6,7 @@ import java.util.UUID;
 
 public record StudentSpeakingAttemptResponse(
         UUID attemptId,
+        SpeakingExamMode mode,
         UUID testVersionId,
         String title,
         String description,

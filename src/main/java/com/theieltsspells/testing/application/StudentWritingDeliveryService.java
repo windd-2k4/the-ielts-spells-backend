@@ -14,7 +14,7 @@ import com.theieltsspells.testing.application.dto.StudentWritingAttemptResponse;
 import com.theieltsspells.testing.application.dto.WritingAttemptResultResponse;
 import com.theieltsspells.testing.application.dto.WritingSavedResponse;
 import com.theieltsspells.testing.application.dto.WritingTaskResponse;
-import com.theieltsspells.writingevaluation.application.dto.WritingTeacherAnnotation;
+import com.theieltsspells.shared.application.dto.WritingTeacherAnnotation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.JdbcTemplate;

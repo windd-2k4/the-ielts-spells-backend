@@ -1,6 +1,7 @@
 package com.theieltsspells.shared.web;
 
 import com.theieltsspells.shared.application.BusinessRuleException;
+import com.theieltsspells.shared.application.CodedApiException;
 import com.theieltsspells.shared.application.ConflictException;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -18,6 +19,11 @@ import java.time.Instant;
 @Slf4j
 @RestControllerAdvice
 class GlobalExceptionHandler {
+
+    @ExceptionHandler(CodedApiException.class)
+    ResponseEntity<ApiError> handleCoded(CodedApiException exception, HttpServletRequest request) {
+        return response(exception.status(), exception.code(), exception.getMessage(), request);
+    }
 
     @ExceptionHandler(ResourceNotFoundException.class)
     ResponseEntity<ApiError> handleNotFound(ResourceNotFoundException exception, HttpServletRequest request) {

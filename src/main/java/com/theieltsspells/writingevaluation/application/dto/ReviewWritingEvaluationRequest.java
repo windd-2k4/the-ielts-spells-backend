@@ -1,5 +1,6 @@
 package com.theieltsspells.writingevaluation.application.dto;
 
+import com.theieltsspells.shared.application.dto.WritingTeacherAnnotation;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;

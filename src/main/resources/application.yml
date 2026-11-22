@@ -86,6 +86,22 @@ app:
     enabled: ${WRITING_EVALUATION_ENABLED:true}
     poll-millis: ${WRITING_EVALUATION_POLL_MILLIS:10000}
     daily-limit: ${WRITING_EVALUATION_DAILY_LIMIT:5}
+  speaking-examiner:
+    enabled: ${AI_SPEAKING_EXAMINER_ENABLED:false}
+    prompt-version: ${AI_SPEAKING_EXAMINER_PROMPT_VERSION:speaking-examiner-v1}
+    rubric-version: ${AI_SPEAKING_EXAMINER_RUBRIC_VERSION:ielts-speaking-public-v1}
+    feature-extractor-version: ${AI_SPEAKING_EXAMINER_FEATURE_EXTRACTOR_VERSION:unconfigured}
+  speech:
+    base-url: ${SPEECH_SERVICE_BASE_URL:http://localhost:8000}
+    stt-model: ${SPEECH_STT_MODEL:Systran/faster-distil-whisper-small.en}
+    tts-model: ${SPEECH_TTS_MODEL:speaches-ai/Kokoro-82M-v1.0-ONNX}
+    tts-voice: ${SPEECH_TTS_VOICE:bf_emma}
+    connect-timeout: ${SPEECH_CONNECT_TIMEOUT:3s}
+    read-timeout: ${SPEECH_READ_TIMEOUT:120s}
+  speaking-audio:
+    storage-bucket: ${SPEAKING_AUDIO_STORAGE_BUCKET:speaking-audio-private}
+    max-upload-bytes: ${SPEAKING_AUDIO_MAX_UPLOAD_BYTES:10485760}
+    max-duration-seconds: ${SPEAKING_AUDIO_MAX_DURATION_SECONDS:180}
   adaptive-learning:
     enabled: ${ADAPTIVE_LEARNING_ENABLED:false}
   ai:

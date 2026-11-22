@@ -15,28 +15,45 @@ import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
-public class StaffAvatarApplicationService {
+public class ProfileAvatarApplicationService {
     private static final long MAX_AVATAR_BYTES = 5 * 1024 * 1024;
     private static final Set<String> SUPPORTED_TYPES = Set.of(
             MediaType.IMAGE_PNG_VALUE, MediaType.IMAGE_JPEG_VALUE, "image/webp", "image/gif");
     private static final Pattern FILENAME = Pattern.compile(
             "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(png|jpg|webp|gif)$");
-    private static final String AVATAR_DIRECTORY = "staff/avatars/";
+    private static final String STAFF_AVATAR_DIRECTORY = "staff/avatars/";
+    private static final String STUDENT_AVATAR_DIRECTORY = "students/avatars/";
 
     private final FileStorage storage;
 
-    public String upload(MultipartFile file) {
+    public String uploadStaff(MultipartFile file) {
+        return upload(STAFF_AVATAR_DIRECTORY, file);
+    }
+
+    public String uploadStudent(MultipartFile file) {
+        return upload(STUDENT_AVATAR_DIRECTORY, file);
+    }
+
+    public AvatarContent openStaff(String filename) {
+        return open(STAFF_AVATAR_DIRECTORY, filename);
+    }
+
+    public AvatarContent openStudent(String filename) {
+        return open(STUDENT_AVATAR_DIRECTORY, filename);
+    }
+
+    private String upload(String directory, MultipartFile file) {
         validateImage(file);
         String filename = UUID.randomUUID() + extension(file.getContentType());
-        storage.store(AVATAR_DIRECTORY + filename, file);
+        storage.store(directory + filename, file);
         return filename;
     }
 
-    public AvatarContent open(String filename) {
+    private AvatarContent open(String directory, String filename) {
         if (filename == null || !FILENAME.matcher(filename).matches()) {
             throw new BusinessRuleException("Ảnh đại diện không hợp lệ");
         }
-        InputStream stream = storage.openDefault(AVATAR_DIRECTORY + filename);
+        InputStream stream = storage.openDefault(directory + filename);
         return new AvatarContent(stream, mediaType(filename));
     }
 

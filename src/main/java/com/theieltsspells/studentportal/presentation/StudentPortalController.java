@@ -9,6 +9,10 @@ import com.theieltsspells.studentportal.application.dto.StudentPortfolioResponse
 import com.theieltsspells.studentportal.application.dto.StudentTargetBandResponse;
 import com.theieltsspells.studentportal.application.dto.UpdateStudentExamPlanRequest;
 import com.theieltsspells.studentportal.application.dto.UpdateStudentTargetBandRequest;
+import com.theieltsspells.identity.application.ProfileAvatarApplicationService;
+import com.theieltsspells.identity.application.StudentProfileApplicationService;
+import com.theieltsspells.identity.application.dto.StudentProfileResponse;
+import com.theieltsspells.identity.application.dto.UpdateStudentProfileRequest;
 import com.theieltsspells.progress.application.StudentProgressApplicationService;
 import com.theieltsspells.progress.application.dto.StudentProgressTaskResponse;
 import com.theieltsspells.progress.application.dto.UpdateChecklistRequest;
@@ -42,6 +46,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.time.YearMonth;
 import java.nio.charset.StandardCharsets;
@@ -59,12 +64,37 @@ public class StudentPortalController {
     private final com.theieltsspells.studentportal.application.StudentCourseWorkspaceService workspaceService;
     private final StudentProgressApplicationService progressService;
     private final AssignmentApplicationService assignmentService;
+    private final StudentProfileApplicationService profileService;
+    private final ProfileAvatarApplicationService avatarService;
 
     @GetMapping("/overview")
     @PreAuthorize("@permissionPolicy.has(authentication, 'identity.profile.self.read')")
     @Operation(summary = "Lấy dữ liệu tổng hợp thật cho góc học tập")
     public StudentPortalOverviewResponse overview(@AuthenticationPrincipal Jwt jwt) {
         return service.overview(studentId(jwt));
+    }
+
+    @PatchMapping("/profile")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'identity.profile.self.update')")
+    @Operation(summary = "Học viên cập nhật thông tin hồ sơ")
+    public StudentProfileResponse updateProfile(
+            @Valid @RequestBody UpdateStudentProfileRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        return profileService.update(studentId(jwt), request.fullName(), request.phone());
+    }
+
+    @PostMapping(value = "/profile/avatar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("@permissionPolicy.has(authentication, 'identity.profile.self.update')")
+    @Operation(summary = "Học viên cập nhật ảnh đại diện")
+    public StudentProfileResponse updateAvatar(
+            @RequestParam("file") MultipartFile file,
+            @AuthenticationPrincipal Jwt jwt) {
+        String filename = avatarService.uploadStudent(file);
+        String avatarPath = ServletUriComponentsBuilder.fromCurrentContextPath()
+                .path("/api/v1/public/student-avatars/{filename}")
+                .buildAndExpand(filename)
+                .toUriString();
+        return profileService.updateAvatar(studentId(jwt), avatarPath);
     }
 
     @GetMapping("/attempts")

@@ -27,6 +27,7 @@ public record StudentProgressTaskResponse(
         UUID assignmentId,
         String assignmentTitle,
         String assignmentDescription,
+        String assignmentType,
         OffsetDateTime assignmentDueAt,
         String latePolicy,
         int lateGraceMinutes,

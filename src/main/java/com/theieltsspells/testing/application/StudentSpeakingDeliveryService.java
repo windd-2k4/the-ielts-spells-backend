@@ -27,6 +27,7 @@ public class StudentSpeakingDeliveryService {
     private final ObjectMapper objectMapper;
     private final AcademicMembershipService memberships;
     private final SpeakingEvaluationService evaluationService;
+    private final SpeakingAudioService audioService;
 
     public List<StudentWritingAssignmentResponse> listAssignments(UUID studentId) {
         return jdbc.query("""
@@ -184,7 +185,10 @@ public class StudentSpeakingDeliveryService {
 
         for (var item : request.responses()) {
             Map<String, Object> answerMap = new LinkedHashMap<>();
-            if (item.audioUrl() != null) answerMap.put("audioUrl", item.audioUrl());
+            if (item.storageKey() != null) {
+                audioService.assertOwnedStorageKey(attempt.id(), studentId, item.storageKey(), item.questionKey());
+                answerMap.put("storageKey", item.storageKey());
+            }
             if (item.transcript() != null) answerMap.put("transcript", item.transcript());
             if (item.hintChoices() != null) answerMap.put("hintChoices", item.hintChoices());
 
@@ -252,6 +256,7 @@ public class StudentSpeakingDeliveryService {
 
         return new StudentSpeakingAttemptResponse(
                 attempt.id(),
+                SpeakingExamMode.FIXED_PRACTICE,
                 attempt.testVersionId(),
                 attempt.title(),
                 attempt.description(),
@@ -276,7 +281,9 @@ public class StudentSpeakingDeliveryService {
                 """, (rs, ignored) -> {
             String answerJson = rs.getString("answer");
             Map<String, Object> map = readMap(answerJson);
-            String audioUrl = map.get("audioUrl") != null ? map.get("audioUrl").toString() : null;
+            String audioUrl = map.get("storageKey") != null
+                    ? SpeakingAudioService.audioPath(attemptId, rs.getString("question_key"))
+                    : map.get("audioUrl") != null ? map.get("audioUrl").toString() : null;
             String transcript = map.get("transcript") != null ? map.get("transcript").toString() : null;
             Map<String, String> hintChoices = new HashMap<>();
             if (map.get("hintChoices") instanceof Map<?, ?> hintMap) {
@@ -300,6 +307,7 @@ public class StudentSpeakingDeliveryService {
                 select question_key, status, overall_band, fluency_band, lexical_band,
                        grammar_band, pronunciation_band, fluency_feedback, lexical_feedback,
                        grammar_feedback, pronunciation_feedback, strengths::text, improvements::text,
+                       speech_metrics::text, answer_upgrades::text,
                        updated_at, teacher_status, overall_band_teacher, fluency_band_teacher,
                        lexical_band_teacher, grammar_band_teacher, pronunciation_band_teacher,
                        fluency_feedback_teacher, lexical_feedback_teacher, grammar_feedback_teacher,
@@ -317,6 +325,8 @@ public class StudentSpeakingDeliveryService {
 
             List<String> strengths = readList(rs.getString("strengths"));
             List<String> improvements = readList(rs.getString("improvements"));
+            SpeakingAiAnalytics.SpeechMetrics speechMetrics = readSpeechMetrics(rs.getString("speech_metrics"));
+            List<SpeakingAiAnalytics.AnswerUpgrade> answerUpgrades = readAnswerUpgrades(rs.getString("answer_upgrades"));
             boolean published = "PUBLISHED".equals(rs.getString("teacher_status"));
             Map<String, String> teacherCriteria = new LinkedHashMap<>();
             if (published) {
@@ -337,6 +347,8 @@ public class StudentSpeakingDeliveryService {
                     criteria,
                     strengths,
                     improvements,
+                    speechMetrics,
+                    answerUpgrades,
                     rs.getObject("updated_at", OffsetDateTime.class),
                     rs.getString("teacher_status"),
                     published ? rs.getBigDecimal("overall_band_teacher") : null,
@@ -592,12 +604,30 @@ public class StudentSpeakingDeliveryService {
         }
     }
 
+    private SpeakingAiAnalytics.SpeechMetrics readSpeechMetrics(String json) {
+        if (json == null || json.isBlank() || "{}".equals(json.trim())) return SpeakingAiAnalytics.SpeechMetrics.empty();
+        try {
+            return objectMapper.readValue(json, SpeakingAiAnalytics.SpeechMetrics.class);
+        } catch (Exception e) {
+            return SpeakingAiAnalytics.SpeechMetrics.empty();
+        }
+    }
+
     private Map<String, Object> readMap(String json) {
         if (json == null || json.isBlank()) return Map.of();
         try {
-            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+            return objectMapper.readValue(json, new TypeReference<>() {});
         } catch (Exception e) {
             return Map.of();
+        }
+    }
+
+    private List<SpeakingAiAnalytics.AnswerUpgrade> readAnswerUpgrades(String json) {
+        if (json == null || json.isBlank()) return List.of();
+        try {
+            return objectMapper.readValue(json, new TypeReference<>() {});
+        } catch (Exception e) {
+            return List.of();
         }
     }
 

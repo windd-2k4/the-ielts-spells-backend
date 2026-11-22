@@ -173,12 +173,17 @@ cp .env.example .env
 
 Cập nhật ít nhất cấu hình Supabase JWT và CORS trong `.env`. Không commit file này.
 
-### 3. Khởi động PostgreSQL
+### 3. Khởi động PostgreSQL và Speech Runtime
 
 ```bash
-docker compose up -d postgres
+docker compose up -d postgres speaches
+docker compose run --rm speaches-model-init
 docker compose ps
 ```
+
+Lệnh `speaches-model-init` tải một lần hai model STT/TTS vào volume
+`speaches-model-cache`; các lần chạy sau tái sử dụng cache này. Hãy để lệnh hoàn tất
+trước khi khởi động backend lần đầu.
 
 Container tạo database local với thông tin mặc định:
 
@@ -282,6 +287,18 @@ Backend dùng `AiProviderRouter` để điều phối Gemini và NVIDIA theo t�
 Router retry cùng model đối với lỗi tạm thời, sau đó chuyển model và provider. Model không tồn tại được bỏ qua; provider sai API key hoặc thiếu quyền bị tạm ngắt để request tiếp theo không tiếp tục chờ. Lỗi request 400/422 không được fallback vì thay provider không sửa được payload sai. Nếu toàn bộ route import thất bại, bộ phân tách offline vẫn được dùng và kết quả được đánh dấu bằng cảnh báo thay vì giả vờ AI đã thành công.
 
 Không đặt API key trong frontend hoặc log. NVIDIA hosted endpoint thuộc chương trình thử nghiệm/phát triển; cần kiểm tra giấy phép và hình thức triển khai trước khi dùng production.
+
+### Speech Runtime cho AI Speaking Examiner
+
+Backend gọi Speaches qua API tương thích OpenAI để nhận dạng WebM/Opus và sinh giọng examiner. Image CPU được pin trong `compose.yaml`; model được lưu trong volume Docker để không tải lại sau mỗi lần khởi động.
+
+| Biến | Ý nghĩa |
+| --- | --- |
+| `SPEECH_SERVICE_BASE_URL` | URL Speaches; local là `http://localhost:8000`, backend trong Compose dùng `http://speaches:8000` |
+| `SPEECH_STT_MODEL` | Model Speech-to-Text |
+| `SPEECH_TTS_MODEL` | Model Text-to-Speech |
+| `SPEECH_TTS_VOICE` | Voice examiner |
+| `SPEECH_CONNECT_TIMEOUT`, `SPEECH_READ_TIMEOUT` | Giới hạn kết nối và xử lý; dùng giá trị Duration như `3s`, `120s` |
 
 ## Database và migration
 

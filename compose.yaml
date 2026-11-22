@@ -15,5 +15,43 @@ services:
       timeout: 5s
       retries: 10
 
+  speaches:
+    image: ghcr.io/speaches-ai/speaches:0.8.3-cpu
+    ports:
+      - "8000:8000"
+    environment:
+      WHISPER__COMPUTE_TYPE: int8
+    volumes:
+      - speaches-model-cache:/home/ubuntu/.cache/huggingface/hub
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  speaches-model-init:
+    image: ghcr.io/speaches-ai/speaches:0.8.3-cpu
+    depends_on:
+      speaches:
+        condition: service_healthy
+    environment:
+      SPEECH_STT_MODEL: ${SPEECH_STT_MODEL:-Systran/faster-distil-whisper-small.en}
+      SPEECH_TTS_MODEL: ${SPEECH_TTS_MODEL:-speaches-ai/Kokoro-82M-v1.0-ONNX}
+    command:
+      - python
+      - -c
+      - |
+        import os
+        import urllib.request
+
+        for model in (os.environ["SPEECH_STT_MODEL"], os.environ["SPEECH_TTS_MODEL"]):
+            request = urllib.request.Request(
+                f"http://speaches:8000/v1/models/{model}", method="POST"
+            )
+            urllib.request.urlopen(request, timeout=900).read()
+    restart: "no"
+
 volumes:
   postgres-data:
+  speaches-model-cache:

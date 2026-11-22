@@ -7,6 +7,7 @@ import com.theieltsspells.shared.application.ConflictException;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
 import com.theieltsspells.shared.SpeakingBandScorePolicy;
 import com.theieltsspells.testing.application.dto.AdminSpeakingEvaluationResponse;
+import com.theieltsspells.testing.application.dto.SpeakingAiAnalytics;
 import com.theieltsspells.testing.application.dto.ReviewSpeakingEvaluationRequest;
 import com.theieltsspells.testing.application.dto.SpeakingAiEntitlementResponse;
 import com.theieltsspells.testing.application.dto.UpdateSpeakingAiEntitlementRequest;
@@ -20,6 +21,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -29,6 +31,7 @@ public class SpeakingEvaluationAdminService {
     private final JdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
     private final com.theieltsspells.notification.WritingNotificationService notifications;
+    private final SpeakingAudioService audioService;
 
     public List<AdminSpeakingEvaluationResponse> list() {
         return list(null, true);
@@ -58,6 +61,12 @@ public class SpeakingEvaluationAdminService {
                 globalScope ? new Object[]{id} : new Object[]{id, teacherId});
         if (values.isEmpty()) throw new ResourceNotFoundException("Không tìm thấy bài Speaking cần chấm");
         return values.getFirst();
+    }
+
+    public SpeakingAudioService.AudioContent openAudio(UUID id, String questionKey, UUID teacherId,
+                                                       boolean globalScope) {
+        var evaluation = get(id, teacherId, globalScope);
+        return audioService.open(evaluation.attemptId(), questionKey);
     }
 
     @Transactional
@@ -157,7 +166,8 @@ public class SpeakingEvaluationAdminService {
                   evaluation.transcript,
                   (select coalesce(jsonb_agg(jsonb_build_object(
                     'questionKey', response.question_key,
-                    'audioUrl', response.answer->>'audioUrl',
+                    'stored', jsonb_exists(response.answer, 'storageKey'),
+                    'legacyAudioUrl', response.answer->>'audioUrl',
                     'transcript', response.answer->>'transcript') order by response.answered_at), '[]'::jsonb)::text
                    from public.test_attempt_responses response
                    where response.attempt_id=evaluation.attempt_id and response.question_type='SPEAKING_QUESTION') segments,
@@ -166,6 +176,7 @@ public class SpeakingEvaluationAdminService {
                   evaluation.pronunciation_band, evaluation.fluency_feedback, evaluation.lexical_feedback,
                   evaluation.grammar_feedback, evaluation.pronunciation_feedback,
                   evaluation.strengths::text ai_strengths, evaluation.improvements::text ai_improvements,
+                  evaluation.speech_metrics::text speech_metrics, evaluation.answer_upgrades::text answer_upgrades,
                   evaluation.teacher_status, evaluation.overall_band_teacher,
                   evaluation.fluency_band_teacher, evaluation.lexical_band_teacher,
                   evaluation.grammar_band_teacher, evaluation.pronunciation_band_teacher,
@@ -182,17 +193,24 @@ public class SpeakingEvaluationAdminService {
     }
 
     private AdminSpeakingEvaluationResponse map(java.sql.ResultSet rs, int ignored) throws java.sql.SQLException {
+        UUID evaluationId = rs.getObject("id", UUID.class);
         var criteria = new LinkedHashMap<String, AdminSpeakingEvaluationResponse.Criterion>();
         criteria.put("fluency_coherence", criterion(rs, "fluency"));
         criteria.put("lexical_resource", criterion(rs, "lexical"));
         criteria.put("grammatical_range_accuracy", criterion(rs, "grammar"));
         criteria.put("pronunciation", criterion(rs, "pronunciation"));
-        return new AdminSpeakingEvaluationResponse(rs.getObject("id", UUID.class),
+        var segments = segments(rs.getString("segments"), evaluationId);
+        String audioUrl = segments.stream().map(AdminSpeakingEvaluationResponse.Segment::audioUrl)
+                .filter(value -> value != null && !value.isBlank()).findFirst().orElse(rs.getString("audio_url"));
+        return new AdminSpeakingEvaluationResponse(evaluationId,
                 rs.getObject("attempt_id", UUID.class), rs.getObject("student_id", UUID.class),
                 rs.getString("student_name"), rs.getString("test_title"), rs.getString("question_key"),
-                rs.getString("audio_url"), rs.getString("transcript"), segments(rs.getString("segments")), rs.getString("ai_status"),
+                audioUrl, rs.getString("transcript"), segments, rs.getString("ai_status"),
                 rs.getBigDecimal("overall_band"), criteria, strings(rs.getString("ai_strengths")),
-                strings(rs.getString("ai_improvements")), rs.getString("teacher_status"),
+                strings(rs.getString("ai_improvements")),
+                speechMetricsJson(rs.getString("speech_metrics")),
+                answerUpgradesJson(rs.getString("answer_upgrades")),
+                rs.getString("teacher_status"),
                 rs.getBigDecimal("overall_band_teacher"), rs.getString("teacher_feedback"),
                 strings(rs.getString("teacher_strengths")), strings(rs.getString("teacher_improvements")),
                 rs.getObject("reviewed_at", java.time.OffsetDateTime.class),
@@ -237,13 +255,29 @@ public class SpeakingEvaluationAdminService {
         try { return objectMapper.readValue(value, new TypeReference<>() { }); }
         catch (Exception ignored) { return List.of(); }
     }
-    private List<AdminSpeakingEvaluationResponse.Segment> segments(String value) {
+    private SpeakingAiAnalytics.SpeechMetrics speechMetricsJson(String value) {
+        if (value == null || value.isBlank() || "{}".equals(value.trim())) return SpeakingAiAnalytics.SpeechMetrics.empty();
+        try { return objectMapper.readValue(value, SpeakingAiAnalytics.SpeechMetrics.class); }
+        catch (Exception ignored) { return SpeakingAiAnalytics.SpeechMetrics.empty(); }
+    }
+    private List<SpeakingAiAnalytics.AnswerUpgrade> answerUpgradesJson(String value) {
+        if (value == null || value.isBlank()) return List.of();
+        try { return objectMapper.readValue(value, new TypeReference<>() { }); }
+        catch (Exception ignored) { return List.of(); }
+    }
+    private List<AdminSpeakingEvaluationResponse.Segment> segments(String value, UUID evaluationId) {
         try {
             List<java.util.Map<String, Object>> rows = objectMapper.readValue(value, new TypeReference<>() {});
-            return rows.stream().map(row -> new AdminSpeakingEvaluationResponse.Segment(
-                    String.valueOf(row.getOrDefault("questionKey", "")),
-                    row.get("audioUrl") == null ? null : row.get("audioUrl").toString(),
-                    row.get("transcript") == null ? null : row.get("transcript").toString())).toList();
+            return rows.stream().map(row -> {
+                String questionKey = String.valueOf(row.getOrDefault("questionKey", ""));
+                String audioUrl = Boolean.TRUE.equals(row.get("stored"))
+                        ? "/admin/speaking-evaluations/" + evaluationId + "/audio/"
+                            + org.springframework.web.util.UriUtils.encodePathSegment(
+                                questionKey, java.nio.charset.StandardCharsets.UTF_8)
+                        : row.get("legacyAudioUrl") == null ? null : row.get("legacyAudioUrl").toString();
+                return new AdminSpeakingEvaluationResponse.Segment(questionKey, audioUrl,
+                        row.get("transcript") == null ? null : row.get("transcript").toString());
+            }).toList();
         } catch (Exception ignored) { return List.of(); }
     }
     private String blankToNull(String value) { return value == null || value.isBlank() ? null : value.trim(); }

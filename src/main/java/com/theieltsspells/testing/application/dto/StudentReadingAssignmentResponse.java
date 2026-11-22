@@ -19,6 +19,8 @@ public record StudentReadingAssignmentResponse(
         OffsetDateTime closesAt,
         short maxAttempts,
         int attemptsUsed,
+        boolean completedAttempt,
+        boolean evidenceReplacement,
         Integer durationSeconds,
         OffsetDateTime activeAttemptExpiresAt
 ) {

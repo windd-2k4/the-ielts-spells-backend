@@ -1,8 +1,8 @@
-package com.theieltsspells.writingevaluation.application.dto;
+package com.theieltsspells.shared.application.dto;
 
 import jakarta.validation.constraints.Size;
 
-/** Portable inline correction/comment metadata shared by management and student views. */
+/** Portable inline correction/comment metadata shared by Writing delivery and evaluation. */
 public record WritingTeacherAnnotation(
         String id,
         Integer start,

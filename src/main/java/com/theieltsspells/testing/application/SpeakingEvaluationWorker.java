@@ -86,14 +86,17 @@ public class SpeakingEvaluationWorker {
                 update public.speaking_evaluations set status='AI_COMPLETED', overall_band=?,
                   fluency_band=?, lexical_band=?, grammar_band=?, pronunciation_band=?,
                   fluency_feedback=?, lexical_feedback=?, grammar_feedback=?, pronunciation_feedback=?,
-                  strengths=cast(? as jsonb), improvements=cast(? as jsonb), model_provider=?, model_name=?,
-                  processing_ms=?, error_message=null, processing_token=null, processing_started_at=null,
+                  strengths=cast(? as jsonb), improvements=cast(? as jsonb),
+                  speech_metrics=cast(? as jsonb), answer_upgrades=cast(? as jsonb),
+                  model_provider=?, model_name=?, processing_ms=?, error_message=null,
+                  processing_token=null, processing_started_at=null,
                   ai_completed_at=now(), updated_at=now()
                 where id=? and status='PROCESSING' and processing_token=?
                 """, value.overall(), value.fluency().band(), value.lexical().band(), value.grammar().band(),
                 value.pronunciation().band(), value.fluency().feedback(), value.lexical().feedback(),
                 value.grammar().feedback(), value.pronunciation().feedback(), json(value.strengths()),
-                json(value.improvements()), value.provider(), value.model(), processingMs, source.id(), source.token());
+                json(value.improvements()), json(value.speechMetrics()), json(value.answerUpgrades()),
+                value.provider(), value.model(), processingMs, source.id(), source.token());
         if (changed == 1) notifications.speakingCompleted(source.id(), false);
     }
 

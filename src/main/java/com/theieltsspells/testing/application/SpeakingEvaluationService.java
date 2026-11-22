@@ -28,15 +28,14 @@ public class SpeakingEvaluationService {
         String transcript = responses.stream().filter(value -> value.transcript() != null && !value.transcript().isBlank())
                 .map(value -> value.questionKey() + ": " + value.transcript().trim())
                 .reduce((left, right) -> left + "\n\n" + right).orElse("");
-        String firstAudio = responses.stream().map(ResponseSource::audioUrl)
-                .filter(value -> value != null && !value.isBlank()).findFirst().orElse(null);
         jdbc.update("""
-                insert into public.speaking_evaluations(attempt_id, student_id, question_key, audio_url,
+                insert into public.speaking_evaluations(attempt_id, student_id, question_key,
                   transcript, status, rubric_version, prompt_version)
-                values (?, ?, ?, ?, ?, 'NOT_ELIGIBLE', 'ielts-speaking-public-v1', 'speaking-evaluator-v2')
+                values (?, ?, ?, ?, 'NOT_ELIGIBLE', ?, ?)
                 on conflict (attempt_id, question_key) do update set transcript=excluded.transcript,
-                  audio_url=excluded.audio_url, updated_at=now()
-                """, attemptId, studentId, ATTEMPT_KEY, firstAudio, transcript);
+                  audio_url=null, updated_at=now()
+                """, attemptId, studentId, ATTEMPT_KEY, transcript,
+                SpeakingAiEvaluator.RUBRIC_VERSION, SpeakingAiEvaluator.PROMPT_VERSION);
     }
 
     @Transactional
@@ -95,20 +94,29 @@ public class SpeakingEvaluationService {
 
     public List<ResponseSource> responseSources(UUID attemptId) {
         return jdbc.query("""
-                select question_key, answer::text from public.test_attempt_responses
-                where attempt_id=? and question_type='SPEAKING_QUESTION' order by answered_at, question_key
+                select response.question_key, response.answer::text,
+                  asset.duration_ms
+                from public.test_attempt_responses response
+                left join public.speaking_audio_assets asset
+                  on asset.storage_key=response.answer->>'storageKey'
+                 and asset.attempt_id=response.attempt_id
+                 and asset.question_key=response.question_key
+                where response.attempt_id=? and response.question_type='SPEAKING_QUESTION'
+                order by response.answered_at, response.question_key
                 """, (rs, ignored) -> {
             try {
                 Map<String, Object> answer = objectMapper.readValue(rs.getString("answer"), new TypeReference<>() {});
                 return new ResponseSource(rs.getString("question_key"), text(answer.get("transcript")),
-                        text(answer.get("audioUrl")));
+                        text(answer.get("storageKey")), text(answer.get("audioUrl")),
+                        rs.getObject("duration_ms", Integer.class));
             } catch (Exception exception) {
-                return new ResponseSource(rs.getString("question_key"), null, null);
+                return new ResponseSource(rs.getString("question_key"), null, null, null, null);
             }
         }, attemptId);
     }
 
     private String text(Object value) { return value == null || value.toString().isBlank() ? null : value.toString(); }
-    public record ResponseSource(String questionKey, String transcript, String audioUrl) {}
+    public record ResponseSource(String questionKey, String transcript, String storageKey,
+                                 String legacyAudioUrl, Integer durationMs) {}
     private record Entitlement(boolean unlimited, Integer monthlyLimit) {}
 }

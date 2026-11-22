@@ -21,6 +21,8 @@ public record AdminSpeakingEvaluationResponse(
         Map<String, Criterion> criteria,
         List<String> aiStrengths,
         List<String> aiImprovements,
+        SpeakingAiAnalytics.SpeechMetrics speechMetrics,
+        List<SpeakingAiAnalytics.AnswerUpgrade> answerUpgrades,
         String teacherStatus,
         BigDecimal overallBandTeacher,
         String teacherFeedback,

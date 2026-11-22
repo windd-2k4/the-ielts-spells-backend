@@ -312,7 +312,7 @@ class WritingDeliveryIntegrationTest {
                 List.of("Develop comparisons"), true,
                 "Edited teacher version with a clearer comparison.",
                 "<p><strong>Edited teacher version</strong> with a clearer comparison.</p><script>alert(1)</script>",
-                List.of(new com.theieltsspells.writingevaluation.application.dto.WritingTeacherAnnotation(
+                List.of(new com.theieltsspells.shared.application.dto.WritingTeacherAnnotation(
                         "annotation-1", 0, 12, "A newer answer", "The response", "Use a precise opening", "task_achievement", "REPLACE", "SUGGESTION"))), reviewerId);
 
         var result = writingDeliveryService.getResult(attempt.attemptId(), studentId);

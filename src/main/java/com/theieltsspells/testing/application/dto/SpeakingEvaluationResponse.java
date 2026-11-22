@@ -16,6 +16,8 @@ public record SpeakingEvaluationResponse(
         Map<String, String> criteriaFeedback,
         List<String> strengths,
         List<String> improvements,
+        SpeakingAiAnalytics.SpeechMetrics speechMetrics,
+        List<SpeakingAiAnalytics.AnswerUpgrade> answerUpgrades,
         OffsetDateTime evaluatedAt,
         String teacherStatus,
         BigDecimal overallBandTeacher,

@@ -3,7 +3,6 @@ package com.theieltsspells.progress.application;
 import com.theieltsspells.curriculum.application.ClassActivityQueryService;
 import com.theieltsspells.curriculum.domain.ClassActivity;
 import com.theieltsspells.curriculum.domain.ActivityChecklistItem;
-import com.theieltsspells.curriculum.infrastructure.persistence.ActivityChecklistItemRepository;
 import com.theieltsspells.progress.application.dto.ActivityAttemptResponse;
 import com.theieltsspells.progress.application.dto.ActivityChecklistItemResponse;
 import com.theieltsspells.progress.application.dto.AttemptChecklistResultResponse;
@@ -37,7 +36,6 @@ import java.util.stream.Collectors;
 public class ClassProgressQueryService {
     private final ClassActivityQueryService classActivities;
     private final StudentActivityAttemptRepository attempts;
-    private final ActivityChecklistItemRepository checklistItems;
     private final AttemptChecklistResultRepository checklistResults;
     private final ActivityEvidenceRepository evidence;
     private final JdbcTemplate jdbc;
@@ -187,8 +185,8 @@ public class ClassProgressQueryService {
                                 latest -> latest.orElseThrow())))
                 .values().stream().toList());
         var learningActivityIds = activities.stream().map(ClassActivity::getActivityId).toList();
-        Map<UUID, List<ActivityChecklistItem>> checklistByActivity = checklistItems
-                .findByActivityIdInOrderByDisplayOrder(learningActivityIds).stream()
+        Map<UUID, List<ActivityChecklistItem>> checklistByActivity = classActivities
+                .checklistForActivities(learningActivityIds).stream()
                 .collect(Collectors.groupingBy(ActivityChecklistItem::getActivityId));
         var allAttempts = attemptsByActivity.values().stream().flatMap(List::stream).toList();
         var attemptIds = allAttempts.stream().map(StudentActivityAttempt::getId).toList();

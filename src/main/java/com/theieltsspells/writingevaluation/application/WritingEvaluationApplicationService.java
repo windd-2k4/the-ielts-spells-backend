@@ -14,7 +14,7 @@ import com.theieltsspells.writingevaluation.application.dto.WritingAiEntitlement
 import com.theieltsspells.writingevaluation.application.dto.WritingEvaluationFilterOptionsResponse;
 import com.theieltsspells.writingevaluation.application.dto.WritingEvaluationResponse;
 import com.theieltsspells.writingevaluation.application.dto.WritingCalibrationResponse;
-import com.theieltsspells.writingevaluation.application.dto.WritingTeacherAnnotation;
+import com.theieltsspells.shared.application.dto.WritingTeacherAnnotation;
 import com.theieltsspells.writingevaluation.application.dto.WritingTeacherDraftRequest;
 import com.theieltsspells.shared.web.PageResponse;
 import lombok.RequiredArgsConstructor;
@@ -182,8 +182,8 @@ public class WritingEvaluationApplicationService {
                 + "where newer.test_assignment_id=attempt.test_assignment_id and newer.student_id=attempt.student_id "
                 + "and newer.attempt_no > attempt.attempt_no))");
         if (!globalScope) {
-            where.append(" and exists (select 1 from public.course_teachers teacher_scope "
-                    + "where teacher_scope.course_id=assignment.course_id and teacher_scope.teacher_id=?)");
+            where.append(" and (attempt.attempt_origin='SELF_PRACTICE' or exists (select 1 from public.course_teachers teacher_scope "
+                    + "where teacher_scope.course_id=assignment.course_id and teacher_scope.teacher_id=?))");
             parameters.add(teacherId);
         }
         Long total = jdbc.queryForObject("select count(*)" + fromSql() + where, Long.class, parameters.toArray());
@@ -233,8 +233,8 @@ public class WritingEvaluationApplicationService {
                 + "and newer.student_id=attempt.student_id "
                 + "and newer.attempt_no > attempt.attempt_no))";
         if (!globalScope) {
-            countScope += " and exists (select 1 from public.course_teachers teacher_scope "
-                    + "where teacher_scope.course_id=course.id and teacher_scope.teacher_id=?)";
+            countScope += " and (attempt.attempt_origin='SELF_PRACTICE' or exists (select 1 from public.course_teachers teacher_scope "
+                    + "where teacher_scope.course_id=course.id and teacher_scope.teacher_id=?))";
         }
         var counts = jdbc.queryForMap("""
                 select count(*) total_count,
@@ -255,8 +255,8 @@ public class WritingEvaluationApplicationService {
     }
 
     public WritingEvaluationResponse get(UUID id, UUID teacherId, boolean globalScope) {
-        String scope = globalScope ? "" : " and exists (select 1 from public.course_teachers teacher_scope "
-                + "where teacher_scope.course_id=assignment.course_id and teacher_scope.teacher_id=?)";
+        String scope = globalScope ? "" : " and (attempt.attempt_origin='SELF_PRACTICE' or exists (select 1 from public.course_teachers teacher_scope "
+                + "where teacher_scope.course_id=assignment.course_id and teacher_scope.teacher_id=?))";
         var parameters = globalScope ? new Object[]{id} : new Object[]{id, teacherId};
         var values = jdbc.query(selectSql() + " where evaluation.id=?" + scope, this::map, parameters);
         if (values.isEmpty()) throw new ResourceNotFoundException("Không tìm thấy bài Writing cần chấm");

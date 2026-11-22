@@ -1,6 +1,7 @@
 package com.theieltsspells.testing.application;
 
 import com.theieltsspells.academic.application.AcademicMembershipService;
+import com.theieltsspells.academic.domain.ClassSession;
 import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.application.ConflictException;
 import com.theieltsspells.shared.persistence.enums.SkillType;
@@ -27,6 +28,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -542,6 +544,32 @@ class ReadingPublishGateIntegrationTest {
         @SuppressWarnings("unchecked")
         var questions = (List<Map<String, Object>>) groups.getFirst().get("questions");
         assertFalse(questions.getFirst().containsKey("correctAnswers"));
+    }
+
+    @Test
+    void sessionScopedAssignmentDoesNotDoubleLinkCourseActivity() {
+        UUID courseId = createCourse();
+        UUID sessionId = UUID.randomUUID();
+        jdbc.update("""
+                insert into public.course_sessions(
+                  id, course_id, session_no, title, starts_at, ends_at, created_by
+                ) values (?, ?, 1, 'Reading session', now(), now() + interval '2 hours', ?)
+                """, sessionId, courseId, actorId);
+        when(membershipService.session(courseId, sessionId)).thenReturn(Optional.of(new ClassSession()));
+
+        var created = createSingleReading("Session-scoped assignment", createValidReadingBuilderContent(1, 5));
+        var published = testBankService.changeStatus(
+                created.id(), "PUBLISHED", created.draftRevision(), actorId, true);
+
+        var assignment = assignmentService.create(new CreateTestAssignmentRequest(
+                published.publishedVersion().id(), courseId, sessionId, null, null, (short) 1, "PRACTICE", 900, true
+        ), actorId, true);
+
+        assertEquals(sessionId, assignment.sessionId());
+        assertEquals(1, jdbc.queryForObject("""
+                select count(*) from public.course_activities
+                where test_assignment_id = ?
+                """, Integer.class, assignment.id()));
     }
 
     @Test

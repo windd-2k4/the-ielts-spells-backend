@@ -42,7 +42,8 @@ public class StudentProgressApplicationService {
                   attempt.comprehension_percent, attempt.error_analysis,
                   (select count(*) from public.activity_evidence ae where ae.attempt_id = attempt.id)::int evidence_count,
                   assignment.id assignment_id, assignment.title assignment_title,
-                  assignment.description assignment_description, assignment.due_at assignment_due_at,
+                  assignment.description assignment_description, assignment.assignment_type,
+                  coalesce(test_assignment.closes_at, ca.due_at) assignment_due_at,
                   assignment.opens_at assignment_opens_at, assignment.status::text assignment_status,
                   assignment.late_policy, assignment.late_grace_minutes,
                   assignment.allow_resubmission, attempt.is_late late,
@@ -53,6 +54,7 @@ public class StudentProgressApplicationService {
                     else student_extension.extension_due_at
                   end extension_due_at,
                   greatest(
+                    coalesce(test_assignment.closes_at, ca.due_at),
                     assignment.due_at + make_interval(mins => coalesce(assignment.late_grace_minutes, 0)),
                     submission.extension_due_at,
                     student_extension.extension_due_at
@@ -70,6 +72,7 @@ public class StudentProgressApplicationService {
                 join public.learning_activities la on la.id = ca.activity_id
                 join public.course_sessions cs on cs.id = ca.session_id
                 left join public.assignments assignment on assignment.id = ca.assignment_id
+                left join public.test_assignments test_assignment on test_assignment.id = ca.test_assignment_id
                 left join lateral (
                   select saa.* from public.student_activity_attempts saa
                   where saa.class_activity_id = ca.id and saa.student_id = ?
@@ -90,6 +93,8 @@ public class StudentProgressApplicationService {
                   limit 1
                 ) review on true
                 where ca.course_id = ? and ca.is_published = true
+                  and ca.test_assignment_id is not null
+                  and test_assignment.archived_at is null
                 order by cs.session_no, la.display_order
                 """, (rs, row) -> {
             UUID assignmentId = rs.getObject("assignment_id", UUID.class);
@@ -130,6 +135,7 @@ public class StudentProgressApplicationService {
                 assignmentId,
                 rs.getString("assignment_title"),
                 rs.getString("assignment_description"),
+                rs.getString("assignment_type"),
                 rs.getObject("assignment_due_at", OffsetDateTime.class),
                 upper(rs.getString("late_policy")),
                 rs.getInt("late_grace_minutes"),
@@ -161,7 +167,7 @@ public class StudentProgressApplicationService {
                 task.attemptId(), task.source(), task.status(), task.score(), task.maxScore(),
                 task.durationSeconds(), task.comprehensionPercent(), task.errorAnalysis(), task.evidenceCount(),
                 checklist(task.activityId(), task.attemptId()), task.assignmentId(), task.assignmentTitle(),
-                task.assignmentDescription(), task.assignmentDueAt(), task.latePolicy(), task.lateGraceMinutes(),
+                task.assignmentDescription(), task.assignmentType(), task.assignmentDueAt(), task.latePolicy(), task.lateGraceMinutes(),
                 task.late(), task.extensionDueAt(), task.effectiveDueAt(),
                 task.canEdit(), task.canSubmit(), task.lockReason(),
                 task.reflectionDueAt(), task.allowResubmission(), task.submissionId(),

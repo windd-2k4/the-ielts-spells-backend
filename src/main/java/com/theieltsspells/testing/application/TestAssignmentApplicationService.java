@@ -3,6 +3,7 @@ package com.theieltsspells.testing.application;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.theieltsspells.academic.application.AcademicMembershipService;
+import com.theieltsspells.progress.api.CourseActivityCreationFacade;
 import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.application.ConflictException;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
@@ -30,6 +31,7 @@ public class TestAssignmentApplicationService {
     private final ObjectMapper objectMapper;
     private final AcademicMembershipService memberships;
     private final ReadingVersionMaterializer readingVersionMaterializer;
+    private final CourseActivityCreationFacade courseActivities;
 
     @Transactional
     public TestAssignmentResponse create(CreateTestAssignmentRequest request, UUID actor, boolean moderator) {
@@ -78,7 +80,7 @@ public class TestAssignmentApplicationService {
             throw new ConflictException("Phiên bản đề này đã được giao cho khóa học");
         }
         if (request.sessionId() != null) {
-            linkToCourseActivity(id, request.courseId(), request.sessionId(), version.skill().name());
+            linkToCourseActivity(id, request.courseId(), request.sessionId(), version, request.closesAt(), actor);
         }
         return get(id);
     }
@@ -164,30 +166,41 @@ public class TestAssignmentApplicationService {
         }
     }
 
-    /**
-     * Preserve the existing Course -> Session -> CourseActivity -> TestAssignment
-     * graph when a matching published activity already exists. The attempt tables
-     * remain the only evidence source; this update only attaches the assignment.
-     */
-    private void linkToCourseActivity(UUID assignmentId, UUID courseId, UUID sessionId, String skill) {
+    /** Keep one CourseActivity per assigned test so online attempts, replacement evidence and checklist progress share the same task. */
+    private void linkToCourseActivity(UUID assignmentId, UUID courseId, UUID sessionId,
+                                      VersionForAssignment version, OffsetDateTime dueAt, UUID actor) {
+        // V084 creates this link from the database trigger during the assignment insert.
+        // Keep the application path idempotent for older databases and for direct service calls;
+        // otherwise the fallback below can create a second activity and violate the unique link.
+        var linkedActivityIds = jdbc.query("""
+                select id
+                from public.course_activities
+                where id is not null and test_assignment_id = ?
+                limit 1
+                """, (rs, ignored) -> rs.getObject("id", UUID.class), assignmentId);
+        if (!linkedActivityIds.isEmpty()) {
+            return;
+        }
         var activityIds = jdbc.query("""
                 select activity.id
                 from public.course_activities activity
                 join public.learning_activities learning on learning.id = activity.activity_id
                 where activity.course_id = ? and activity.session_id = ?
-                  and activity.is_published = true and activity.test_assignment_id is null
+                  and activity.is_published = true
+                  and activity.assignment_id is null and activity.test_assignment_id is null
                   and learning.skill = cast(? as public.skill_type)
                 order by activity.created_at, activity.id
                 limit 1
-                """, (rs, ignored) -> rs.getObject("id", UUID.class), courseId, sessionId, skill);
-        if (!activityIds.isEmpty()) {
-            jdbc.update("""
-                    update public.course_activities
-                    set test_assignment_id = ?, opens_at = coalesce(opens_at, (select opens_at from public.test_assignments where id = ?)),
-                        due_at = coalesce(due_at, (select closes_at from public.test_assignments where id = ?)), updated_at = now()
-                    where id = ? and test_assignment_id is null
-                    """, assignmentId, assignmentId, assignmentId, activityIds.getFirst());
-        }
+                """, (rs, ignored) -> rs.getObject("id", UUID.class), courseId, sessionId, version.skill().name());
+        UUID activityId = activityIds.isEmpty()
+                ? courseActivities.create(courseId, sessionId, version.title(), version.skill(), dueAt, actor)
+                : activityIds.getFirst();
+        jdbc.update("""
+                update public.course_activities
+                set test_assignment_id = ?, opens_at = coalesce(opens_at, (select opens_at from public.test_assignments where id = ?)),
+                    due_at = coalesce(due_at, (select closes_at from public.test_assignments where id = ?)), updated_at = now()
+                where id = ? and test_assignment_id is null
+                """, assignmentId, assignmentId, assignmentId, activityId);
     }
 
     private String mode(String value) {

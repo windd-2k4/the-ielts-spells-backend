@@ -1,7 +1,7 @@
 package com.theieltsspells.identity.presentation;
 
 import com.theieltsspells.identity.application.StaffInvitationApplicationService;
-import com.theieltsspells.identity.application.StaffAvatarApplicationService;
+import com.theieltsspells.identity.application.ProfileAvatarApplicationService;
 import com.theieltsspells.identity.application.dto.*;
 import com.theieltsspells.identity.domain.InvitationStatus;
 import com.theieltsspells.shared.web.PageResponse;
@@ -25,7 +25,7 @@ import java.util.*;
 @RequiredArgsConstructor
 public class StaffInvitationController {
     private final StaffInvitationApplicationService service;
-    private final StaffAvatarApplicationService avatarService;
+    private final ProfileAvatarApplicationService avatarService;
 
     @PostMapping("/api/v1/admin/staff/invitations")
     @PreAuthorize("@permissionPolicy.has(authentication, 'identity.staff.manage')")
@@ -38,7 +38,7 @@ public class StaffInvitationController {
     @PostMapping(value = "/api/v1/admin/staff/avatars", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("@permissionPolicy.has(authentication, 'identity.staff.manage')")
     public StaffAvatarUploadResponse uploadAvatar(@RequestParam MultipartFile file) {
-        String filename = avatarService.upload(file);
+        String filename = avatarService.uploadStaff(file);
         String avatarPath = ServletUriComponentsBuilder.fromCurrentContextPath()
                 .path("/api/v1/public/staff-avatars/{filename}")
                 .buildAndExpand(filename)
@@ -48,7 +48,7 @@ public class StaffInvitationController {
 
     @GetMapping("/api/v1/public/staff-avatars/{filename}")
     public ResponseEntity<InputStreamResource> avatar(@PathVariable String filename) {
-        var content = avatarService.open(filename);
+        var content = avatarService.openStaff(filename);
         return ResponseEntity.ok().contentType(content.mediaType())
                 .body(new InputStreamResource(content.inputStream()));
     }
