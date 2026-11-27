@@ -1,0 +1,14 @@
+services:
+  speaches:
+    environment:
+      SSL_CERT_FILE: /opt/windows-ca/windows-ca-bundle.pem
+      REQUESTS_CA_BUNDLE: /opt/windows-ca/windows-ca-bundle.pem
+    volumes:
+      - ./runtime/certs/windows-ca-bundle.pem:/opt/windows-ca/windows-ca-bundle.pem:ro
+
+  speaches-model-init:
+    environment:
+      SSL_CERT_FILE: /opt/windows-ca/windows-ca-bundle.pem
+      REQUESTS_CA_BUNDLE: /opt/windows-ca/windows-ca-bundle.pem
+    volumes:
+      - ./runtime/certs/windows-ca-bundle.pem:/opt/windows-ca/windows-ca-bundle.pem:ro

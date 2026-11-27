@@ -185,6 +185,35 @@ Lệnh `speaches-model-init` tải một lần hai model STT/TTS vào volume
 `speaches-model-cache`; các lần chạy sau tái sử dụng cache này. Hãy để lệnh hoàn tất
 trước khi khởi động backend lần đầu.
 
+Nếu Windows dùng antivirus/proxy để kiểm tra HTTPS (ví dụ Avast Web Shield),
+container Linux sẽ không tự tin cậy CA của Windows. Xuất **chỉ public CA** rồi chạy
+Compose override; không tắt kiểm tra TLS:
+
+```powershell
+.\scripts\export-windows-ca-bundle.ps1
+docker compose -f compose.yaml -f compose.windows-ca.yaml up -d --force-recreate speaches
+docker compose -f compose.yaml -f compose.windows-ca.yaml run --rm speaches-model-init
+```
+
+Bundle sinh ra nằm trong `runtime/certs` và đã được bỏ khỏi Git. Trước khi mở
+Part 2, đo độ trễ first/warm của cả TTS và STT:
+
+```powershell
+.\scripts\measure-speaches-latency.ps1
+```
+
+Probe chạy 5 mẫu, lưu báo cáo vào `runtime/metrics` và chỉ trả exit code `0` khi
+warm p95 TTS không quá 5 giây và warm p95 STT không quá 10 giây. First request
+được báo riêng để nhận diện thời gian nạp model, không bị trộn vào warm p95.
+Đoạn tổng hợp mặc định chỉ kiểm tra runtime và không thể bật `part2Ready`. Cổng
+Part 2 phải dùng một bản ghi WebM/WAV thật dài 60–120 giây, có accent mục tiêu:
+
+```powershell
+.\scripts\measure-speaches-latency.ps1 -InputAudioPath C:\path\to\part-2-sample.webm
+```
+Local Compose ép ONNX dùng CPU trong image `-cpu` thay vì thử CUDA rồi mới
+fallback.
+
 Container tạo database local với thông tin mặc định:
 
 | Thuộc tính | Giá trị |
@@ -227,6 +256,7 @@ Spring Boot tự đọc file `.env` ở thư mục gốc qua `application.yml`.
 | `DATABASE_USERNAME` | Tài khoản database | `ielts` |
 | `DATABASE_PASSWORD` | Mật khẩu database | `ielts` |
 | `PORT` | Cổng backend | `8080` |
+| `PUBLIC_API_BASE_URL` | URL công khai tùy chọn của API dùng cho ảnh đại diện; gồm `/api/v1`. Nếu bỏ trống, backend trả đường dẫn tương đối ổn định. | `http://localhost:8080/api/v1` |
 | `CORS_ALLOWED_ORIGINS` | Origin frontend được phép gọi API | `http://localhost:3000,http://localhost:5174` |
 
 ### Supabase Auth

@@ -6,6 +6,9 @@ target/
 .env.local
 logs/
 data/uploads/
+runtime/certs/*.pem
+runtime/metrics/*.json
 *.log
 /ielts-backend-staging.tar
+/deploy/*.tar.gz
 .DS_Store

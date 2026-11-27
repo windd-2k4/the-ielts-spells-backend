@@ -21,6 +21,7 @@ services:
       - "8000:8000"
     environment:
       WHISPER__COMPUTE_TYPE: int8
+      UNSTABLE_ORT_OPTS__EXCLUDE_PROVIDERS: '["TensorrtExecutionProvider","CUDAExecutionProvider"]'
     volumes:
       - speaches-model-cache:/home/ubuntu/.cache/huggingface/hub
     healthcheck:
