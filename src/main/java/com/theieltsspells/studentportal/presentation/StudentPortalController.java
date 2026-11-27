@@ -6,8 +6,10 @@ import com.theieltsspells.studentportal.application.dto.StudentCourseSessionResp
 import com.theieltsspells.studentportal.application.dto.StudentExamPlanResponse;
 import com.theieltsspells.studentportal.application.dto.StudentPortalOverviewResponse;
 import com.theieltsspells.studentportal.application.dto.StudentPortfolioResponse;
+import com.theieltsspells.studentportal.application.dto.StudentPreferencesResponse;
 import com.theieltsspells.studentportal.application.dto.StudentTargetBandResponse;
 import com.theieltsspells.studentportal.application.dto.UpdateStudentExamPlanRequest;
+import com.theieltsspells.studentportal.application.dto.UpdateStudentPreferencesRequest;
 import com.theieltsspells.studentportal.application.dto.UpdateStudentTargetBandRequest;
 import com.theieltsspells.identity.application.ProfileAvatarApplicationService;
 import com.theieltsspells.identity.application.StudentProfileApplicationService;
@@ -22,6 +24,7 @@ import com.theieltsspells.assignment.application.dto.ReflectionRequest;
 import com.theieltsspells.assignment.application.dto.StudentSubmissionRequest;
 import com.theieltsspells.assignment.application.dto.StudentSubmissionResponse;
 import com.theieltsspells.assignment.application.dto.StudentSubmissionRevisionResponse;
+import com.theieltsspells.shared.web.PublicApiUrlBuilder;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -46,7 +49,6 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.time.YearMonth;
 import java.nio.charset.StandardCharsets;
@@ -66,6 +68,7 @@ public class StudentPortalController {
     private final AssignmentApplicationService assignmentService;
     private final StudentProfileApplicationService profileService;
     private final ProfileAvatarApplicationService avatarService;
+    private final PublicApiUrlBuilder publicApiUrlBuilder;
 
     @GetMapping("/overview")
     @PreAuthorize("@permissionPolicy.has(authentication, 'identity.profile.self.read')")
@@ -83,6 +86,22 @@ public class StudentPortalController {
         return profileService.update(studentId(jwt), request.fullName(), request.phone());
     }
 
+    @GetMapping("/preferences")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'identity.profile.self.read')")
+    @Operation(summary = "Lấy tùy chọn hồ sơ, quyền riêng tư và luyện thi của học viên")
+    public StudentPreferencesResponse preferences(@AuthenticationPrincipal Jwt jwt) {
+        return service.preferences(studentId(jwt));
+    }
+
+    @PatchMapping("/preferences")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'identity.profile.self.update')")
+    @Operation(summary = "Cập nhật tùy chọn hồ sơ, quyền riêng tư và luyện thi của học viên")
+    public StudentPreferencesResponse updatePreferences(
+            @Valid @RequestBody UpdateStudentPreferencesRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        return service.updatePreferences(studentId(jwt), request);
+    }
+
     @PostMapping(value = "/profile/avatar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("@permissionPolicy.has(authentication, 'identity.profile.self.update')")
     @Operation(summary = "Học viên cập nhật ảnh đại diện")
@@ -90,10 +109,7 @@ public class StudentPortalController {
             @RequestParam("file") MultipartFile file,
             @AuthenticationPrincipal Jwt jwt) {
         String filename = avatarService.uploadStudent(file);
-        String avatarPath = ServletUriComponentsBuilder.fromCurrentContextPath()
-                .path("/api/v1/public/student-avatars/{filename}")
-                .buildAndExpand(filename)
-                .toUriString();
+        String avatarPath = publicApiUrlBuilder.url("/public/student-avatars/{filename}", filename);
         return profileService.updateAvatar(studentId(jwt), avatarPath);
     }
 

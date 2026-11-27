@@ -3,6 +3,8 @@ package com.theieltsspells.studentportal.application;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
+import com.theieltsspells.studentportal.application.dto.StudentPreferencesResponse;
+import com.theieltsspells.studentportal.application.dto.UpdateStudentPreferencesRequest;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 
@@ -203,5 +205,28 @@ class StudentPortalServiceTests {
         assertThat(result.noExamPlan()).isTrue();
         assertThat(result.plannedExamDate()).isNull();
         assertThat(result.learningSetupComplete()).isTrue();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void savesStudentPreferencesForCrossDeviceUse() {
+        UUID studentId = UUID.randomUUID();
+        when(jdbc.query(any(String.class), any(org.springframework.jdbc.core.RowMapper.class), eq(studentId)))
+                .thenReturn(List.of(new StudentPreferencesResponse(
+                        "", "", "vi", true, true, true, "READING", "md", true, true, false
+                )));
+        var request = new UpdateStudentPreferencesRequest(
+                "  Mục tiêu 7.0  ", "  Học đều mỗi ngày  ", "vi",
+                false, true, false, "LISTENING", "lg", true, false, true
+        );
+
+        var result = service.updatePreferences(studentId, request);
+
+        assertThat(result.headline()).isEqualTo("Mục tiêu 7.0");
+        assertThat(result.biography()).isEqualTo("Học đều mỗi ngày");
+        assertThat(result.defaultPracticeSkill()).isEqualTo("LISTENING");
+        verify(jdbc).update(any(String.class), eq(studentId), eq("Mục tiêu 7.0"),
+                eq("Học đều mỗi ngày"), eq("vi"), eq(false), eq(true), eq(false),
+                eq("LISTENING"), eq("lg"), eq(true), eq(false), eq(true));
     }
 }

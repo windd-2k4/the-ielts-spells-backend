@@ -9,7 +9,9 @@ import com.theieltsspells.studentportal.application.dto.StudentCourseSessionResp
 import com.theieltsspells.studentportal.application.dto.StudentExamPlanResponse;
 import com.theieltsspells.studentportal.application.dto.StudentPortalOverviewResponse;
 import com.theieltsspells.studentportal.application.dto.StudentPortfolioResponse;
+import com.theieltsspells.studentportal.application.dto.StudentPreferencesResponse;
 import com.theieltsspells.studentportal.application.dto.StudentTargetBandResponse;
+import com.theieltsspells.studentportal.application.dto.UpdateStudentPreferencesRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -45,6 +47,81 @@ public class StudentPortalService {
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("Không thể đọc dữ liệu tổng quan học viên", exception);
         }
+    }
+
+    public StudentPreferencesResponse preferences(UUID studentId) {
+        return jdbc.query("""
+                select coalesce(preferences.headline, '') headline,
+                  coalesce(preferences.biography, '') biography,
+                  coalesce(preferences.language, 'vi') language,
+                  coalesce(preferences.show_profile_to_class, true) show_profile_to_class,
+                  coalesce(preferences.show_leaderboard_score, true) show_leaderboard_score,
+                  coalesce(preferences.allow_teacher_feedback_share, true) allow_teacher_feedback_share,
+                  coalesce(preferences.default_practice_skill, 'READING') default_practice_skill,
+                  coalesce(preferences.exam_font_size, 'md') exam_font_size,
+                  coalesce(preferences.auto_save_answers, true) auto_save_answers,
+                  coalesce(preferences.countdown_warning, true) countdown_warning,
+                  coalesce(preferences.focus_mode, false) focus_mode
+                from public.student_profiles student
+                left join public.student_portal_preferences preferences
+                  on preferences.student_id = student.user_id
+                where student.user_id = ?
+                """, (rs, row) -> new StudentPreferencesResponse(
+                rs.getString("headline"),
+                rs.getString("biography"),
+                rs.getString("language"),
+                rs.getBoolean("show_profile_to_class"),
+                rs.getBoolean("show_leaderboard_score"),
+                rs.getBoolean("allow_teacher_feedback_share"),
+                rs.getString("default_practice_skill"),
+                rs.getString("exam_font_size"),
+                rs.getBoolean("auto_save_answers"),
+                rs.getBoolean("countdown_warning"),
+                rs.getBoolean("focus_mode")
+        ), studentId).stream().findFirst()
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy học viên"));
+    }
+
+    @Transactional
+    public StudentPreferencesResponse updatePreferences(UUID studentId, UpdateStudentPreferencesRequest request) {
+        preferences(studentId);
+        var saved = new StudentPreferencesResponse(
+                request.headline() == null ? "" : request.headline().trim(),
+                request.biography() == null ? "" : request.biography().trim(),
+                request.language(),
+                request.showProfileToClass(),
+                request.showLeaderboardScore(),
+                request.allowTeacherFeedbackShare(),
+                request.defaultPracticeSkill(),
+                request.examFontSize(),
+                request.autoSaveAnswers(),
+                request.countdownWarning(),
+                request.focusMode()
+        );
+        jdbc.update("""
+                insert into public.student_portal_preferences(
+                  student_id, headline, biography, language, show_profile_to_class,
+                  show_leaderboard_score, allow_teacher_feedback_share, default_practice_skill,
+                  exam_font_size, auto_save_answers, countdown_warning, focus_mode, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+                on conflict (student_id) do update set
+                  headline = excluded.headline,
+                  biography = excluded.biography,
+                  language = excluded.language,
+                  show_profile_to_class = excluded.show_profile_to_class,
+                  show_leaderboard_score = excluded.show_leaderboard_score,
+                  allow_teacher_feedback_share = excluded.allow_teacher_feedback_share,
+                  default_practice_skill = excluded.default_practice_skill,
+                  exam_font_size = excluded.exam_font_size,
+                  auto_save_answers = excluded.auto_save_answers,
+                  countdown_warning = excluded.countdown_warning,
+                  focus_mode = excluded.focus_mode,
+                  updated_at = now()
+                """, studentId, saved.headline(), saved.biography(), saved.language(),
+                saved.showProfileToClass(), saved.showLeaderboardScore(), saved.allowTeacherFeedbackShare(),
+                saved.defaultPracticeSkill(), saved.examFontSize(), saved.autoSaveAnswers(),
+                saved.countdownWarning(), saved.focusMode());
+        return saved;
     }
 
     public List<StudentPortalOverviewResponse.DailyActivity> activity(UUID studentId, YearMonth month) {

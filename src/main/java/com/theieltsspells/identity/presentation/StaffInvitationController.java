@@ -5,6 +5,7 @@ import com.theieltsspells.identity.application.ProfileAvatarApplicationService;
 import com.theieltsspells.identity.application.dto.*;
 import com.theieltsspells.identity.domain.InvitationStatus;
 import com.theieltsspells.shared.web.PageResponse;
+import com.theieltsspells.shared.web.PublicApiUrlBuilder;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
@@ -17,7 +18,6 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.util.*;
 
@@ -26,6 +26,7 @@ import java.util.*;
 public class StaffInvitationController {
     private final StaffInvitationApplicationService service;
     private final ProfileAvatarApplicationService avatarService;
+    private final PublicApiUrlBuilder publicApiUrlBuilder;
 
     @PostMapping("/api/v1/admin/staff/invitations")
     @PreAuthorize("@permissionPolicy.has(authentication, 'identity.staff.manage')")
@@ -39,10 +40,7 @@ public class StaffInvitationController {
     @PreAuthorize("@permissionPolicy.has(authentication, 'identity.staff.manage')")
     public StaffAvatarUploadResponse uploadAvatar(@RequestParam MultipartFile file) {
         String filename = avatarService.uploadStaff(file);
-        String avatarPath = ServletUriComponentsBuilder.fromCurrentContextPath()
-                .path("/api/v1/public/staff-avatars/{filename}")
-                .buildAndExpand(filename)
-                .toUriString();
+        String avatarPath = publicApiUrlBuilder.url("/public/staff-avatars/{filename}", filename);
         return new StaffAvatarUploadResponse(avatarPath, filename);
     }
 
