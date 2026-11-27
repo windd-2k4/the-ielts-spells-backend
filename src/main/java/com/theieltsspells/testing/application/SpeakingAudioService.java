@@ -5,6 +5,7 @@ import com.theieltsspells.shared.application.ResourceNotFoundException;
 import com.theieltsspells.shared.storage.FileStorage;
 import com.theieltsspells.testing.application.dto.SpeakingAudioUploadResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -19,6 +20,7 @@ import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 @Transactional(readOnly = true)
 public class SpeakingAudioService {
     private final JdbcTemplate jdbc;
@@ -36,6 +38,7 @@ public class SpeakingAudioService {
 
     @Transactional
     public SpeakingAudioUploadResponse upload(UUID attemptId, String questionKey, MultipartFile file, UUID studentId) {
+        long started = System.nanoTime();
         if (questionKey == null || questionKey.isBlank() || questionKey.length() > 200) {
             throw new BusinessRuleException("Câu hỏi Speaking không hợp lệ");
         }
@@ -49,6 +52,9 @@ public class SpeakingAudioService {
                 values (?, ?, ?, ?, ?, ?, ?)
                 """, attemptId, studentId, questionKey.trim(), storageKey, inspection.mimeType(),
                 inspection.sizeBytes(), inspection.durationMs());
+        log.info("event=speaking_audio_upload attemptId={} questionKey={} uploadMs={} audioDurationMs={} sizeBytes={}",
+                attemptId, questionKey.trim(), (System.nanoTime() - started) / 1_000_000,
+                inspection.durationMs(), inspection.sizeBytes());
         return new SpeakingAudioUploadResponse(storageKey, audioPath(attemptId, questionKey.trim()),
                 inspection.sizeBytes(), inspection.durationMs());
     }
@@ -74,11 +80,10 @@ public class SpeakingAudioService {
     public AudioContent open(UUID attemptId, String questionKey) {
         var rows = jdbc.query("""
                 select asset.storage_key, asset.mime_type, asset.size_bytes
-                from public.test_attempt_responses response
-                join public.speaking_audio_assets asset
-                  on asset.storage_key=response.answer->>'storageKey' and asset.attempt_id=response.attempt_id
-                where response.attempt_id=? and response.question_key=?
-                  and response.question_type='SPEAKING_QUESTION'
+                from public.speaking_audio_assets asset
+                where asset.attempt_id=? and asset.question_key=?
+                order by asset.created_at desc
+                limit 1
                 """, (rs, ignored) -> new Asset(rs.getString("storage_key"), rs.getString("mime_type"),
                 rs.getLong("size_bytes")), attemptId, questionKey);
         if (rows.isEmpty()) throw new ResourceNotFoundException("Không tìm thấy bản ghi âm Speaking");

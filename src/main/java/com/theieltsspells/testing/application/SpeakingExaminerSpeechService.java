@@ -6,6 +6,7 @@ import com.theieltsspells.shared.storage.FileStorage;
 import com.theieltsspells.testing.infrastructure.speech.SpeachesSpeechClient;
 import com.theieltsspells.testing.infrastructure.speech.SpeechRuntimeProperties;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -22,6 +23,7 @@ import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 @Transactional(readOnly = true)
 public class SpeakingExaminerSpeechService {
     private final JdbcTemplate jdbc;
@@ -34,8 +36,17 @@ public class SpeakingExaminerSpeechService {
     private String storageBucket;
 
     public SpeachesSpeechClient.Transcription transcribe(String storageKey) {
+        return transcribeTimed(storageKey).transcription();
+    }
+
+    public TimedTranscription transcribeTimed(String storageKey) {
+        long readStarted = System.nanoTime();
         try (InputStream input = audioService.openStored(storageKey)) {
-            return speechClient.transcribe(input.readAllBytes());
+            byte[] bytes = input.readAllBytes();
+            long storageReadMs = elapsedMs(readStarted);
+            long sttStarted = System.nanoTime();
+            var transcription = speechClient.transcribe(bytes);
+            return new TimedTranscription(transcription, storageReadMs, elapsedMs(sttStarted));
         } catch (IOException exception) {
             throw new CodedApiException(HttpStatus.BAD_GATEWAY, "SPEECH_AUDIO_READ_FAILED",
                     "Không thể đọc bản ghi âm để nhận dạng giọng nói");
@@ -46,8 +57,12 @@ public class SpeakingExaminerSpeechService {
     public PromptAudio promptAudio(String prompt) {
         String cacheKey = sha256(properties.getTtsModel() + "\n" + properties.getTtsVoice() + "\n" + prompt.trim());
         var cached = find(cacheKey);
-        if (cached != null) return cached;
+        if (cached != null) {
+            log.debug("event=speaking_tts_cache_hit cacheKey={}", cacheKey);
+            return cached;
+        }
 
+        long started = System.nanoTime();
         var generated = speechClient.synthesize(prompt);
         String storageKey = "speaking-examiner/tts/" + cacheKey + "." + generated.extension();
         storage.storeBytesInBucket(storageBucket, storageKey, generated.bytes(), generated.contentType());
@@ -59,6 +74,8 @@ public class SpeakingExaminerSpeechService {
                 storageKey, generated.contentType(), generated.bytes().length);
         PromptAudio stored = find(cacheKey);
         if (stored == null) throw new IllegalStateException("Speaking examiner TTS cache insert failed");
+        log.info("event=speaking_tts_cache_miss cacheKey={} ttsProcessingMs={} sizeBytes={}",
+                cacheKey, elapsedMs(started), generated.bytes().length);
         return stored;
     }
 
@@ -104,7 +121,14 @@ public class SpeakingExaminerSpeechService {
         }
     }
 
+    private long elapsedMs(long started) {
+        return (System.nanoTime() - started) / 1_000_000;
+    }
+
     public record PromptAudio(String cacheKey, String storageKey, String mimeType, long sizeBytes) {}
 
     public record AudioContent(InputStream inputStream, String mimeType, long sizeBytes) {}
+
+    public record TimedTranscription(SpeachesSpeechClient.Transcription transcription,
+                                     long storageReadMs, long sttProcessingMs) {}
 }

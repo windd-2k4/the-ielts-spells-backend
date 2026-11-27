@@ -68,6 +68,7 @@ springdoc:
 
 app:
   student-app-url: ${STUDENT_APP_URL:http://localhost:3000}
+  public-api-base-url: ${PUBLIC_API_BASE_URL:}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
   access-approval:
@@ -88,6 +89,11 @@ app:
     daily-limit: ${WRITING_EVALUATION_DAILY_LIMIT:5}
   speaking-examiner:
     enabled: ${AI_SPEAKING_EXAMINER_ENABLED:false}
+    part-2-enabled: ${AI_SPEAKING_PART_2_ENABLED:false}
+    part-3-enabled: ${AI_SPEAKING_PART_3_ENABLED:false}
+    adaptive-follow-up-enabled: ${AI_SPEAKING_ADAPTIVE_FOLLOW_UP_ENABLED:true}
+    max-adaptive-follow-ups: ${AI_SPEAKING_MAX_ADAPTIVE_FOLLOW_UPS:2}
+    adaptive-follow-up-timeout-ms: ${AI_SPEAKING_ADAPTIVE_TIMEOUT_MS:6000}
     prompt-version: ${AI_SPEAKING_EXAMINER_PROMPT_VERSION:speaking-examiner-v1}
     rubric-version: ${AI_SPEAKING_EXAMINER_RUBRIC_VERSION:ielts-speaking-public-v1}
     feature-extractor-version: ${AI_SPEAKING_EXAMINER_FEATURE_EXTRACTOR_VERSION:unconfigured}
@@ -98,6 +104,7 @@ app:
     tts-voice: ${SPEECH_TTS_VOICE:bf_emma}
     connect-timeout: ${SPEECH_CONNECT_TIMEOUT:3s}
     read-timeout: ${SPEECH_READ_TIMEOUT:120s}
+    warmup-enabled: ${SPEECH_WARMUP_ENABLED:false}
   speaking-audio:
     storage-bucket: ${SPEAKING_AUDIO_STORAGE_BUCKET:speaking-audio-private}
     max-upload-bytes: ${SPEAKING_AUDIO_MAX_UPLOAD_BYTES:10485760}

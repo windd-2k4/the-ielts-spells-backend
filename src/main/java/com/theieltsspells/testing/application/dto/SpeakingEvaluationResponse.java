@@ -1,5 +1,6 @@
 package com.theieltsspells.testing.application.dto;
 
+import com.theieltsspells.testing.domain.SpeakingSessionVariant;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -8,6 +9,10 @@ import java.util.Map;
 public record SpeakingEvaluationResponse(
         String questionKey,
         String status,
+        SpeakingSessionVariant variant,
+        List<Integer> partsEvaluated,
+        boolean overallBandAvailable,
+        Map<String, BigDecimal> criteria,
         BigDecimal overallBand,
         BigDecimal fluencyBand,
         BigDecimal lexicalBand,

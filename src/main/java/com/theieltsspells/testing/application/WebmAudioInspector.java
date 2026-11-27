@@ -146,6 +146,11 @@ class WebmAudioInspector {
             int offset = cluster.start;
             while (offset < cluster.end) {
                 Element child = element(offset, cluster.end);
+                if (child.id == CLUSTER) {
+                    clusterTimestamp = 0;
+                    offset = child.start;
+                    continue;
+                }
                 if (child.id == TIMESTAMP) clusterTimestamp = unsigned(child);
                 else if (child.id == SIMPLE_BLOCK) recordBlock(child, clusterTimestamp, -1);
                 else if (child.id == BLOCK_GROUP) parseBlockGroup(child, clusterTimestamp);

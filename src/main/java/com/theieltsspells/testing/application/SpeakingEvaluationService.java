@@ -93,6 +93,17 @@ public class SpeakingEvaluationService {
     }
 
     public List<ResponseSource> responseSources(UUID attemptId) {
+        var examinerSources = jdbc.query("""
+                select turn.id::text question_key, turn.transcript, turn.answer_storage_key,
+                  turn.duration_ms
+                from public.speaking_exam_turns turn
+                join public.speaking_exam_sessions session on session.id=turn.session_id
+                where session.attempt_id=? and turn.submitted_at is not null and turn.part_no is not null
+                order by turn.sequence_no
+                """, (rs, ignored) -> new ResponseSource(rs.getString("question_key"),
+                rs.getString("transcript"), rs.getString("answer_storage_key"), null,
+                rs.getObject("duration_ms", Integer.class)), attemptId);
+        if (!examinerSources.isEmpty()) return examinerSources;
         return jdbc.query("""
                 select response.question_key, response.answer::text,
                   asset.duration_ms

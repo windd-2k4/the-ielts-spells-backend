@@ -43,6 +43,16 @@ class WebmAudioInspectorTests {
                 1_000_000, Duration.ofSeconds(2))).isInstanceOf(BusinessRuleException.class);
     }
 
+    @Test
+    void readsAllUnknownSizedMediaRecorderClusters() {
+        byte[] webm = mediaRecorderWebm();
+        var file = new MockMultipartFile("file", "voice.webm", "audio/webm", webm);
+
+        var result = inspector.inspect(file, 1_000_000, Duration.ofSeconds(11));
+
+        assertThat(result.durationMs()).isEqualTo(10_500);
+    }
+
     private byte[] webm(String codec, boolean video) {
         byte[] header = element(bytes(0x1A, 0x45, 0xDF, 0xA3),
                 element(bytes(0x42, 0x82), "webm".getBytes()));
@@ -61,6 +71,25 @@ class WebmAudioInspectorTests {
                 element(bytes(0xE7), bytes(0)),
                 element(bytes(0xA3), bytes(0x81, 0x03, 0x84, 0x80, 0x00))));
         return concat(header, element(bytes(0x18, 0x53, 0x80, 0x67), concat(info, tracks, cluster)));
+    }
+
+    private byte[] mediaRecorderWebm() {
+        byte[] header = element(bytes(0x1A, 0x45, 0xDF, 0xA3),
+                element(bytes(0x42, 0x82), "webm".getBytes()));
+        byte[] info = element(bytes(0x15, 0x49, 0xA9, 0x66),
+                element(bytes(0x2A, 0xD7, 0xB1), bytes(0x0F, 0x42, 0x40)));
+        byte[] tracks = element(bytes(0x16, 0x54, 0xAE, 0x6B), element(bytes(0xAE), concat(
+                element(bytes(0xD7), bytes(1)),
+                element(bytes(0x83), bytes(2)),
+                element(bytes(0x86), "A_OPUS".getBytes()))));
+        byte[] firstCluster = concat(bytes(0x1F, 0x43, 0xB6, 0x75, 0xFF),
+                element(bytes(0xE7), bytes(0)),
+                element(bytes(0xA3), bytes(0x81, 0x00, 0xEF, 0x80, 0x00)));
+        byte[] lastCluster = concat(bytes(0x1F, 0x43, 0xB6, 0x75, 0xFF),
+                element(bytes(0xE7), bytes(0x27, 0x10)),
+                element(bytes(0xA3), bytes(0x81, 0x01, 0x7C, 0x80, 0x00)));
+        return concat(header, element(bytes(0x18, 0x53, 0x80, 0x67),
+                concat(info, tracks, firstCluster, lastCluster)));
     }
 
     private byte[] element(byte[] id, byte[] payload) {

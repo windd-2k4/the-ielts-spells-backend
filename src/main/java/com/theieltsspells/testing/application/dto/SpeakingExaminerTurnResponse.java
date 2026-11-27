@@ -11,8 +11,24 @@ public record SpeakingExaminerTurnResponse(
         String promptText,
         String audioUrl,
         Integer preparationTimeSeconds,
-        Integer answerTimeSeconds
+        Integer answerTimeSeconds,
+        boolean adaptiveFollowUp
 ) {
+    public SpeakingExaminerTurnResponse(
+            UUID turnId,
+            int sequenceNo,
+            Integer partNo,
+            Kind kind,
+            String topicKey,
+            String promptText,
+            String audioUrl,
+            Integer preparationTimeSeconds,
+            Integer answerTimeSeconds
+    ) {
+        this(turnId, sequenceNo, partNo, kind, topicKey, promptText, audioUrl,
+                preparationTimeSeconds, answerTimeSeconds, false);
+    }
+
     public enum Kind {
         CHECKPOINT,
         QUESTION,

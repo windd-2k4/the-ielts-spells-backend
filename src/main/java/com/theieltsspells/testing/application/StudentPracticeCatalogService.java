@@ -114,9 +114,9 @@ public class StudentPracticeCatalogService {
                         case "CUE_CARD" -> 2;
                         default -> 3;
                     };
-                    where.append(" or version.builder_content @? '$.parts[*] ? (@.partNo == ").append(partNo).append(")'");
+                    where.append(" or jsonb_path_exists(version.builder_content, '$.parts[*] ? (@.partNo == ").append(partNo).append(")')");
                 } else if (skill == SkillType.WRITING && "ESSAY".equals(questionType)) {
-                    where.append(" or version.builder_content @? '$.tasks[*] ? (@.taskNo == 2)'");
+                    where.append(" or jsonb_path_exists(version.builder_content, '$.tasks[*] ? (@.taskNo == 2)')");
                 }
                 where.append(")");
             }
@@ -128,11 +128,32 @@ public class StudentPracticeCatalogService {
                 args.add(studentId);
             }
             case "IN_PROGRESS" -> {
-                where.append(" and exists (select 1 from public.test_attempts attempt where attempt.student_id = ? and attempt.test_version_id = version.id and attempt.attempt_origin = 'SELF_PRACTICE' and attempt.status = 'IN_PROGRESS')");
+                where.append("""
+                         and exists (
+                           select 1 from public.test_attempts attempt
+                           where attempt.student_id = ? and attempt.test_version_id = version.id
+                             and attempt.attempt_origin = 'SELF_PRACTICE' and attempt.status = 'IN_PROGRESS'
+                             and not exists (
+                               select 1 from public.speaking_exam_sessions es
+                               where es.attempt_id = attempt.id and es.state = 'ABORTED'
+                             )
+                         )
+                        """);
                 args.add(studentId);
             }
             case "COMPLETED" -> {
-                where.append(" and exists (select 1 from public.test_attempts attempt where attempt.student_id = ? and attempt.test_version_id = version.id and attempt.attempt_origin = 'SELF_PRACTICE' and attempt.status <> 'IN_PROGRESS')");
+                where.append("""
+                         and exists (
+                           select 1 from public.test_attempts attempt
+                           where attempt.student_id = ? and attempt.test_version_id = version.id
+                             and attempt.attempt_origin = 'SELF_PRACTICE'
+                             and (attempt.status <> 'IN_PROGRESS'
+                               or exists (
+                                 select 1 from public.speaking_exam_sessions es
+                                 where es.attempt_id = attempt.id and es.state = 'ABORTED'
+                               ))
+                         )
+                        """);
                 args.add(studentId);
             }
             default -> { }
@@ -168,6 +189,10 @@ public class StudentPracticeCatalogService {
                   from public.test_attempts attempt
                   where attempt.student_id = ? and attempt.test_version_id = version.id
                     and attempt.attempt_origin = 'SELF_PRACTICE' and attempt.status = 'IN_PROGRESS'
+                    and not exists (
+                      select 1 from public.speaking_exam_sessions es
+                      where es.attempt_id = attempt.id and es.state = 'ABORTED'
+                    )
                   order by attempt.started_at desc limit 1
                 ) active_attempt on true
                 left join lateral (

@@ -6,6 +6,7 @@ import com.theieltsspells.academic.application.AcademicMembershipService;
 import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.application.ResourceNotFoundException;
 import com.theieltsspells.testing.application.dto.*;
+import com.theieltsspells.testing.domain.SpeakingSessionVariant;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -77,8 +78,10 @@ public class StudentSpeakingDeliveryService {
         }
         var active = activeAttempt("test_version_id = ? and attempt_origin = 'SELF_PRACTICE'", testVersionId, studentId);
         if (active != null) {
-            if (!restart) return payload(loadAttempt(active, studentId, false));
-            finalizeAttempt(loadAttempt(active, studentId, true), "EXPIRED");
+            if (!restart && !hasAbortedExaminerSession(active)) {
+                return payload(loadAttempt(active, studentId, false));
+            }
+            expireOpenSelfPracticeAttempts(testVersionId, studentId);
         }
         Integer used = jdbc.queryForObject("""
                 select count(*) from public.test_attempts where test_version_id=? and student_id=?
@@ -229,13 +232,29 @@ public class StudentSpeakingDeliveryService {
 
     public SpeakingAttemptResultResponse getResult(UUID attemptId, UUID studentId) {
         var attempt = loadAttempt(attemptId, studentId, false);
+        var variant = examinerVariant(attempt.id());
         var parts = parseParts(attempt.builderContent());
+        if (variant != null) {
+            parts = parts.stream().filter(part -> variant.partsIncluded().contains(part.partNo())).toList();
+            parts = examinerParts(attempt.id(), parts);
+        }
+        var partsEvaluated = variant != null
+                ? variant.partsIncluded()
+                : parts.stream().map(SpeakingPartResponse::partNo).distinct().sorted().toList();
+        boolean overallBandAvailable = variant != null
+                ? variant.overallBandAvailable()
+                : partsEvaluated.containsAll(List.of(1, 2, 3));
         var responses = responses(attempt.id());
-        var evaluations = attempt.showResult() ? evaluations(attempt.id()) : List.<SpeakingEvaluationResponse>of();
+        var evaluations = attempt.showResult()
+                ? evaluations(attempt.id(), variant, partsEvaluated, overallBandAvailable)
+                : List.<SpeakingEvaluationResponse>of();
 
         return new SpeakingAttemptResultResponse(
                 attempt.id(),
                 attempt.status(),
+                variant,
+                partsEvaluated,
+                overallBandAvailable,
                 attempt.submittedAt(),
                 attempt.showResult(),
                 attempt.showResult() && evaluationService.isAiEligible(studentId),
@@ -274,6 +293,18 @@ public class StudentSpeakingDeliveryService {
     }
 
     private List<SpeakingSavedResponse> responses(UUID attemptId) {
+        var examinerResponses = jdbc.query("""
+                select turn.id::text question_key, turn.transcript, turn.submitted_at
+                from public.speaking_exam_turns turn
+                join public.speaking_exam_sessions session on session.id=turn.session_id
+                where session.attempt_id=? and turn.submitted_at is not null and turn.part_no is not null
+                order by turn.sequence_no
+                """, (rs, ignored) -> new SpeakingSavedResponse(
+                rs.getString("question_key"),
+                SpeakingAudioService.audioPath(attemptId, rs.getString("question_key")),
+                rs.getString("transcript"), Map.of(), 1,
+                rs.getObject("submitted_at", OffsetDateTime.class)), attemptId);
+        if (!examinerResponses.isEmpty()) return examinerResponses;
         return jdbc.query("""
                 select question_key, answer::text, client_revision, answered_at
                 from public.test_attempt_responses where attempt_id=? and question_type='SPEAKING_QUESTION'
@@ -302,7 +333,41 @@ public class StudentSpeakingDeliveryService {
         }, attemptId);
     }
 
-    private List<SpeakingEvaluationResponse> evaluations(UUID attemptId) {
+    private List<SpeakingPartResponse> examinerParts(UUID attemptId, List<SpeakingPartResponse> parts) {
+        var questionsByPart = jdbc.query("""
+                select turn.id::text question_key, turn.part_no, turn.sequence_no, turn.prompt_text,
+                       turn.answer_time_seconds
+                from public.speaking_exam_turns turn
+                join public.speaking_exam_sessions session on session.id=turn.session_id
+                where session.attempt_id=? and turn.part_no is not null
+                order by turn.sequence_no
+                """, (rs, ignored) -> Map.entry(rs.getInt("part_no"), new SpeakingQuestionResponse(
+                rs.getString("question_key"),
+                rs.getString("question_key"),
+                rs.getInt("sequence_no"),
+                rs.getString("prompt_text"),
+                null,
+                false,
+                List.of(),
+                null,
+                (Integer) rs.getObject("answer_time_seconds")
+        )), attemptId).stream().collect(java.util.stream.Collectors.groupingBy(
+                Map.Entry::getKey,
+                java.util.LinkedHashMap::new,
+                java.util.stream.Collectors.mapping(Map.Entry::getValue, java.util.stream.Collectors.toList())
+        ));
+
+        return parts.stream().map(part -> new SpeakingPartResponse(
+                part.id(), part.partNo(), part.topicTitle(), part.cueCardPromptHtml(), part.cueCardBullets(),
+                part.audioUrl(), part.hintsEnabled(), part.hintSteps(), part.preparationTimeSeconds(),
+                part.answerTimeSeconds(), part.followUpQuestions(),
+                questionsByPart.getOrDefault(part.partNo(), part.questions()), part.sampleResponseText()
+        )).toList();
+    }
+
+    private List<SpeakingEvaluationResponse> evaluations(UUID attemptId, SpeakingSessionVariant variant,
+                                                          List<Integer> partsEvaluated,
+                                                          boolean overallBandAvailable) {
         return jdbc.query("""
                 select question_key, status, overall_band, fluency_band, lexical_band,
                        grammar_band, pronunciation_band, fluency_feedback, lexical_feedback,
@@ -318,10 +383,10 @@ public class StudentSpeakingDeliveryService {
                 order by created_at asc
                 """, (rs, ignored) -> {
             Map<String, String> criteria = new LinkedHashMap<>();
-            criteria.put("fluency_coherence", rs.getString("fluency_feedback"));
-            criteria.put("lexical_resource", rs.getString("lexical_feedback"));
-            criteria.put("grammatical_range_accuracy", rs.getString("grammar_feedback"));
-            criteria.put("pronunciation", rs.getString("pronunciation_feedback"));
+            putIfPresent(criteria, "fluency_coherence", rs.getString("fluency_feedback"));
+            putIfPresent(criteria, "lexical_resource", rs.getString("lexical_feedback"));
+            putIfPresent(criteria, "grammatical_range_accuracy", rs.getString("grammar_feedback"));
+            putIfPresent(criteria, "pronunciation", rs.getString("pronunciation_feedback"));
 
             List<String> strengths = readList(rs.getString("strengths"));
             List<String> improvements = readList(rs.getString("improvements"));
@@ -336,10 +401,20 @@ public class StudentSpeakingDeliveryService {
                 teacherCriteria.put("pronunciation", rs.getString("pronunciation_feedback_teacher"));
             }
 
+            Map<String, BigDecimal> criteriaBands = new LinkedHashMap<>();
+            putIfPresent(criteriaBands, "fluencyCoherence", rs.getBigDecimal("fluency_band"));
+            putIfPresent(criteriaBands, "lexicalResource", rs.getBigDecimal("lexical_band"));
+            putIfPresent(criteriaBands, "grammar", rs.getBigDecimal("grammar_band"));
+            putIfPresent(criteriaBands, "pronunciation", rs.getBigDecimal("pronunciation_band"));
+
             return new SpeakingEvaluationResponse(
                     rs.getString("question_key"),
                     rs.getString("status"),
-                    rs.getBigDecimal("overall_band"),
+                    variant,
+                    partsEvaluated,
+                    overallBandAvailable,
+                    criteriaBands,
+                    overallBandAvailable ? rs.getBigDecimal("overall_band") : null,
                     rs.getBigDecimal("fluency_band"),
                     rs.getBigDecimal("lexical_band"),
                     rs.getBigDecimal("grammar_band"),
@@ -363,6 +438,16 @@ public class StudentSpeakingDeliveryService {
                     published ? rs.getObject("published_at", OffsetDateTime.class) : null
             );
         }, attemptId, SpeakingEvaluationService.ATTEMPT_KEY);
+    }
+
+    private <T> void putIfPresent(Map<String, T> target, String key, T value) {
+        if (value != null) target.put(key, value);
+    }
+
+    private SpeakingSessionVariant examinerVariant(UUID attemptId) {
+        var variants = jdbc.queryForList("select variant from public.speaking_exam_sessions where attempt_id=?",
+                String.class, attemptId);
+        return variants.isEmpty() ? null : SpeakingSessionVariant.valueOf(variants.getFirst());
     }
 
     @SuppressWarnings("unchecked")
@@ -494,6 +579,26 @@ public class StudentSpeakingDeliveryService {
             result.add(new SpeakingHintStepResponse(id, title, instruction, options));
         }
         return result;
+    }
+
+    private boolean hasAbortedExaminerSession(UUID attemptId) {
+        Integer count = jdbc.queryForObject("""
+                select count(*) from public.speaking_exam_sessions
+                where attempt_id = ? and state = 'ABORTED'
+                """, Integer.class, attemptId);
+        return count != null && count > 0;
+    }
+
+    private void expireOpenSelfPracticeAttempts(UUID testVersionId, UUID studentId) {
+        jdbc.update("""
+                update public.test_attempts
+                set status = cast('EXPIRED' as public.attempt_status),
+                  submitted_at = coalesce(submitted_at, now()),
+                  last_saved_at = now(),
+                  updated_at = now()
+                where test_version_id = ? and student_id = ?
+                  and attempt_origin = 'SELF_PRACTICE' and status = 'IN_PROGRESS'
+                """, testVersionId, studentId);
     }
 
     private void finalizeAttempt(AttemptContext attempt, String status) {

@@ -118,9 +118,11 @@ public class StudentSpeakingTestController {
     @PostMapping("/attempts/{attemptId}/exam-session")
     public SpeakingExaminerSessionResponse createOrResumeExaminerSession(
             @PathVariable UUID attemptId,
+            @RequestBody(required = false) CreateSpeakingExamSessionRequest request,
             @AuthenticationPrincipal Jwt jwt
     ) {
-        return examSessionService.createOrResume(attemptId, studentId(jwt));
+        var resolved = request == null ? CreateSpeakingExamSessionRequest.defaults() : request;
+        return examSessionService.createOrResume(attemptId, studentId(jwt), resolved.variant());
     }
 
     @GetMapping("/exam-sessions/{sessionId}")
@@ -156,6 +158,15 @@ public class StudentSpeakingTestController {
             @AuthenticationPrincipal Jwt jwt
     ) {
         return examSessionService.abort(sessionId, request, studentId(jwt));
+    }
+
+    @PostMapping("/exam-sessions/{sessionId}/closing/complete")
+    public SpeakingExaminerSessionResponse completeExamSessionClosing(
+            @PathVariable UUID sessionId,
+            @Valid @RequestBody CompleteSpeakingExamSessionRequest request,
+            @AuthenticationPrincipal Jwt jwt
+    ) {
+        return examSessionService.completeClosing(sessionId, request, studentId(jwt));
     }
 
     @GetMapping("/exam-sessions/{sessionId}/turns/{turnId}/audio")

@@ -14,5 +14,18 @@ public record SubmitSpeakingExaminerTurnRequest(
         @PositiveOrZero long stateVersion,
         @NotBlank @Size(max = 300) String storageKey,
         @Size(max = 20_000) String transcript,
-        @Positive int durationMs
-) {}
+        @Positive int durationMs,
+        SpeakingTurnEndReason endReason,
+        @PositiveOrZero Integer clientUploadMs
+) {
+    public SubmitSpeakingExaminerTurnRequest(
+            UUID clientTurnId,
+            UUID examinerTurnId,
+            long stateVersion,
+            String storageKey,
+            String transcript,
+            int durationMs
+    ) {
+        this(clientTurnId, examinerTurnId, stateVersion, storageKey, transcript, durationMs, null, null);
+    }
+}

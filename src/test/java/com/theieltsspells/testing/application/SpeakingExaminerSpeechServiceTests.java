@@ -46,9 +46,11 @@ class SpeakingExaminerSpeechServiceTests {
         when(audioService.openStored("attempt/answer.webm")).thenReturn(new ByteArrayInputStream(webm));
         when(speechClient.transcribe(eq(webm))).thenReturn(expected);
 
-        var result = service.transcribe("attempt/answer.webm");
+        var result = service.transcribeTimed("attempt/answer.webm");
 
-        assertThat(result).isEqualTo(expected);
+        assertThat(result.transcription()).isEqualTo(expected);
+        assertThat(result.storageReadMs()).isGreaterThanOrEqualTo(0);
+        assertThat(result.sttProcessingMs()).isGreaterThanOrEqualTo(0);
         verify(audioService).openStored("attempt/answer.webm");
     }
 

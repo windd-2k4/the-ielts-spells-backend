@@ -10,6 +10,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import com.theieltsspells.testing.domain.SpeakingSessionVariant;
 
 import java.util.UUID;
 
@@ -34,7 +35,7 @@ public class SpeakingEvaluationWorker {
         if (source == null) return;
         long started = System.nanoTime();
         try {
-            var result = evaluator.evaluate(service.responseSources(source.attemptId()));
+            var result = evaluator.evaluate(service.responseSources(source.attemptId()), source.variant());
             new TransactionTemplate(transactionManager).executeWithoutResult(status -> save(source, result, elapsed(started)));
         } catch (Exception exception) {
             log.warn("Speaking evaluation {} failed ({})", source.id(), exception.getClass().getSimpleName());
@@ -64,11 +65,15 @@ public class SpeakingEvaluationWorker {
                     """, Long.class, SpeakingEvaluationService.ATTEMPT_KEY);
             if (used != null && used >= dailyLimit) return null;
             var rows = jdbc.query("""
-                    select id, attempt_id from public.speaking_evaluations
-                    where status='QUEUED' and question_key=? order by created_at
-                    for update skip locked limit 1
+                    select evaluation.id, evaluation.attempt_id,
+                      coalesce(session.variant, 'FULL_MOCK') variant
+                    from public.speaking_evaluations evaluation
+                    left join public.speaking_exam_sessions session on session.attempt_id=evaluation.attempt_id
+                    where evaluation.status='QUEUED' and evaluation.question_key=? order by evaluation.created_at
+                    for update of evaluation skip locked limit 1
                     """, (rs, ignored) -> new Source(rs.getObject("id", UUID.class),
-                    rs.getObject("attempt_id", UUID.class), UUID.randomUUID()), SpeakingEvaluationService.ATTEMPT_KEY);
+                    rs.getObject("attempt_id", UUID.class), UUID.randomUUID(),
+                    SpeakingSessionVariant.valueOf(rs.getString("variant"))), SpeakingEvaluationService.ATTEMPT_KEY);
             if (rows.isEmpty()) return null;
             Source source = rows.getFirst();
             int changed = jdbc.update("""
@@ -92,7 +97,8 @@ public class SpeakingEvaluationWorker {
                   processing_token=null, processing_started_at=null,
                   ai_completed_at=now(), updated_at=now()
                 where id=? and status='PROCESSING' and processing_token=?
-                """, value.overall(), value.fluency().band(), value.lexical().band(), value.grammar().band(),
+                """, source.variant().overallBandAvailable() ? value.overall() : null,
+                value.fluency().band(), value.lexical().band(), value.grammar().band(),
                 value.pronunciation().band(), value.fluency().feedback(), value.lexical().feedback(),
                 value.grammar().feedback(), value.pronunciation().feedback(), json(value.strengths()),
                 json(value.improvements()), json(value.speechMetrics()), json(value.answerUpgrades()),
@@ -105,5 +111,5 @@ public class SpeakingEvaluationWorker {
         catch (Exception exception) { throw new IllegalStateException("Cannot serialize Speaking evaluation", exception); }
     }
     private int elapsed(long started) { return Math.toIntExact((System.nanoTime() - started) / 1_000_000); }
-    private record Source(UUID id, UUID attemptId, UUID token) {}
+    private record Source(UUID id, UUID attemptId, UUID token, SpeakingSessionVariant variant) {}
 }

@@ -3,6 +3,7 @@ package com.theieltsspells.testing.application;
 import com.theieltsspells.testing.application.dto.SpeakingAiAnalytics.AnswerUpgrade;
 import com.theieltsspells.testing.application.dto.SpeakingAiAnalytics.PronunciationIssue;
 import com.theieltsspells.testing.application.dto.SpeakingAiAnalytics.SpeechMetrics;
+import com.theieltsspells.testing.domain.SpeakingSessionVariant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,7 +25,10 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -69,7 +73,7 @@ class SpeakingEvaluationAnalyticsIntegrationTests {
         attemptId = UUID.randomUUID();
         evaluationId = UUID.randomUUID();
         seedAttempt();
-        when(evaluator.evaluate(anyList())).thenReturn(result());
+        when(evaluator.evaluate(anyList(), any())).thenReturn(result());
     }
 
     @Test
@@ -82,11 +86,24 @@ class SpeakingEvaluationAnalyticsIntegrationTests {
         assertThat(jdbc.queryForObject(
                 "select answer_upgrades->0->>'questionKey' from public.speaking_evaluations where id=?",
                 String.class, evaluationId)).isEqualTo("part1_q1");
+        assertThat(jdbc.queryForObject(
+                "select overall_band from public.speaking_evaluations where id=?",
+                BigDecimal.class, evaluationId)).isNull();
+        verify(evaluator).evaluate(anyList(), eq(SpeakingSessionVariant.PART_1));
 
         mvc.perform(get("/api/v1/student/speaking/attempts/{attemptId}/result", attemptId)
                         .with(jwt().jwt(token -> token.subject(studentId.toString()))
                                 .authorities(new SimpleGrantedAuthority("student"))))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.variant").value("PART_1"))
+                .andExpect(jsonPath("$.partsEvaluated[0]").value(1))
+                .andExpect(jsonPath("$.overallBandAvailable").value(false))
+                .andExpect(jsonPath("$.aiEligible").value(true))
+                .andExpect(jsonPath("$.evaluations[0].variant").value("PART_1"))
+                .andExpect(jsonPath("$.evaluations[0].partsEvaluated[0]").value(1))
+                .andExpect(jsonPath("$.evaluations[0].overallBandAvailable").value(false))
+                .andExpect(jsonPath("$.evaluations[0].overallBand").doesNotExist())
+                .andExpect(jsonPath("$.evaluations[0].criteria.fluencyCoherence").value(6.5))
                 .andExpect(jsonPath("$.evaluations[0].speechMetrics.wordsPerMinute").value(128))
                 .andExpect(jsonPath("$.evaluations[0].speechMetrics.pauseCountEstimated").value(true))
                 .andExpect(jsonPath("$.evaluations[0].speechMetrics.fillerWords.um").value(2))
@@ -97,6 +114,7 @@ class SpeakingEvaluationAnalyticsIntegrationTests {
                         .with(jwt().jwt(token -> token.subject(UUID.randomUUID().toString()))
                                 .authorities(new SimpleGrantedAuthority("admin"))))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.overallBand").doesNotExist())
                 .andExpect(jsonPath("$.speechMetrics.wordsPerMinute").value(128))
                 .andExpect(jsonPath("$.speechMetrics.pauseCountEstimated").value(true))
                 .andExpect(jsonPath("$.speechMetrics.pronunciationIssues[0].issue").value("Cần giữ đúng trọng âm"))
@@ -123,6 +141,11 @@ class SpeakingEvaluationAnalyticsIntegrationTests {
                 studentId, "student-" + studentId + "@example.test");
         jdbc.update("insert into public.student_profiles(user_id, student_code) values (?, ?)",
                 studentId, "SA-" + studentId.toString().substring(0, 8));
+        jdbc.update("""
+                insert into public.speaking_ai_entitlements(
+                  student_id, enabled, unlimited, active_from, source, note)
+                values (?, true, true, now(), 'INTEGRATION_TEST', 'Worker to API contract')
+                """, studentId);
         jdbc.update("insert into public.tests(id, title, duration_minutes, status, created_by) " +
                 "values (?, 'Speaking analytics', 15, cast('DRAFT' as public.publish_status), ?)", testId, studentId);
         jdbc.update("""
@@ -137,6 +160,12 @@ class SpeakingEvaluationAnalyticsIntegrationTests {
                   id, student_id, attempt_no, status, submitted_at, test_version_id, attempt_origin)
                 values (?, ?, 1, cast('SUBMITTED' as public.attempt_status), now(), ?, 'SELF_PRACTICE')
                 """, attemptId, studentId, versionId);
+        jdbc.update("""
+                insert into public.speaking_exam_sessions(
+                  attempt_id, student_id, state, state_version, prompt_version, rubric_version,
+                  speech_model_version, feature_extractor_version, variant, completed_at)
+                values (?, ?, 'EVALUATION_QUEUED', 6, 'test', ?, 'test', 'test', 'PART_1', now())
+                """, attemptId, studentId, SpeakingAiEvaluator.RUBRIC_VERSION);
         jdbc.update("""
                 insert into public.speaking_audio_assets(
                   attempt_id, student_id, question_key, storage_key, mime_type, size_bytes, duration_ms)

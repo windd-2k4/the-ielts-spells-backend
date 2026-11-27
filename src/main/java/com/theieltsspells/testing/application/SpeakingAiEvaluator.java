@@ -10,6 +10,7 @@ import com.theieltsspells.shared.SpeakingBandScorePolicy;
 import com.theieltsspells.testing.application.dto.SpeakingAiAnalytics.AnswerUpgrade;
 import com.theieltsspells.testing.application.dto.SpeakingAiAnalytics.PronunciationIssue;
 import com.theieltsspells.testing.application.dto.SpeakingAiAnalytics.SpeechMetrics;
+import com.theieltsspells.testing.domain.SpeakingSessionVariant;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -33,6 +34,11 @@ public class SpeakingAiEvaluator {
     private final SpeakingAudioService audioService;
 
     public Result evaluate(List<SpeakingEvaluationService.ResponseSource> sources) {
+        return evaluate(sources, SpeakingSessionVariant.FULL_MOCK);
+    }
+
+    public Result evaluate(List<SpeakingEvaluationService.ResponseSource> sources,
+                           SpeakingSessionVariant variant) {
         List<AiAudioInput> audio = new ArrayList<>();
         long encodedBytes = 0;
         for (var source : sources) {
@@ -48,10 +54,10 @@ public class SpeakingAiEvaluator {
         String transcript = sources.stream().filter(value -> value.transcript() != null)
                 .map(value -> value.questionKey() + ": " + value.transcript())
                 .reduce((left, right) -> left + "\n\n" + right).orElse("Không có transcript");
-        var request = new AiGenerationRequest(systemPrompt(), "TRANSCRIPT THEO TỪNG CÂU:\n" + transcript,
+        var request = new AiGenerationRequest(systemPrompt(variant), "TRANSCRIPT THEO TỪNG CÂU:\n" + transcript,
                 3200, 0.1, "application/json", true, router.timeoutFor(AiTaskType.CHAT), List.of(), audio);
         return router.execute(AiTaskType.CHAT, request,
-                value -> decode(value.provider().name(), value.model(), value.content(), sources));
+                value -> decode(value.provider().name(), value.model(), value.content(), sources, variant));
     }
 
     private AiAudioInput audio(SpeakingEvaluationService.ResponseSource source) {
@@ -65,8 +71,12 @@ public class SpeakingAiEvaluator {
         return source.legacyAudioUrl() == null ? null : AiAudioInput.fromDataUrl(source.legacyAudioUrl());
     }
 
-    private String systemPrompt() {
-        return """
+    private String systemPrompt(SpeakingSessionVariant variant) {
+        String scope = variant.overallBandAvailable()
+                ? "Đây là Full Mock Test gồm Part 1, Part 2 và Part 3."
+                : "Đây chỉ là " + variant.name().replace('_', ' ')
+                    + ". Chấm bốn tiêu chí trên phần đã luyện, không suy ra overall band cho toàn bài IELTS Speaking.";
+        return scope + "\n" + """
                 Bạn là giám khảo IELTS Speaking. Nghe toàn bộ audio theo đúng thứ tự; transcript chỉ hỗ trợ đọc nội dung.
                 Chấm toàn bộ bài thi theo bốn tiêu chí IELTS có trọng số bằng nhau: Fluency and Coherence,
                 Lexical Resource, Grammatical Range and Accuracy, Pronunciation. Dùng band 0-9 theo bước 0.5.
@@ -122,7 +132,8 @@ public class SpeakingAiEvaluator {
     }
 
     private Result decode(String provider, String model, String content,
-                          List<SpeakingEvaluationService.ResponseSource> sources) throws Exception {
+                          List<SpeakingEvaluationService.ResponseSource> sources,
+                          SpeakingSessionVariant variant) throws Exception {
         String cleaned = content.trim().replaceFirst("^```(?:json)?\\s*", "").replaceFirst("\\s*```$", "");
         JsonNode root = objectMapper.readTree(cleaned);
         JsonNode criteria = root.path("criteria");
@@ -130,8 +141,10 @@ public class SpeakingAiEvaluator {
         Criterion lexical = criterion(criteria, "lexical_resource");
         Criterion grammar = criterion(criteria, "grammatical_range_accuracy");
         Criterion pronunciation = criterion(criteria, "pronunciation");
-        BigDecimal overall = SpeakingBandScorePolicy.overall(List.of(
-                fluency.band(), lexical.band(), grammar.band(), pronunciation.band()));
+        BigDecimal overall = variant.overallBandAvailable()
+                ? SpeakingBandScorePolicy.overall(List.of(
+                    fluency.band(), lexical.band(), grammar.band(), pronunciation.band()))
+                : null;
         SpeechMetrics metrics = speechMetrics(root.path("speech_metrics"), sources);
         List<AnswerUpgrade> upgrades = answerUpgrades(root.path("answer_upgrades"));
         return new Result(provider, model, overall, fluency, lexical, grammar, pronunciation,

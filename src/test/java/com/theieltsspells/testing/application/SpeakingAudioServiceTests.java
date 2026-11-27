@@ -14,6 +14,8 @@ import org.springframework.jdbc.core.RowMapper;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.io.ByteArrayInputStream;
+import java.sql.ResultSet;
 import java.util.List;
 import java.util.UUID;
 
@@ -24,6 +26,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -87,5 +90,33 @@ class SpeakingAudioServiceTests {
 
         assertThatThrownBy(() -> service.assertOwnedStorageKey(attemptId, studentId, key, "part-1-q1"))
                 .isInstanceOf(BusinessRuleException.class);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void opensExaminerAudioFromTheOwnedAssetRegistry() throws Exception {
+        UUID attemptId = UUID.randomUUID();
+        UUID studentId = UUID.randomUUID();
+        String turnId = UUID.randomUUID().toString();
+        var bytes = new byte[]{1, 2, 3};
+        when(jdbc.query(anyString(), any(RowMapper.class), eq(attemptId), eq(studentId)))
+                .thenReturn(List.of("SUBMITTED"));
+        when(jdbc.query(anyString(), any(RowMapper.class), eq(attemptId), eq(turnId)))
+                .thenAnswer(invocation -> {
+                    RowMapper<Object> mapper = invocation.getArgument(1);
+                    ResultSet rs = mock(ResultSet.class);
+                    when(rs.getString("storage_key")).thenReturn("speaking-attempts/answer.webm");
+                    when(rs.getString("mime_type")).thenReturn("audio/webm");
+                    when(rs.getLong("size_bytes")).thenReturn(3L);
+                    return List.of(mapper.mapRow(rs, 0));
+                });
+        when(storage.openFromBucket("speaking-audio-private", "speaking-attempts/answer.webm"))
+                .thenReturn(new ByteArrayInputStream(bytes));
+
+        var result = service.openOwned(attemptId, turnId, studentId);
+
+        assertThat(result.mimeType()).isEqualTo("audio/webm");
+        assertThat(result.sizeBytes()).isEqualTo(3L);
+        assertThat(result.inputStream().readAllBytes()).isEqualTo(bytes);
     }
 }

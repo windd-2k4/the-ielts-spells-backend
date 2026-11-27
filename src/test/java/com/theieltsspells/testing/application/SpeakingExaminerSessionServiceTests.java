@@ -1,6 +1,7 @@
 package com.theieltsspells.testing.application;
 
 import com.theieltsspells.shared.application.CodedApiException;
+import com.theieltsspells.testing.domain.SpeakingSessionVariant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,11 +22,12 @@ class SpeakingExamSessionServiceTests {
     @Mock SpeakingAudioService audioService;
     @Mock SpeakingExaminerQuestionPlanner planner;
     @Mock SpeakingExaminerSpeechService speechService;
+    @Mock SpeakingEvaluationService evaluationService;
     private SpeakingExamSessionService service;
 
     @BeforeEach
     void setUp() {
-        service = new SpeakingExamSessionService(jdbc, audioService, planner, speechService);
+        service = new SpeakingExamSessionService(jdbc, audioService, planner, speechService, evaluationService);
     }
 
     @Test
@@ -36,6 +38,34 @@ class SpeakingExamSessionServiceTests {
                 .isInstanceOfSatisfying(CodedApiException.class, exception -> {
                     assertThat(exception.status().value()).isEqualTo(404);
                     assertThat(exception.code()).isEqualTo("AI_SPEAKING_EXAMINER_DISABLED");
+                });
+        verifyNoInteractions(jdbc, audioService, planner);
+    }
+
+    @Test
+    void rejectsStandalonePartTwoWhileItsFeatureFlagIsDisabled() {
+        ReflectionTestUtils.setField(service, "enabled", true);
+        ReflectionTestUtils.setField(service, "partTwoEnabled", false);
+
+        assertThatThrownBy(() -> service.createOrResume(
+                UUID.randomUUID(), UUID.randomUUID(), SpeakingSessionVariant.PART_2))
+                .isInstanceOfSatisfying(CodedApiException.class, exception -> {
+                    assertThat(exception.status().value()).isEqualTo(422);
+                    assertThat(exception.code()).isEqualTo("SPEAKING_PART_2_DISABLED");
+                });
+        verifyNoInteractions(jdbc, audioService, planner);
+    }
+
+    @Test
+    void rejectsStandalonePartThreeWhileItsFeatureFlagIsDisabled() {
+        ReflectionTestUtils.setField(service, "enabled", true);
+        ReflectionTestUtils.setField(service, "partThreeEnabled", false);
+
+        assertThatThrownBy(() -> service.createOrResume(
+                UUID.randomUUID(), UUID.randomUUID(), SpeakingSessionVariant.PART_3))
+                .isInstanceOfSatisfying(CodedApiException.class, exception -> {
+                    assertThat(exception.status().value()).isEqualTo(422);
+                    assertThat(exception.code()).isEqualTo("SPEAKING_PART_3_DISABLED");
                 });
         verifyNoInteractions(jdbc, audioService, planner);
     }

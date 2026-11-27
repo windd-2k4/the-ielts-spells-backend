@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import com.theieltsspells.testing.domain.SpeakingSessionVariant;
 
 import java.io.ByteArrayInputStream;
 import java.math.BigDecimal;
@@ -153,10 +154,10 @@ class SpeakingAiEvaluatorTests {
                 "part1_q1", "Sample text", "test-audio.webm", null, null
         );
 
-        var result = evaluator.evaluate(List.of(source));
+        var result = evaluator.evaluate(List.of(source), SpeakingSessionVariant.PART_1);
 
         assertThat(result).isNotNull();
-        assertThat(result.overall()).isEqualByComparingTo(new BigDecimal("6.0"));
+        assertThat(result.overall()).isNull();
         assertThat(result.speechMetrics()).isNotNull();
         assertThat(result.speechMetrics().wordsPerMinute()).isNull();
         assertThat(result.speechMetrics().pauseCount()).isNull();

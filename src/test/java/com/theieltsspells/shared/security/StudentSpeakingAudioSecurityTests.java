@@ -7,6 +7,7 @@ import com.theieltsspells.testing.application.SpeakingTurnService;
 import com.theieltsspells.testing.application.SpeakingVocabService;
 import com.theieltsspells.testing.application.StudentSpeakingDeliveryService;
 import com.theieltsspells.testing.application.dto.SpeakingAudioUploadResponse;
+import com.theieltsspells.testing.domain.SpeakingSessionVariant;
 import com.theieltsspells.testing.presentation.student.StudentSpeakingTestController;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -87,7 +88,22 @@ class StudentSpeakingAudioSecurityTests {
                                 .authorities(new SimpleGrantedAuthority("student"))))
                 .andExpect(status().isOk());
 
-        verify(examSessionService).createOrResume(eq(attemptId), eq(studentId));
+        verify(examSessionService).createOrResume(attemptId, studentId, SpeakingSessionVariant.FULL_MOCK);
+    }
+
+    @Test
+    void studentMayChooseAStandaloneSpeakingPart() throws Exception {
+        UUID attemptId = UUID.randomUUID();
+        UUID studentId = UUID.randomUUID();
+
+        mvc.perform(post("/api/v1/student/speaking/attempts/{attemptId}/exam-session", attemptId)
+                        .with(jwt().jwt(value -> value.subject(studentId.toString()))
+                                .authorities(new SimpleGrantedAuthority("student")))
+                        .contentType("application/json")
+                        .content("{\"variant\":\"PART_2\"}"))
+                .andExpect(status().isOk());
+
+        verify(examSessionService).createOrResume(attemptId, studentId, SpeakingSessionVariant.PART_2);
     }
 
     @Test
@@ -136,6 +152,22 @@ class StudentSpeakingAudioSecurityTests {
                 .andExpect(status().isOk());
 
         verify(examSessionService).abort(eq(sessionId), any(), eq(studentId));
+    }
+
+    @Test
+    void studentMayCompleteTheExaminerClosingWithoutUploadingAudio() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        UUID studentId = UUID.randomUUID();
+
+        mvc.perform(post("/api/v1/student/speaking/exam-sessions/{sessionId}/closing/complete", sessionId)
+                        .with(jwt().jwt(value -> value.subject(studentId.toString()))
+                                .authorities(new SimpleGrantedAuthority("student")))
+                        .contentType("application/json")
+                        .content("{\"stateVersion\":5}"))
+                .andExpect(status().isOk());
+
+        verify(examSessionService).completeClosing(eq(sessionId), any(), eq(studentId));
+        verifyNoInteractions(audioService);
     }
 
     private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder uploadRequest(

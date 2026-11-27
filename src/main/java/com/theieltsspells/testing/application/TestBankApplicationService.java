@@ -15,6 +15,7 @@ import com.theieltsspells.testing.application.dto.TestValidationResponse;
 import com.theieltsspells.testing.application.dto.TestVersionResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,6 +38,7 @@ public class TestBankApplicationService {
     private final ObjectMapper objectMapper;
     private final TestDraftValidationService validationService;
     private final ReadingVersionMaterializer readingVersionMaterializer;
+    private final ApplicationEventPublisher events;
 
     public PageResponse<TestBankSummaryResponse> list(String query, SkillType skill, String status,
                                                String testType, String format, int page, int size) {
@@ -392,6 +394,9 @@ public class TestBankApplicationService {
                 test.skill().name(), test.testType(), json(test.tags()), json(publishedContent), actor);
         if (test.skill() == SkillType.READING || test.skill() == SkillType.LISTENING) {
             readingVersionMaterializer.materialize(id, publishedContent);
+        }
+        if (test.skill() == SkillType.SPEAKING && "FULL_TEST".equals(test.testType())) {
+            events.publishEvent(new SpeakingTestPublishedEvent(id, json(publishedContent)));
         }
         return new TestVersionResponse(id, number, label, java.time.OffsetDateTime.now(), "");
     }
