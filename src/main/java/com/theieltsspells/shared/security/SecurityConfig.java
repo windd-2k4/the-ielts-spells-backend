@@ -28,8 +28,8 @@ class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/health", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/public/**").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/public/leads").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/public/**", "/api/v1/dictionary/suggest", "/api/v1/dictionary/lookup").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/public/leads", "/api/v1/dictionary/translate", "/api/v1/ai-mentor/chat").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/orders/checkout", "/api/v1/auth/activate-account").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/orders/*/status", "/api/v1/auth/verify-activation-token").permitAll()
                         .requestMatchers("/api/v1/webhooks/**").permitAll()

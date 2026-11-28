@@ -59,17 +59,24 @@ public class StudentVocabularyApplicationService {
     @Transactional
     public VocabularyNotebookResponse.Topic createTopic(UUID studentId, CreateVocabularyTopicRequest request) {
         String name = clean(request.name());
+        List<UUID> existing = jdbc.query("""
+                select id from public.student_vocabulary_topics
+                where student_id = ? and lower(name) = lower(?)
+                limit 1
+                """, (rs, row) -> rs.getObject("id", UUID.class), studentId, name);
         UUID id;
-        try {
-            id = jdbc.queryForObject("""
+        if (!existing.isEmpty()) {
+            id = existing.getFirst();
+        } else {
+            jdbc.update("""
                     insert into public.student_vocabulary_topics (student_id, name)
                     values (?, ?)
-                    returning id
-                    """, UUID.class, studentId, name);
-        } catch (DuplicateKeyException duplicate) {
+                    on conflict (student_id, (lower(name))) do nothing
+                    """, studentId, name);
             id = jdbc.queryForObject("""
                     select id from public.student_vocabulary_topics
                     where student_id = ? and lower(name) = lower(?)
+                    limit 1
                     """, UUID.class, studentId, name);
         }
         return new VocabularyNotebookResponse.Topic(id, name, 0, 0);

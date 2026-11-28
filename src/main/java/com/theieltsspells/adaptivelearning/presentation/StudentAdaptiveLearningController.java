@@ -30,7 +30,9 @@ public class StudentAdaptiveLearningController {
     @PreAuthorize("@permissionPolicy.has(authentication, 'identity.profile.self.read')")
     @Operation(summary = "Lấy hoạt động học tập thích ứng đang được ưu tiên")
     public ResponseEntity<AdaptiveRecommendationResponse> recommendation(@AuthenticationPrincipal Jwt jwt) {
-        return ResponseEntity.of(service.currentRecommendation(UUID.fromString(jwt.getSubject())));
+        return service.currentRecommendation(UUID.fromString(jwt.getSubject()))
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
     @PostMapping("/recommendations/{recommendationId}/accept")

@@ -262,18 +262,24 @@ public class CuratedVocabularyApplicationService {
     }
 
     private UUID ensureCuratedTopic(UUID studentId) {
-        try {
-            return jdbc.queryForObject("""
-                    insert into public.student_vocabulary_topics (student_id, name)
-                    values (?, ?)
-                    returning id
-                    """, UUID.class, studentId, DEFAULT_PERSONAL_TOPIC);
-        } catch (DuplicateKeyException duplicate) {
-            return jdbc.queryForObject("""
-                    select id from public.student_vocabulary_topics
-                    where student_id = ? and lower(name) = lower(?)
-                    """, UUID.class, studentId, DEFAULT_PERSONAL_TOPIC);
+        List<UUID> existing = jdbc.query("""
+                select id from public.student_vocabulary_topics
+                where student_id = ? and lower(name) = lower(?)
+                limit 1
+                """, (rs, row) -> rs.getObject("id", UUID.class), studentId, DEFAULT_PERSONAL_TOPIC);
+        if (!existing.isEmpty()) {
+            return existing.getFirst();
         }
+        jdbc.update("""
+                insert into public.student_vocabulary_topics (student_id, name)
+                values (?, ?)
+                on conflict (student_id, (lower(name))) do nothing
+                """, studentId, DEFAULT_PERSONAL_TOPIC);
+        return jdbc.queryForObject("""
+                select id from public.student_vocabulary_topics
+                where student_id = ? and lower(name) = lower(?)
+                limit 1
+                """, UUID.class, studentId, DEFAULT_PERSONAL_TOPIC);
     }
 
     private void requireDeck(UUID deckId) {
