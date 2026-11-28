@@ -6,16 +6,19 @@ import com.theieltsspells.cms.application.dto.CmsBannerRequest;
 import com.theieltsspells.cms.application.dto.CmsBannerResponse;
 import com.theieltsspells.cms.application.dto.CmsPageRequest;
 import com.theieltsspells.cms.application.dto.CmsPageResponse;
+import com.theieltsspells.cms.application.dto.CmsPageRevisionResponse;
 import com.theieltsspells.cms.application.dto.CmsPostRequest;
 import com.theieltsspells.cms.application.dto.CmsPostResponse;
 import com.theieltsspells.cms.application.dto.CmsPublicationRequest;
 import com.theieltsspells.cms.domain.Campaign;
 import com.theieltsspells.cms.domain.CmsBanner;
 import com.theieltsspells.cms.domain.CmsPage;
+import com.theieltsspells.cms.domain.CmsPageRevision;
 import com.theieltsspells.cms.domain.CmsPost;
 import com.theieltsspells.cms.infrastructure.persistence.CampaignRepository;
 import com.theieltsspells.cms.infrastructure.persistence.CmsBannerRepository;
 import com.theieltsspells.cms.infrastructure.persistence.CmsPageRepository;
+import com.theieltsspells.cms.infrastructure.persistence.CmsPageRevisionRepository;
 import com.theieltsspells.cms.infrastructure.persistence.CmsPostRepository;
 import com.theieltsspells.shared.application.BusinessRuleException;
 import com.theieltsspells.shared.application.ConflictException;
@@ -35,6 +38,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -47,6 +51,7 @@ import java.util.UUID;
 public class CmsContentApplicationService {
 
     private final CmsPageRepository pages;
+    private final CmsPageRevisionRepository pageRevisions;
     private final CmsPostRepository posts;
     private final CmsBannerRepository banners;
     private final CampaignRepository campaigns;
@@ -59,6 +64,11 @@ public class CmsContentApplicationService {
         return page(requirePage(id));
     }
 
+    public Page<CmsPageRevisionResponse> pageRevisions(UUID pageId, Pageable pageable) {
+        requirePage(pageId);
+        return pageRevisions.findByPageId(pageId, pageable).map(this::pageRevision);
+    }
+
     public Optional<CmsPageResponse> publishedPage(String slug) {
         OffsetDateTime now = OffsetDateTime.now();
         return pages.findBySlug(slug)
@@ -67,7 +77,7 @@ public class CmsContentApplicationService {
                         || (value.getStatus() == PublishStatus.SCHEDULED
                         && value.getPublishedAt() != null
                         && !value.getPublishedAt().isAfter(now)))
-                .map(this::page);
+                .map(this::publishedPage);
     }
 
     @Transactional
@@ -83,29 +93,59 @@ public class CmsContentApplicationService {
         value.setUpdatedBy(actorId);
         value.setCreatedAt(now);
         value.setUpdatedAt(now);
-        return page(pages.save(value));
+        pages.saveAndFlush(value);
+        savePageRevision(value, "CREATED", actorId);
+        return page(value);
     }
 
     @Transactional
     public CmsPageResponse updatePage(UUID id, CmsPageRequest request, UUID actorId) {
-        var value = requirePage(id);
+        var value = requirePageForUpdate(id);
         String slug = slug(request.slug());
         requirePageSlugAvailable(slug, id);
         value.setSlug(slug);
         applyPage(value, request);
         value.setUpdatedBy(actorId);
         value.setUpdatedAt(OffsetDateTime.now());
+        savePageRevision(value, "SAVED", actorId);
         return page(value);
     }
 
     @Transactional
     public CmsPageResponse publishPage(UUID id, CmsPublicationRequest request, UUID actorId) {
-        var value = requirePage(id);
+        var value = requirePageForUpdate(id);
         value.setStatus(request.status());
         value.setPublishedAt(publicationTime(request));
+        if (request.status() == PublishStatus.PUBLISHED || request.status() == PublishStatus.SCHEDULED) {
+            value.setPublishedTitle(value.getTitle());
+            value.setPublishedExcerpt(value.getExcerpt());
+            value.setPublishedContent(json(value.getContent()));
+            value.setPublishedSeoMetadata(json(value.getSeoMetadata()));
+        }
         value.setUpdatedBy(actorId);
         value.setUpdatedAt(OffsetDateTime.now());
+        savePageRevision(value,
+                request.status() == PublishStatus.PUBLISHED || request.status() == PublishStatus.SCHEDULED
+                        ? "PUBLISHED" : "SAVED",
+                actorId);
         return page(value);
+    }
+
+    @Transactional
+    public CmsPageResponse restorePageRevision(UUID pageId, UUID revisionId, UUID actorId) {
+        var page = requirePageForUpdate(pageId);
+        var revision = pageRevisions.findByIdAndPageId(revisionId, pageId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy phiên bản trang CMS"));
+        requirePageSlugAvailable(revision.getSlug(), pageId);
+        page.setSlug(revision.getSlug());
+        page.setTitle(revision.getTitle());
+        page.setExcerpt(revision.getExcerpt());
+        page.setContent(json(revision.getContent()));
+        page.setSeoMetadata(json(revision.getSeoMetadata()));
+        page.setUpdatedBy(actorId);
+        page.setUpdatedAt(OffsetDateTime.now());
+        savePageRevision(page, "RESTORED", actorId);
+        return page(page);
     }
 
     public Page<CmsPostResponse> posts(PublishStatus status, Pageable pageable) {
@@ -281,6 +321,11 @@ public class CmsContentApplicationService {
         return pages.findById(id).orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy trang CMS"));
     }
 
+    private CmsPage requirePageForUpdate(UUID id) {
+        return pages.findByIdForUpdate(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy trang CMS"));
+    }
+
     private CmsPost requirePost(UUID id) {
         return posts.findById(id).orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy bài viết CMS"));
     }
@@ -346,7 +391,53 @@ public class CmsContentApplicationService {
     private CmsPageResponse page(CmsPage value) {
         return new CmsPageResponse(value.getId(), value.getSlug(), value.getTitle(), value.getExcerpt(),
                 value.getContent(), value.getSeoMetadata(), value.getStatus(), value.getPublishedAt(),
-                value.getCreatedBy(), value.getUpdatedBy(), value.getCreatedAt(), value.getUpdatedAt());
+                value.getCreatedBy(), value.getUpdatedBy(), value.getCreatedAt(), value.getUpdatedAt(),
+                hasUnpublishedChanges(value));
+    }
+
+    private void savePageRevision(CmsPage page, String source, UUID actorId) {
+        long revisionNo = pageRevisions.findTopByPageIdOrderByRevisionNoDesc(page.getId())
+                .map(value -> value.getRevisionNo() + 1)
+                .orElse(1L);
+        var revision = new CmsPageRevision();
+        revision.setPageId(page.getId());
+        revision.setRevisionNo(revisionNo);
+        revision.setSlug(page.getSlug());
+        revision.setTitle(page.getTitle());
+        revision.setExcerpt(page.getExcerpt());
+        revision.setContent(json(page.getContent()));
+        revision.setSeoMetadata(json(page.getSeoMetadata()));
+        revision.setSource(source);
+        revision.setCreatedBy(actorId);
+        revision.setCreatedAt(OffsetDateTime.now());
+        pageRevisions.save(revision);
+    }
+
+    private CmsPageRevisionResponse pageRevision(CmsPageRevision value) {
+        return new CmsPageRevisionResponse(
+                value.getId(), value.getPageId(), value.getRevisionNo(), value.getSlug(), value.getTitle(),
+                value.getExcerpt(), value.getContent(), value.getSeoMetadata(), value.getSource(),
+                value.getCreatedBy(), value.getCreatedAt()
+        );
+    }
+
+    private CmsPageResponse publishedPage(CmsPage value) {
+        Map<String, Object> content = value.getPublishedContent() == null
+                ? value.getContent() : value.getPublishedContent();
+        Map<String, Object> seo = value.getPublishedSeoMetadata() == null
+                ? value.getSeoMetadata() : value.getPublishedSeoMetadata();
+        String title = value.getPublishedTitle() == null ? value.getTitle() : value.getPublishedTitle();
+        String excerpt = value.getPublishedTitle() == null ? value.getExcerpt() : value.getPublishedExcerpt();
+        return new CmsPageResponse(value.getId(), value.getSlug(), title, excerpt,
+                content, seo, value.getStatus(), value.getPublishedAt(),
+                value.getCreatedBy(), value.getUpdatedBy(), value.getCreatedAt(), value.getUpdatedAt(), false);
+    }
+
+    private boolean hasUnpublishedChanges(CmsPage value) {
+        return !Objects.equals(value.getTitle(), value.getPublishedTitle())
+                || !Objects.equals(value.getExcerpt(), value.getPublishedExcerpt())
+                || !Objects.equals(value.getContent(), value.getPublishedContent())
+                || !Objects.equals(value.getSeoMetadata(), value.getPublishedSeoMetadata());
     }
 
     private CmsPostResponse post(CmsPost value) {

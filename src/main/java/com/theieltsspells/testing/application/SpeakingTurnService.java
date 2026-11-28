@@ -27,6 +27,23 @@ public class SpeakingTurnService {
             return prepared.alreadyAccepted();
         }
         long turnStarted = System.nanoTime();
+        if (prepared.transcriptionMode() != SpeakingExamSessionService.TranscriptionMode.SYNCHRONOUS) {
+            return sessions.commitTurn(
+                    sessionId,
+                    request,
+                    studentId,
+                    prepared.durationMs(),
+                    null,
+                    prepared.transcriptionMode(),
+                    0L,
+                    0L,
+                    0L,
+                    0L,
+                    turnStarted,
+                    null,
+                    null);
+        }
+
         var timedTranscription = speechService.transcribeTimed(request.storageKey());
         String transcript = timedTranscription.transcription().text().trim();
 
@@ -61,6 +78,7 @@ public class SpeakingTurnService {
                 studentId,
                 prepared.durationMs(),
                 transcript,
+                SpeakingExamSessionService.TranscriptionMode.SYNCHRONOUS,
                 timedTranscription.storageReadMs(),
                 timedTranscription.sttProcessingMs(),
                 followUpGenerationMs,

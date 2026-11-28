@@ -27,6 +27,7 @@ spring:
       ddl-auto: none
   flyway:
     enabled: true
+    out-of-order: ${FLYWAY_OUT_OF_ORDER:false}
     locations: classpath:db/migration
   mail:
     host: ${MAIL_HOST:}
@@ -94,6 +95,10 @@ app:
     adaptive-follow-up-enabled: ${AI_SPEAKING_ADAPTIVE_FOLLOW_UP_ENABLED:true}
     max-adaptive-follow-ups: ${AI_SPEAKING_MAX_ADAPTIVE_FOLLOW_UPS:2}
     adaptive-follow-up-timeout-ms: ${AI_SPEAKING_ADAPTIVE_TIMEOUT_MS:6000}
+    background-transcription-enabled: ${AI_SPEAKING_BACKGROUND_TRANSCRIPTION_ENABLED:true}
+    transcription-poll-millis: ${AI_SPEAKING_TRANSCRIPTION_POLL_MILLIS:500}
+    transcription-initial-delay-millis: ${AI_SPEAKING_TRANSCRIPTION_INITIAL_DELAY_MILLIS:500}
+    transcription-max-attempts: ${AI_SPEAKING_TRANSCRIPTION_MAX_ATTEMPTS:3}
     prompt-version: ${AI_SPEAKING_EXAMINER_PROMPT_VERSION:speaking-examiner-v1}
     rubric-version: ${AI_SPEAKING_EXAMINER_RUBRIC_VERSION:ielts-speaking-public-v1}
     feature-extractor-version: ${AI_SPEAKING_EXAMINER_FEATURE_EXTRACTOR_VERSION:unconfigured}

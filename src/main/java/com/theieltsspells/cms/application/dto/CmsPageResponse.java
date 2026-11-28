@@ -9,6 +9,7 @@ import java.util.UUID;
 public record CmsPageResponse(
         UUID id, String slug, String title, String excerpt, Map<String, Object> content,
         Map<String, Object> seoMetadata, PublishStatus status, OffsetDateTime publishedAt,
-        UUID createdBy, UUID updatedBy, OffsetDateTime createdAt, OffsetDateTime updatedAt
+        UUID createdBy, UUID updatedBy, OffsetDateTime createdAt, OffsetDateTime updatedAt,
+        boolean hasUnpublishedChanges
 ) {
 }

@@ -38,12 +38,16 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.never;
 
 @SpringBootTest(properties = {
         "spring.task.scheduling.enabled=false",
         "app.speaking-examiner.enabled=true",
         "app.speaking-examiner.part-2-enabled=true",
         "app.speaking-examiner.part-3-enabled=true",
+        "app.speaking-examiner.transcription-initial-delay-millis=3600000",
         "app.writing-evaluation.enabled=false"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -65,6 +69,7 @@ class SpeakingExamSessionIntegrationTests {
 
     @Autowired SpeakingExamSessionService sessions;
     @Autowired SpeakingTurnService turns;
+    @Autowired SpeakingBackgroundTranscriptionWorker transcriptionWorker;
     @Autowired StudentSpeakingDeliveryService delivery;
     @Autowired JdbcTemplate jdbc;
     @MockBean SpeakingAudioService audioService;
@@ -311,6 +316,47 @@ class SpeakingExamSessionIntegrationTests {
         assertThat(submission.latency().followUpGenerationMs()).isZero();
         assertThat(submission.latency().ttsProcessingMs()).isZero();
         assertThat(submission.latency().serverTurnMs()).isGreaterThanOrEqualTo(0);
+    }
+
+    @Test
+    void returnsTheNextBankedQuestionBeforeBackgroundTranscriptionCompletes() {
+        var session = sessions.createOrResume(attemptId, studentId, SpeakingSessionVariant.PART_1);
+        clearInvocations(speechService);
+
+        var microphoneCheck = turns.submit(
+                session.sessionId(), requestFor(session, UUID.randomUUID()), studentId);
+        assertThat(microphoneCheck.nextTurn().promptText()).isEqualTo("Where do you live?");
+        verify(speechService, never()).transcribeTimed(anyString());
+
+        session = sessions.get(session.sessionId(), studentId);
+        UUID answeredTurnId = session.currentTurn().turnId();
+        var submission = turns.submit(
+                session.sessionId(), requestFor(session, UUID.randomUUID()), studentId);
+
+        assertThat(submission.nextTurn().promptText()).isEqualTo("What do you enjoy at home?");
+        assertThat(submission.latency().storageReadMs()).isZero();
+        assertThat(submission.latency().sttProcessingMs()).isZero();
+        assertThat(jdbc.queryForObject("""
+                select transcription_status from public.speaking_exam_turns where id=?
+                """, String.class, answeredTurnId)).isEqualTo("PENDING");
+        assertThat(jdbc.queryForObject("""
+                select transcript is null from public.speaking_exam_turns where id=?
+                """, Boolean.class, answeredTurnId)).isTrue();
+        verify(speechService, never()).transcribeTimed(anyString());
+
+        for (int processed = 0; processed < 20 && "PENDING".equals(jdbc.queryForObject("""
+                select transcription_status from public.speaking_exam_turns where id=?
+                """, String.class, answeredTurnId)); processed++) {
+            transcriptionWorker.processNext();
+        }
+
+        assertThat(jdbc.queryForObject("""
+                select transcription_status from public.speaking_exam_turns where id=?
+                """, String.class, answeredTurnId)).isEqualTo("COMPLETED");
+        assertThat(jdbc.queryForObject("""
+                select transcript from public.speaking_exam_turns where id=?
+                """, String.class, answeredTurnId)).isEqualTo("A recorded answer.");
+        verify(speechService, atLeastOnce()).transcribeTimed(anyString());
     }
 
     @Test

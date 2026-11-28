@@ -128,7 +128,10 @@ public class SpeakingExamSessionService {
         int durationMs = audioService.durationMsForOwnedStorageKey(
                 session.attemptId(), studentId, request.storageKey(), current.id().toString());
         SpeakingAdaptiveFollowUpService.Context adaptiveContext = buildAdaptiveContext(session, current);
-        return new TurnPreparation(null, durationMs, adaptiveContext);
+        TranscriptionMode transcriptionMode = current.partNo() == null
+                ? TranscriptionMode.NOT_REQUIRED
+                : adaptiveContext == null ? TranscriptionMode.DEFERRED : TranscriptionMode.SYNCHRONOUS;
+        return new TurnPreparation(null, durationMs, adaptiveContext, transcriptionMode);
     }
 
     @Transactional
@@ -137,6 +140,7 @@ public class SpeakingExamSessionService {
                                                                UUID studentId,
                                                                int durationMs,
                                                                String transcript,
+                                                               TranscriptionMode transcriptionMode,
                                                                long storageReadMs,
                                                                long sttProcessingMs,
                                                                long followUpGenerationMs,
@@ -175,10 +179,11 @@ public class SpeakingExamSessionService {
 
         int savedTurn = jdbc.update("""
                 update public.speaking_exam_turns set client_turn_id=?, student_turn_id=?, answer_storage_key=?,
-                  transcript=?, duration_ms=?, submitted_at=now(), accepted_state=?, accepted_state_version=?,
-                  accepted_next_turn_id=?
+                  transcript=?, transcription_status=?, duration_ms=?, submitted_at=now(),
+                  accepted_state=?, accepted_state_version=?, accepted_next_turn_id=?
                 where id=? and session_id=? and submitted_at is null
-                """, request.clientTurnId(), studentTurnId, request.storageKey(), transcript, durationMs,
+                """, request.clientTurnId(), studentTurnId, request.storageKey(), transcript,
+                transcriptionMode.databaseValue(), durationMs,
                 nextState.name(), nextVersion, nextTurn == null ? null : nextTurn.id(), current.id(), sessionId);
         if (savedTurn != 1) throw stateConflict();
 
@@ -219,11 +224,12 @@ public class SpeakingExamSessionService {
         double realTimeFactor = durationMs <= 0 ? 0d : (double) sttProcessingMs / durationMs;
         log.info("event=speaking_turn_processed sessionId={} turnId={} variant={} state={} endReason={} "
                         + "clientUploadMs={} audioDurationMs={} storageReadMs={} sttQueueMs=0 sttProcessingMs={} "
-                        + "followUpGenerationMs={} ttsProcessingMs={} adaptiveFollowUpInserted={} "
+                        + "followUpGenerationMs={} ttsProcessingMs={} transcriptionMode={} adaptiveFollowUpInserted={} "
                         + "realTimeFactor={} totalTurnMs={}",
                 sessionId, current.id(), session.variant(), session.state(), endReason, clientUploadMs,
                 durationMs, storageReadMs, sttProcessingMs, followUpGenerationMs, ttsProcessingMs,
-                adaptiveInserted, String.format(java.util.Locale.ROOT, "%.3f", realTimeFactor), totalTurnMs);
+                transcriptionMode, adaptiveInserted,
+                String.format(java.util.Locale.ROOT, "%.3f", realTimeFactor), totalTurnMs);
         var latency = new SpeakingExaminerTurnSubmissionResponse.LatencyMetrics(
                 storageReadMs, sttProcessingMs, followUpGenerationMs, ttsProcessingMs, totalTurnMs);
         return new SpeakingExaminerTurnSubmissionResponse(sessionId, studentTurnId, nextState, nextVersion,
@@ -241,6 +247,7 @@ public class SpeakingExamSessionService {
         var timedTranscription = speechService.transcribeTimed(request.storageKey());
         String transcript = timedTranscription.transcription().text().trim();
         return commitTurn(sessionId, request, studentId, prepared.durationMs(), transcript,
+                TranscriptionMode.SYNCHRONOUS,
                 timedTranscription.storageReadMs(), timedTranscription.sttProcessingMs(),
                 0L, 0L, turnStarted, null, null);
     }
@@ -627,9 +634,20 @@ public class SpeakingExamSessionService {
 
     public record TurnPreparation(SpeakingExaminerTurnSubmissionResponse alreadyAccepted,
                                   int durationMs,
-                                  SpeakingAdaptiveFollowUpService.Context adaptiveContext) {
+                                  SpeakingAdaptiveFollowUpService.Context adaptiveContext,
+                                  TranscriptionMode transcriptionMode) {
         static TurnPreparation accepted(SpeakingExaminerTurnSubmissionResponse response) {
-            return new TurnPreparation(response, 0, null);
+            return new TurnPreparation(response, 0, null, TranscriptionMode.NOT_REQUIRED);
+        }
+    }
+
+    public enum TranscriptionMode {
+        NOT_REQUIRED,
+        DEFERRED,
+        SYNCHRONOUS;
+
+        String databaseValue() {
+            return this == DEFERRED ? "PENDING" : this == SYNCHRONOUS ? "COMPLETED" : "NOT_REQUIRED";
         }
     }
 

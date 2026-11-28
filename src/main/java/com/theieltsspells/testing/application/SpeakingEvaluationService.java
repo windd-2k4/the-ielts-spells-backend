@@ -126,6 +126,18 @@ public class SpeakingEvaluationService {
         }, attemptId);
     }
 
+    @Transactional
+    public void refreshRegisteredTranscript(UUID attemptId) {
+        String transcript = responseSources(attemptId).stream()
+                .filter(value -> value.transcript() != null && !value.transcript().isBlank())
+                .map(value -> value.questionKey() + ": " + value.transcript().trim())
+                .reduce((left, right) -> left + "\n\n" + right).orElse("");
+        jdbc.update("""
+                update public.speaking_evaluations set transcript=?, updated_at=now()
+                where attempt_id=? and question_key=?
+                """, transcript, attemptId, ATTEMPT_KEY);
+    }
+
     private String text(Object value) { return value == null || value.toString().isBlank() ? null : value.toString(); }
     public record ResponseSource(String questionKey, String transcript, String storageKey,
                                  String legacyAudioUrl, Integer durationMs) {}

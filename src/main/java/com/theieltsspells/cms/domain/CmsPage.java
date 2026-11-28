@@ -54,6 +54,20 @@ public class CmsPage {
     @Column(name = "published_at")
     private OffsetDateTime publishedAt;
 
+    @Column(name = "published_title")
+    private String publishedTitle;
+
+    @Column(name = "published_excerpt")
+    private String publishedExcerpt;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "published_content")
+    private Map<String, Object> publishedContent;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "published_seo_metadata")
+    private Map<String, Object> publishedSeoMetadata;
+
     @Column(name = "created_by")
     private UUID createdBy;
 

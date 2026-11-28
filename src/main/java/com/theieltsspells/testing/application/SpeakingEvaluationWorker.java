@@ -69,7 +69,14 @@ public class SpeakingEvaluationWorker {
                       coalesce(session.variant, 'FULL_MOCK') variant
                     from public.speaking_evaluations evaluation
                     left join public.speaking_exam_sessions session on session.attempt_id=evaluation.attempt_id
-                    where evaluation.status='QUEUED' and evaluation.question_key=? order by evaluation.created_at
+                    where evaluation.status='QUEUED' and evaluation.question_key=?
+                      and not exists (
+                        select 1 from public.speaking_exam_turns turn
+                        join public.speaking_exam_sessions pending_session on pending_session.id=turn.session_id
+                        where pending_session.attempt_id=evaluation.attempt_id
+                          and turn.transcription_status in ('PENDING','PROCESSING')
+                      )
+                    order by evaluation.created_at
                     for update of evaluation skip locked limit 1
                     """, (rs, ignored) -> new Source(rs.getObject("id", UUID.class),
                     rs.getObject("attempt_id", UUID.class), UUID.randomUUID(),

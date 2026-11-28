@@ -7,6 +7,7 @@ import com.theieltsspells.cms.application.dto.CmsBannerRequest;
 import com.theieltsspells.cms.application.dto.CmsBannerResponse;
 import com.theieltsspells.cms.application.dto.CmsPageRequest;
 import com.theieltsspells.cms.application.dto.CmsPageResponse;
+import com.theieltsspells.cms.application.dto.CmsPageRevisionResponse;
 import com.theieltsspells.cms.application.dto.CmsPostRequest;
 import com.theieltsspells.cms.application.dto.CmsPostResponse;
 import com.theieltsspells.cms.application.dto.CmsPublicationRequest;
@@ -18,6 +19,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -93,6 +95,27 @@ public class SocialMediaCmsController {
             @AuthenticationPrincipal Jwt jwt
     ) {
         return service.publishPage(id, request, actor(jwt));
+    }
+
+    @GetMapping("/pages/{id}/revisions")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'cms.content.read')")
+    @Operation(summary = "Lịch sử các phiên bản đã lưu của trang CMS")
+    public PageResponse<CmsPageRevisionResponse> pageRevisions(
+            @PathVariable UUID id,
+            @PageableDefault(size = 30, sort = "revisionNo", direction = Sort.Direction.DESC) Pageable pageable
+    ) {
+        return PageResponse.from(service.pageRevisions(id, pageable));
+    }
+
+    @PostMapping("/pages/{id}/revisions/{revisionId}/restore")
+    @PreAuthorize("@permissionPolicy.has(authentication, 'cms.content.manage')")
+    @Operation(summary = "Khôi phục một phiên bản cũ thành bản nháp hiện tại")
+    public CmsPageResponse restorePageRevision(
+            @PathVariable UUID id,
+            @PathVariable UUID revisionId,
+            @AuthenticationPrincipal Jwt jwt
+    ) {
+        return service.restorePageRevision(id, revisionId, actor(jwt));
     }
 
     @GetMapping("/posts")
